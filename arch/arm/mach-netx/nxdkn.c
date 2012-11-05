@@ -97,7 +97,6 @@ MACHINE_START(NXDKN, "Hilscher nxdkn")
 	.atag_offset	= 0x100,
 	.map_io		= netx_map_io,
 	.init_irq	= netx_init_irq,
-	.handle_irq	= vic_handle_irq,
 	.init_time	= netx_timer_init,
 	.init_machine	= nxdkn_init,
 	.restart	= netx_restart,

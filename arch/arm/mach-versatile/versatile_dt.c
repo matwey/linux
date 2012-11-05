@@ -46,7 +46,6 @@ DT_MACHINE_START(VERSATILE_PB, "ARM-Versatile (Device Tree Support)")
 	.map_io		= versatile_map_io,
 	.init_early	= versatile_init_early,
 	.init_irq	= versatile_init_irq,
-	.handle_irq	= vic_handle_irq,
 	.init_time	= versatile_timer_init,
 	.init_machine	= versatile_dt_init,
 	.dt_compat	= versatile_dt_match,
