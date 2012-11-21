@@ -207,7 +207,6 @@ DT_MACHINE_START(HIGHBANK, "Highbank")
 	.map_io		= debug_ll_io_init,
 	.init_irq	= highbank_init_irq,
 	.init_time	= highbank_timer_init,
-	.handle_irq	= gic_handle_irq,
 	.init_machine	= highbank_init,
 	.dt_compat	= highbank_match,
 	.restart	= highbank_restart,
