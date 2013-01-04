@@ -445,7 +445,7 @@ static int dsps_musb_init(struct musb *musb)
 #endif
 	if (IS_ERR_OR_NULL(musb->xceiv)) {
 		dev_err(dev, "%s:%d %s: FAIL\n", __FILE__, __LINE__, __func__);
-		return -ENODEV;
+		return -EPROBE_DEFER;
 	}
 
 	/* Returns zero if e.g. not clocked */
