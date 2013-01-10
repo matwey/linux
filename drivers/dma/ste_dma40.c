@@ -2531,7 +2531,7 @@ d40_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
 		  unsigned int sg_len, enum dma_transfer_direction direction,
 		  unsigned long dma_flags, void *context)
 {
-	if (direction != DMA_DEV_TO_MEM && direction != DMA_MEM_TO_DEV)
+	if (!is_slave_direction(direction))
 		return NULL;
 
 	return d40_prep_sg(chan, sgl, sgl, sg_len, direction, dma_flags);
