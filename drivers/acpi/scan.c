@@ -1717,6 +1717,7 @@ int __init acpi_scan_init(void)
 	}
 
 	acpi_pci_root_init();
+	acpi_csrt_init();
 
 	/*
 	 * Enumerate devices in the ACPI namespace.
