@@ -1626,7 +1626,6 @@ int __init acpi_scan_init(void)
 		printk(KERN_ERR PREFIX "Could not register bus type\n");
 	}
 
-	acpi_power_init();
 	acpi_pci_root_init();
 
 	/*
