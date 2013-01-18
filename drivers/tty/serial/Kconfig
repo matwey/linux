@@ -2,6 +2,8 @@
 # Serial device configuration
 #
 
+if TTY
+
 menu "Serial drivers"
 	depends on HAS_IOMEM
 
@@ -1448,3 +1450,5 @@ config SERIAL_ARC_NR_PORTS
 	  to support.
 
 endmenu
+
+endif # TTY
