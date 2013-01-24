@@ -497,15 +497,6 @@
 			};
 		};
 
-		tscadc: tscadc@44e0d000 {
-			compatible = "ti,ti-tscadc";
-			reg = <0x44e0d000 0x1000>;
-			interrupt-parent = <&intc>;
-			interrupts = <16>;
-			ti,hwmods = "adc_tsc";
-			status = "disabled";
-		};
-
 		lcdc: lcdc@4830e000 {
 			compatible = "ti,am3352-lcdc", "ti,da830-lcdc";
 			reg = <0x4830e000 0x1000>;
@@ -706,6 +697,24 @@
 			reg = <0x44d00000 0x4000	/* M3 UMEM */
 			       0x44d80000 0x2000>;	/* M3 DMEM */
 			ti,hwmods = "wkup_m3";
+		};
+
+		tscadc: tscadc@44e0d000 {
+			compatible = "ti,am3359-tscadc";
+			reg = <0x44e0d000 0x1000>;
+			interrupt-parent = <&intc>;
+			interrupts = <16>;
+			ti,hwmods = "adc_tsc";
+			status = "disabled";
+
+			tsc {
+				compatible = "ti,am3359-tsc";
+			};
+			am335x_adc: adc {
+				#io-channel-cells = <1>;
+				compatible = "ti,am3359-adc";
+			};
+
 		};
 	};
 };
