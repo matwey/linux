@@ -407,7 +407,7 @@ EXPORT_SYMBOL(usb_remove_phy);
  *
  * To be used by platform specific initialization code.
  */
-struct usb_phy_bind __init *usb_bind_phy(const char *dev_name, u8 index,
+int __init usb_bind_phy(const char *dev_name, u8 index,
 				const char *phy_dev_name)
 {
 	struct usb_phy_bind *phy_bind;
@@ -416,7 +416,7 @@ struct usb_phy_bind __init *usb_bind_phy(const char *dev_name, u8 index,
 	phy_bind = kzalloc(sizeof(*phy_bind), GFP_KERNEL);
 	if (!phy_bind) {
 		pr_err("phy_bind(): No memory for phy_bind");
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 	}
 
 	phy_bind->dev_name = dev_name;
@@ -427,7 +427,7 @@ struct usb_phy_bind __init *usb_bind_phy(const char *dev_name, u8 index,
 	list_add_tail(&phy_bind->list, &phy_bind_list);
 	spin_unlock_irqrestore(&phy_lock, flags);
 
-	return phy_bind;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(usb_bind_phy);
 

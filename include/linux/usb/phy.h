@@ -192,7 +192,7 @@ extern struct usb_phy *devm_usb_get_phy_by_phandle(struct device *dev,
 	const char *phandle, u8 index);
 extern void usb_put_phy(struct usb_phy *);
 extern void devm_usb_put_phy(struct device *dev, struct usb_phy *x);
-extern struct usb_phy_bind *usb_bind_phy(const char *dev_name, u8 index,
+extern int usb_bind_phy(const char *dev_name, u8 index,
 				const char *phy_dev_name);
 #else
 static inline struct usb_phy *usb_get_phy(enum usb_phy_type type)
@@ -230,10 +230,10 @@ static inline void devm_usb_put_phy(struct device *dev, struct usb_phy *x)
 {
 }
 
-static inline struct usb_phy_bind *usb_bind_phy(const char *dev_name, u8 index,
+static inline int usb_bind_phy(const char *dev_name, u8 index,
 				const char *phy_dev_name)
 {
-	return NULL;
+	return -EOPNOTSUPP;
 }
 #endif
 
