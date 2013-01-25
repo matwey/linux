@@ -45,8 +45,12 @@ static struct usb_phy *__usb_find_phy_dev(struct device *dev,
 
 	list_for_each_entry(phy_bind, list, list) {
 		if (!(strcmp(phy_bind->dev_name, dev_name(dev))) &&
-				phy_bind->index == index)
-			return phy_bind->phy;
+				phy_bind->index == index) {
+			if (phy_bind->phy)
+				return phy_bind->phy;
+			else
+				return ERR_PTR(-EPROBE_DEFER);
+		}
 	}
 
 	return ERR_PTR(-ENODEV);
