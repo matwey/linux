@@ -347,7 +347,7 @@ static int omap2430_musb_init(struct musb *musb)
 	 */
 	if (dev->parent->of_node)
 		musb->xceiv = devm_usb_get_phy_by_phandle(dev->parent,
-		    "usb_phy", 0);
+		    "usb-phy", 0);
 	else
 		musb->xceiv = devm_usb_get_phy_dev(dev, 0);
 
