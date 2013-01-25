@@ -3,7 +3,7 @@ OMAP GLUE AND OTHER OMAP SPECIFIC COMPONENTS
 OMAP MUSB GLUE
  - compatible : Should be "ti,omap4-musb" or "ti,omap3-musb"
  - ti,hwmods : must be "usb_otg_hs"
- - ti,has_mailbox : to specify that omap uses an external mailbox
+ - ti,has-mailbox : to specify that omap uses an external mailbox
    (in control module) to communicate with the musb core during device connect
    and disconnect.
  - multipoint : Should be "1" indicating the musb controller supports

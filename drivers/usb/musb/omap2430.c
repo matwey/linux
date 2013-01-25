@@ -265,8 +265,8 @@ static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 		musb->xceiv->last_event = USB_EVENT_ID;
 		if (musb->gadget_driver) {
 			pm_runtime_get_sync(dev);
-			if (!IS_ERR(glue->control_otghs))
-				omap_control_usb_host_mode(glue->control_otghs);
+			omap_control_usb_set_mode(glue->control_otghs,
+				USB_MODE_HOST);
 			omap2430_musb_set_vbus(musb, 1);
 		}
 		break;
@@ -279,8 +279,7 @@ static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 		musb->xceiv->last_event = USB_EVENT_VBUS;
 		if (musb->gadget_driver)
 			pm_runtime_get_sync(dev);
-		if (!IS_ERR(glue->control_otghs))
-			omap_control_usb_device_mode(glue->control_otghs);
+		omap_control_usb_set_mode(glue->control_otghs, USB_MODE_DEVICE);
 		break;
 
 	case OMAP_MUSB_ID_FLOAT:
@@ -297,8 +296,8 @@ static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 			if (musb->xceiv->otg->set_vbus)
 				otg_set_vbus(musb->xceiv->otg, 0);
 		}
-		if (!IS_ERR(glue->control_otghs))
-			omap_control_usb_set_sessionend(glue->control_otghs);
+		omap_control_usb_set_mode(glue->control_otghs,
+			USB_MODE_DISCONNECT);
 		break;
 	default:
 		dev_dbg(dev, "ID float\n");
@@ -409,8 +408,7 @@ static void omap2430_musb_enable(struct musb *musb)
 	switch (glue->status) {
 
 	case OMAP_MUSB_ID_GROUND:
-		if (!IS_ERR(glue->control_otghs))
-			omap_control_usb_host_mode(glue->control_otghs);
+		omap_control_usb_set_mode(glue->control_otghs, USB_MODE_HOST);
 		if (data->interface_type != MUSB_INTERFACE_UTMI)
 			break;
 		devctl = musb_readb(musb->mregs, MUSB_DEVCTL);
@@ -429,8 +427,7 @@ static void omap2430_musb_enable(struct musb *musb)
 		break;
 
 	case OMAP_MUSB_VBUS_VALID:
-		if (!IS_ERR(glue->control_otghs))
-			omap_control_usb_device_mode(glue->control_otghs);
+		omap_control_usb_set_mode(glue->control_otghs, USB_MODE_DEVICE);
 		break;
 
 	default:
@@ -443,10 +440,9 @@ static void omap2430_musb_disable(struct musb *musb)
 	struct device *dev = musb->controller;
 	struct omap2430_glue *glue = dev_get_drvdata(dev->parent);
 
-	if (glue->status != OMAP_MUSB_UNKNOWN) {
-		if (!IS_ERR(glue->control_otghs))
-			omap_control_usb_set_sessionend(glue->control_otghs);
-	}
+	if (glue->status != OMAP_MUSB_UNKNOWN)
+		omap_control_usb_set_mode(glue->control_otghs,
+			USB_MODE_DISCONNECT);
 }
 
 static int omap2430_musb_exit(struct musb *musb)
@@ -481,7 +477,6 @@ static int omap2430_probe(struct platform_device *pdev)
 	struct omap2430_glue		*glue;
 	struct device_node		*np = pdev->dev.of_node;
 	struct musb_hdrc_config		*config;
-	struct resource			*res;
 	int				ret = -ENOMEM;
 
 	glue = devm_kzalloc(&pdev->dev, sizeof(*glue), GFP_KERNEL);
@@ -503,9 +498,6 @@ static int omap2430_probe(struct platform_device *pdev)
 	glue->dev			= &pdev->dev;
 	glue->musb			= musb;
 	glue->status			= OMAP_MUSB_UNKNOWN;
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-
 
 	if (np) {
 		pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
@@ -537,14 +529,14 @@ static int omap2430_probe(struct platform_device *pdev)
 		of_property_read_u32(np, "power", (u32 *)&pdata->power);
 		config->multipoint = of_property_read_bool(np, "multipoint");
 		pdata->has_mailbox = of_property_read_bool(np,
-		    "ti,has_mailbox");
+		    "ti,has-mailbox");
 
 		pdata->board_data	= data;
 		pdata->config		= config;
 	}
 
 	if (pdata->has_mailbox) {
-		glue->control_otghs = get_omap_control_dev();
+		glue->control_otghs = omap_get_control_dev();
 		if (IS_ERR(glue->control_otghs)) {
 			dev_vdbg(&pdev->dev, "Failed to get control device\n");
 			return -ENODEV;

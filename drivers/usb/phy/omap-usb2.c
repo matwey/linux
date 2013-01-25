@@ -123,7 +123,6 @@ static int omap_usb2_probe(struct platform_device *pdev)
 {
 	struct omap_usb			*phy;
 	struct usb_otg			*otg;
-	struct resource			*res;
 
 	phy = devm_kzalloc(&pdev->dev, sizeof(*phy), GFP_KERNEL);
 	if (!phy) {
@@ -144,8 +143,6 @@ static int omap_usb2_probe(struct platform_device *pdev)
 	phy->phy.set_suspend	= omap_usb2_suspend;
 	phy->phy.otg		= otg;
 	phy->phy.type		= USB_PHY_TYPE_USB2;
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 
 	phy->control_dev = omap_get_control_dev();
 	if (IS_ERR(phy->control_dev)) {
