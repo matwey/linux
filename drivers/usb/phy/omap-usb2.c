@@ -147,7 +147,7 @@ static int omap_usb2_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 
-	phy->control_dev = get_omap_control_dev();
+	phy->control_dev = omap_get_control_dev();
 	if (IS_ERR(phy->control_dev)) {
 		dev_dbg(&pdev->dev, "Failed to get control device\n");
 		return -ENODEV;

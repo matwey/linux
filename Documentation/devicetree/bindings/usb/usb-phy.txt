@@ -6,9 +6,14 @@ Required properties:
  - compatible: Should be "ti,omap-usb2"
  - reg : Address and length of the register set for the device.
 
+Optional properties:
+ - ctrl-module : phandle of the control module used by PHY driver to power on
+   the PHY.
+
 This is usually a subnode of ocp2scp to which it is connected.
 
 usb2phy@4a0ad080 {
 	compatible = "ti,omap-usb2";
 	reg = <0x4a0ad080 0x58>;
+	ctrl-module = <&omap_control_usb>;
 };
