@@ -163,7 +163,7 @@ EXPORT_SYMBOL(usb_get_phy);
 struct usb_phy *devm_usb_get_phy_by_phandle(struct device *dev,
 	const char *phandle, u8 index)
 {
-	struct usb_phy	*phy = NULL, **ptr;
+	struct usb_phy	*phy = ERR_PTR(-ENOMEM), **ptr;
 	unsigned long	flags;
 	struct device_node *node;
 
@@ -182,7 +182,7 @@ struct usb_phy *devm_usb_get_phy_by_phandle(struct device *dev,
 	ptr = devres_alloc(devm_usb_phy_release, sizeof(*ptr), GFP_KERNEL);
 	if (!ptr) {
 		dev_dbg(dev, "failed to allocate memory for devres\n");
-		return ERR_PTR(-ENOMEM);
+		goto err0;
 	}
 
 	spin_lock_irqsave(&phy_lock, flags);
@@ -191,7 +191,7 @@ struct usb_phy *devm_usb_get_phy_by_phandle(struct device *dev,
 	if (IS_ERR(phy) || !try_module_get(phy->dev->driver->owner)) {
 		phy = ERR_PTR(-EPROBE_DEFER);
 		devres_free(ptr);
-		goto err0;
+		goto err1;
 	}
 
 	*ptr = phy;
@@ -199,8 +199,11 @@ struct usb_phy *devm_usb_get_phy_by_phandle(struct device *dev,
 
 	get_device(phy->dev);
 
-err0:
+err1:
 	spin_unlock_irqrestore(&phy_lock, flags);
+
+err0:
+	of_node_put(node);
 
 	return phy;
 }
