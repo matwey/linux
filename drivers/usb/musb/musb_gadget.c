@@ -632,7 +632,7 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 				struct dma_controller	*c;
 				struct dma_channel	*channel;
 				int			use_dma = 0;
-				int transfer_size;
+				unsigned int transfer_size;
 
 				c = musb->dma_controller;
 				channel = musb_ep->dma;
@@ -674,10 +674,11 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 						csr | MUSB_RXCSR_DMAMODE);
 					musb_writew(epio, MUSB_RXCSR, csr);
 
-					transfer_size = min(request->length - request->actual,
+					transfer_size = min_t(unsigned int,
+							request->length -
+							request->actual,
 							channel->max_len);
 					musb_ep->dma->desired_mode = 1;
-
 				} else {
 					if (!musb_ep->hb_mult &&
 						musb_ep->hw_ep->rx_double_buffered)
@@ -707,7 +708,7 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 
 				struct dma_controller *c;
 				struct dma_channel *channel;
-				int transfer_size = 0;
+				unsigned int transfer_size = 0;
 
 				c = musb->dma_controller;
 				channel = musb_ep->dma;
@@ -716,11 +717,13 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 				if (fifo_count < musb_ep->packet_sz)
 					transfer_size = fifo_count;
 				else if (request->short_not_ok)
-					transfer_size =	min(request->length -
+					transfer_size =	min_t(unsigned int,
+							request->length -
 							request->actual,
 							channel->max_len);
 				else
-					transfer_size = min(request->length -
+					transfer_size = min_t(unsigned int,
+							request->length -
 							request->actual,
 							(unsigned)fifo_count);
 
