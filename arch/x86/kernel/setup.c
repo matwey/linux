@@ -1045,10 +1045,6 @@ void __init setup_arch(char **cmdline_p)
 	/*
 	 * Parse the ACPI tables for possible boot-time SMP configuration.
 	 */
-	acpi_boot_table_init();
-
-	early_acpi_boot_init();
-
 	initmem_init();
 	memblock_find_dma_reserve();
 
