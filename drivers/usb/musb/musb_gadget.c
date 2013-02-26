@@ -1787,8 +1787,6 @@ int musb_gadget_setup(struct musb *musb)
 	musb->g.speed = USB_SPEED_UNKNOWN;
 
 	/* this "gadget" abstracts/virtualizes the controller */
-	musb->g.dev.parent = musb->controller;
-	musb->g.dev.dma_mask = musb->controller->dma_mask;
 	musb->g.dev.release = musb_gadget_release;
 	musb->g.name = musb_driver_name;
 	musb->g.register_my_device = true;
