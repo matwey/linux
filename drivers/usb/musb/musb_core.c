@@ -1629,8 +1629,6 @@ EXPORT_SYMBOL_GPL(musb_dma_completion);
 
 /*-------------------------------------------------------------------------*/
 
-#ifdef CONFIG_SYSFS
-
 static ssize_t
 musb_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1746,8 +1744,6 @@ static struct attribute *musb_attributes[] = {
 static const struct attribute_group musb_attr_group = {
 	.attrs = musb_attributes,
 };
-
-#endif	/* sysfs */
 
 /* Only used to provide driver mode change events */
 static void musb_irq_work(struct work_struct *data)
