@@ -113,6 +113,7 @@ MACHINE_END
 
 static const char *omap3_gp_boards_compat[] __initdata = {
 	"ti,omap3-beagle",
+	"timll,omap3-devkit8000",
 	NULL,
 };
 
