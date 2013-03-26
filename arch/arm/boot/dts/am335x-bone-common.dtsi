@@ -25,7 +25,7 @@
 
 	am33xx_pinmux: pinmux@44e10800 {
 		pinctrl-names = "default";
-		pinctrl-0 = <&userled_pins>;
+		pinctrl-0 = <>;
 
 		userled_pins: pinmux_userled_pins {
 			pinctrl-single,pins = <
