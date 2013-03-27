@@ -52,11 +52,21 @@
 				0x160 0x2f /* GPIO0_6 (PIN_INPUT | MUX_MODE7) */
 			>;
 		};
+
+		uart0_pins: pinmux_uart0_pins {
+			pinctrl-single,pins = <
+				0x170 0x30      /* uart0_rxd.uart0_rxd PULLUP | INPUTENABLE | MODE0 */
+				0x174 0x00      /* uart0_txd.uart0_txd PULLDOWN | MODE0 */
+			>;
+		};
 	};
 
 	ocp: ocp {
 
 		uart0: serial@44e09000 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&uart0_pins>;
+
 			status = "okay";
 		};
 
