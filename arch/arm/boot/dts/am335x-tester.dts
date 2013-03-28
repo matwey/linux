@@ -59,7 +59,7 @@
 	};
 
 	ocp: ocp {
-		uart1: serial@44e09000 {
+		uart0: serial@44e09000 {
 			status = "okay";
 		};
 

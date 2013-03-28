@@ -176,19 +176,19 @@
 
 	ocp: ocp {
 
-		uart1: serial@44e09000 {
+		uart0: serial@44e09000 {
 			status = "okay";
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart0_pins>;
 		};
 
-		uart2: serial@48022000 {
+		uart1: serial@48022000 {
 			status = "okay";
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart1_pins>;
 		};
 
-		uart4: serial@481a6000 {
+		uart3: serial@481a6000 {
 			status = "okay";
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart3_pins>;

@@ -193,25 +193,25 @@
 	};
 
 	ocp: ocp {
-		uart1: serial@44e09000 {
+		uart0: serial@44e09000 {
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart1_pins>;
 			status = "okay";
 		};
 
-		uart2: serial@48022000 {
+		uart1: serial@48022000 {
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart2_pins>;
 			status = "okay";
 		};
 
-		uart3: serial@48024000 {
+		uart2: serial@48024000 {
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart3_pins>;
 			status = "okay";
 		};
 
-		uart5: serial@481a8000 {
+		uart4: serial@481a8000 {
 			pinctrl-names = "default";
 			pinctrl-0 = <&uart5_pins>;
 			status = "okay";
