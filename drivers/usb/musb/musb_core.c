@@ -845,11 +845,6 @@ b_host:
 		}
 	}
 
-	/* handle babble condition */
-	if (int_usb & MUSB_INTR_BABBLE && is_host_active(musb))
-		schedule_delayed_work(&musb->recover_work,
-				      msecs_to_jiffies(100));
-
 #if 0
 /* REVISIT ... this would be for multiplexing periodic endpoints, or
  * supporting transfer phasing to prevent exceeding ISO bandwidth
@@ -901,51 +896,6 @@ b_host:
 }
 
 /*-------------------------------------------------------------------------*/
-
-/*
-* Program the HDRC to start (enable interrupts, dma, etc.).
-*/
-void musb_start(struct musb *musb)
-{
-	void __iomem	*regs = musb->mregs;
-	u8		devctl = musb_readb(regs, MUSB_DEVCTL);
-
-	dev_dbg(musb->controller, "<== devctl %02x\n", devctl);
-
-	/*  Set INT enable registers, enable interrupts */
-	musb->intrtxe = musb->epmask;
-	musb_writew(regs, MUSB_INTRTXE, musb->intrtxe);
-	musb->intrrxe = musb->epmask & 0xfffe;
-	musb_writew(regs, MUSB_INTRRXE, musb->intrrxe);
-	musb_writeb(regs, MUSB_INTRUSBE, 0xf7);
-
-	musb_writeb(regs, MUSB_TESTMODE, 0);
-
-	/* put into basic highspeed mode and start session */
-	musb_writeb(regs, MUSB_POWER, MUSB_POWER_ISOUPDATE
-						| MUSB_POWER_HSENAB
-						/* ENSUSPEND wedges tusb */
-						/* | MUSB_POWER_ENSUSPEND */
-						);
-
-	musb->is_active = 0;
-	devctl = musb_readb(regs, MUSB_DEVCTL);
-	devctl &= ~MUSB_DEVCTL_SESSION;
-
-	/* session started after:
-	 * (a) ID-grounded irq, host mode;
-	 * (b) vbus present/connect IRQ, peripheral mode;
-	 * (c) peripheral initiates, using SRP
-	 */
-	if ((devctl & MUSB_DEVCTL_VBUS) == MUSB_DEVCTL_VBUS)
-		musb->is_active = 1;
-	else
-		devctl |= MUSB_DEVCTL_SESSION;
-
-	musb_platform_enable(musb);
-	musb_writeb(regs, MUSB_DEVCTL, devctl);
-}
-
 
 static void musb_generic_disable(struct musb *musb)
 {
@@ -1746,36 +1696,6 @@ static void musb_irq_work(struct work_struct *data)
 	}
 }
 
-/* Recover from babble interrupt conditions */
-static void musb_recover_work(struct work_struct *data)
-{
-	struct musb *musb = container_of(data, struct musb, recover_work.work);
-	int status, ret;
-
-	ret  = musb_platform_reset(musb);
-	if (ret)
-		return;
-
-	usb_phy_vbus_off(musb->xceiv);
-	usleep_range(100, 200);
-
-	usb_phy_vbus_on(musb->xceiv);
-	usleep_range(100, 200);
-
-	/*
-	 * When a babble condition occurs, the musb controller
-	 * removes the session bit and the endpoint config is lost.
-	 */
-	if (musb->dyn_fifo)
-		status = ep_config_from_table(musb);
-	else
-		status = ep_config_from_hw(musb);
-
-	/* start the session again */
-	if (status == 0)
-		musb_start(musb);
-}
-
 /* --------------------------------------------------------------------------
  * Init support
  */
@@ -1935,8 +1855,6 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	musb_platform_disable(musb);
 	musb_generic_disable(musb);
 
-	INIT_DELAYED_WORK(&musb->recover_work, musb_recover_work);
-
 	/* setup musb parts of the core (especially endpoints) */
 	status = musb_core_init(plat->config->multipoint
 			? MUSB_CONTROLLER_MHDRC
@@ -2041,7 +1959,6 @@ fail4:
 		musb_gadget_cleanup(musb);
 
 fail3:
-	cancel_delayed_work_sync(&musb->recover_work);
 	pm_runtime_put_sync(musb->controller);
 
 fail2:
@@ -2098,7 +2015,6 @@ static int musb_remove(struct platform_device *pdev)
 	musb_exit_debugfs(musb);
 	musb_shutdown(pdev);
 
-	cancel_delayed_work_sync(&musb->recover_work);
 	musb_free(musb);
 	device_init_wakeup(dev, 0);
 #ifndef CONFIG_MUSB_PIO_ONLY
