@@ -1787,6 +1787,7 @@ int __init acpi_scan_init(void)
 
 	acpi_pci_root_init();
 	acpi_pci_link_init();
+	acpi_processor_init();
 	acpi_platform_init();
 	acpi_csrt_init();
 	acpi_container_init();
