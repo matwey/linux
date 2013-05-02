@@ -419,19 +419,6 @@
 
 		};
 
-		gpmc: gpmc@50000000 {
-			compatible = "ti,am3352-gpmc";
-			ti,hwmods = "gpmc";
-			reg = <0x50000000 0x01000000>;
-			interrupts = <100>;
-			gpmc,num-cs = <7>;
-			gpmc,num-waitpins = <2>;
-			#address-cells = <2>;
-			#size-cells = <1>;
-
-			status = "disabled";
-		};
-
 		nop-phy@0 {
 			compatible = "nop-xceiv-usb";
 		};
@@ -715,6 +702,18 @@
 			reg = <0x44d00000 0x4000	/* M3 UMEM */
 			       0x44d80000 0x2000>;	/* M3 DMEM */
 			ti,hwmods = "wkup_m3";
+		};
+
+		gpmc: gpmc@50000000 {
+			compatible = "ti,am3352-gpmc";
+			ti,hwmods = "gpmc";
+			reg = <0x50000000 0x2000>;
+			interrupts = <100>;
+			num-cs = <7>;
+			num-waitpins = <2>;
+			#address-cells = <2>;
+			#size-cells = <1>;
+			status = "disabled";
 		};
 	};
 };
