@@ -64,8 +64,7 @@ static int mop500_sdi0_ios_handler(struct device *dev, struct mmc_ios *ios)
 struct stedma40_chan_cfg mop500_sdi0_dma_cfg_rx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_PERIPH_TO_MEM,
-	.src_dev_type = DB8500_DMA_DEV29_SD_MM0_RX,
-	.dst_dev_type = STEDMA40_DEV_DST_MEMORY,
+	.dev_type = DB8500_DMA_DEV29_SD_MM0,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -73,8 +72,7 @@ struct stedma40_chan_cfg mop500_sdi0_dma_cfg_rx = {
 static struct stedma40_chan_cfg mop500_sdi0_dma_cfg_tx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_MEM_TO_PERIPH,
-	.src_dev_type = STEDMA40_DEV_SRC_MEMORY,
-	.dst_dev_type = DB8500_DMA_DEV29_SD_MM0_TX,
+	.dev_type = DB8500_DMA_DEV29_SD_MM0,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -135,8 +133,7 @@ void mop500_sdi_tc35892_init(struct device *parent)
 static struct stedma40_chan_cfg sdi1_dma_cfg_rx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_PERIPH_TO_MEM,
-	.src_dev_type = DB8500_DMA_DEV32_SD_MM1_RX,
-	.dst_dev_type = STEDMA40_DEV_DST_MEMORY,
+	.dev_type = DB8500_DMA_DEV32_SD_MM1,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -144,8 +141,7 @@ static struct stedma40_chan_cfg sdi1_dma_cfg_rx = {
 static struct stedma40_chan_cfg sdi1_dma_cfg_tx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_MEM_TO_PERIPH,
-	.src_dev_type = STEDMA40_DEV_SRC_MEMORY,
-	.dst_dev_type = DB8500_DMA_DEV32_SD_MM1_TX,
+	.dev_type = DB8500_DMA_DEV32_SD_MM1,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -172,8 +168,7 @@ struct mmci_platform_data mop500_sdi1_data = {
 struct stedma40_chan_cfg mop500_sdi2_dma_cfg_rx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_PERIPH_TO_MEM,
-	.src_dev_type =  DB8500_DMA_DEV28_SD_MM2_RX,
-	.dst_dev_type = STEDMA40_DEV_DST_MEMORY,
+	.dev_type =  DB8500_DMA_DEV28_SD_MM2,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -181,8 +176,7 @@ struct stedma40_chan_cfg mop500_sdi2_dma_cfg_rx = {
 static struct stedma40_chan_cfg mop500_sdi2_dma_cfg_tx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_MEM_TO_PERIPH,
-	.src_dev_type = STEDMA40_DEV_SRC_MEMORY,
-	.dst_dev_type = DB8500_DMA_DEV28_SD_MM2_TX,
+	.dev_type = DB8500_DMA_DEV28_SD_MM2,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -210,8 +204,7 @@ struct mmci_platform_data mop500_sdi2_data = {
 struct stedma40_chan_cfg mop500_sdi4_dma_cfg_rx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_PERIPH_TO_MEM,
-	.src_dev_type =  DB8500_DMA_DEV42_SD_MM4_RX,
-	.dst_dev_type = STEDMA40_DEV_DST_MEMORY,
+	.dev_type =  DB8500_DMA_DEV42_SD_MM4,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
@@ -219,8 +212,7 @@ struct stedma40_chan_cfg mop500_sdi4_dma_cfg_rx = {
 static struct stedma40_chan_cfg mop500_sdi4_dma_cfg_tx = {
 	.mode = STEDMA40_MODE_LOGICAL,
 	.dir = STEDMA40_MEM_TO_PERIPH,
-	.src_dev_type = STEDMA40_DEV_SRC_MEMORY,
-	.dst_dev_type = DB8500_DMA_DEV42_SD_MM4_TX,
+	.dev_type = DB8500_DMA_DEV42_SD_MM4,
 	.src_info.data_width = STEDMA40_WORD_WIDTH,
 	.dst_info.data_width = STEDMA40_WORD_WIDTH,
 };
