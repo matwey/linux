@@ -30,7 +30,7 @@
 		.dst_info.psize = STEDMA40_PSIZE_LOG_16, \
 	}
 
-static struct stedma40_chan_cfg musb_dma_rx_ch[UX500_MUSB_DMA_NUM_RX_CHANNELS]
+static struct stedma40_chan_cfg musb_dma_rx_ch[UX500_MUSB_DMA_NUM_RX_TX_CHANNELS]
 	= {
 	MUSB_DMA40_RX_CH,
 	MUSB_DMA40_RX_CH,
@@ -42,7 +42,7 @@ static struct stedma40_chan_cfg musb_dma_rx_ch[UX500_MUSB_DMA_NUM_RX_CHANNELS]
 	MUSB_DMA40_RX_CH
 };
 
-static struct stedma40_chan_cfg musb_dma_tx_ch[UX500_MUSB_DMA_NUM_TX_CHANNELS]
+static struct stedma40_chan_cfg musb_dma_tx_ch[UX500_MUSB_DMA_NUM_RX_TX_CHANNELS]
 	= {
 	MUSB_DMA40_TX_CH,
 	MUSB_DMA40_TX_CH,
@@ -54,7 +54,7 @@ static struct stedma40_chan_cfg musb_dma_tx_ch[UX500_MUSB_DMA_NUM_TX_CHANNELS]
 	MUSB_DMA40_TX_CH,
 };
 
-static void *ux500_dma_rx_param_array[UX500_MUSB_DMA_NUM_RX_CHANNELS] = {
+static void *ux500_dma_rx_param_array[UX500_MUSB_DMA_NUM_RX_TX_CHANNELS] = {
 	&musb_dma_rx_ch[0],
 	&musb_dma_rx_ch[1],
 	&musb_dma_rx_ch[2],
@@ -65,7 +65,7 @@ static void *ux500_dma_rx_param_array[UX500_MUSB_DMA_NUM_RX_CHANNELS] = {
 	&musb_dma_rx_ch[7]
 };
 
-static void *ux500_dma_tx_param_array[UX500_MUSB_DMA_NUM_TX_CHANNELS] = {
+static void *ux500_dma_tx_param_array[UX500_MUSB_DMA_NUM_RX_TX_CHANNELS] = {
 	&musb_dma_tx_ch[0],
 	&musb_dma_tx_ch[1],
 	&musb_dma_tx_ch[2],
@@ -79,8 +79,6 @@ static void *ux500_dma_tx_param_array[UX500_MUSB_DMA_NUM_TX_CHANNELS] = {
 static struct ux500_musb_board_data musb_board_data = {
 	.dma_rx_param_array = ux500_dma_rx_param_array,
 	.dma_tx_param_array = ux500_dma_tx_param_array,
-	.num_rx_channels = UX500_MUSB_DMA_NUM_RX_CHANNELS,
-	.num_tx_channels = UX500_MUSB_DMA_NUM_TX_CHANNELS,
 	.dma_filter = stedma40_filter,
 };
 
@@ -127,7 +125,7 @@ static inline void ux500_usb_dma_update_rx_ch_config(int *dev_type)
 {
 	u32 idx;
 
-	for (idx = 0; idx < UX500_MUSB_DMA_NUM_RX_CHANNELS; idx++)
+	for (idx = 0; idx < UX500_MUSB_DMA_NUM_RX_TX_CHANNELS; idx++)
 		musb_dma_rx_ch[idx].dev_type = dev_type[idx];
 }
 
@@ -135,7 +133,7 @@ static inline void ux500_usb_dma_update_tx_ch_config(int *dev_type)
 {
 	u32 idx;
 
-	for (idx = 0; idx < UX500_MUSB_DMA_NUM_TX_CHANNELS; idx++)
+	for (idx = 0; idx < UX500_MUSB_DMA_NUM_RX_TX_CHANNELS; idx++)
 		musb_dma_tx_ch[idx].dev_type = dev_type[idx];
 }
 
