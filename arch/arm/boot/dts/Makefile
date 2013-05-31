@@ -114,10 +114,13 @@ dtb-$(CONFIG_ARCH_OMAP2PLUS) += omap2420-h4.dtb \
 	omap4-panda-es.dtb \
 	omap4-var-som.dtb \
 	omap4-sdp.dtb \
+	omap4-sdp-es23plus.dtb \
 	omap5-evm.dtb \
 	am335x-evm.dtb \
 	am335x-evmsk.dtb \
 	am335x-bone.dtb \
+	am3517-evm.dtb \
+	am3517_mt_ventoux.dtb \
 	am335x-boneblack.dtb \
 	am335x-siriusDEB.dtb \
 	am335x-bonegreen-wireless.dtb \
