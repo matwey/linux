@@ -6,7 +6,7 @@
  * published by the Free Software Foundation.
  */
 
-/include/ "am33xx.dtsi"
+#include "am33xx.dtsi"
 
 / {
 	model = "TI AM335x BeagleBone";
