@@ -213,16 +213,6 @@
 			};
 		};
 
-		epwmss0: epwmss@48300000 {
-			status = "okay";
-
-			ecap0: ecap@48300100 {
-				status = "okay";
-				pinctrl-names = "default";
-				pinctrl-0 = <&ecap0_pins>;
-			};
-		};
-
 		elm: elm@48080000 {
 			status = "okay";
 		};
