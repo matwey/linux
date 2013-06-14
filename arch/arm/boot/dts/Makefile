@@ -127,7 +127,8 @@ dtb-$(CONFIG_ARCH_OMAP2PLUS) += omap2420-h4.dtb \
 	am335x-boneblack-wireless.dtb \
 	am335x-bonegreen.dtb \
 	arduino-tre.dtb \
-	am335x-tester.dtb
+	am335x-tester.dtb \
+	am43x-epos-evm.dtb
 dtb-$(CONFIG_ARCH_ORION5X) += orion5x-lacie-ethernet-disk-mini-v2.dtb
 dtb-$(CONFIG_ARCH_PRIMA2) += prima2-evb.dtb
 dtb-$(CONFIG_ARCH_U8500) += snowball.dtb \
