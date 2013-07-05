@@ -130,6 +130,22 @@
 			status = "okay";
 		};
 
+		musb: usb@47400000 {
+			status = "okay";
+
+			control@44e10000 {
+				status = "okay";
+			};
+
+			phy@47401300 {
+				status = "okay";
+			};
+
+			usb@47401000 {
+				status = "okay";
+			};
+		};
+
 		gpio-leds {
 			compatible = "gpio-leds";
 			pinctrl-names = "default";
@@ -632,11 +648,5 @@
 };
 
 &aes {
-	status = "okay";
-};
-
-&usb_otg_hs {
-	interface_type = <1>;
-	power = <250>;
 	status = "okay";
 };

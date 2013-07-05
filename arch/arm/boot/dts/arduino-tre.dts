@@ -695,12 +695,6 @@
 	status = "okay";
 };
 
-&usb_otg_hs {
-	interface_type = <1>;
-	power = <250>;
-	status = "okay";
-};
-
 &cpu {
 	/*
 	* To consider voltage drop between PMIC and SoC,
