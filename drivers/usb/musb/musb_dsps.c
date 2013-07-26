@@ -773,37 +773,6 @@ static int dsps_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(dsps_pm_ops, dsps_suspend, dsps_resume);
 
-static const struct dsps_musb_wrapper ti81xx_driver_data = {
-	.revision		= 0x00,
-	.control		= 0x14,
-	.status			= 0x18,
-	.eoi			= 0x24,
-	.epintr_set		= 0x38,
-	.epintr_clear		= 0x40,
-	.epintr_status		= 0x30,
-	.coreintr_set		= 0x3c,
-	.coreintr_clear		= 0x44,
-	.coreintr_status	= 0x34,
-	.phy_utmi		= 0xe0,
-	.mode			= 0xe8,
-	.reset			= 0,
-	.otg_disable		= 21,
-	.iddig			= 8,
-	.usb_shift		= 0,
-	.usb_mask		= 0x1ff,
-	.usb_bitmap		= (0x1ff << 0),
-	.drvvbus		= 8,
-	.txep_shift		= 0,
-	.txep_mask		= 0xffff,
-	.txep_bitmap		= (0xffff << 0),
-	.rxep_shift		= 16,
-	.rxep_mask		= 0xfffe,
-	.rxep_bitmap		= (0xfffe << 16),
-	.musb_core_offset	= 0x400,
-	.poll_seconds		= 2,
-	.instances		= 1,
-};
-
 static const struct dsps_musb_wrapper am33xx_driver_data = {
 	.revision		= 0x00,
 	.control		= 0x14,
@@ -832,7 +801,7 @@ static const struct dsps_musb_wrapper am33xx_driver_data = {
 	.rxep_bitmap		= (0xfffe << 16),
 	.musb_core_offset	= 0x400,
 	.poll_seconds		= 2,
-	.instances		= 2,
+	.instances		= 1,
 };
 
 static const struct of_device_id musb_dsps_of_match[] = {
