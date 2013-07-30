@@ -843,7 +843,7 @@ int usb_otg_start(struct platform_device *pdev)
 	int status;
 	struct resource *res;
 	u32 temp;
-	struct fsl_usb2_platform_data *pdata = pdev->dev.platform_data;
+	struct fsl_usb2_platform_data *pdata = dev_get_platdata(&pdev->dev);
 
 	p_otg = container_of(otg_trans, struct fsl_otg, phy);
 	fsm = &p_otg->fsm;
@@ -1114,7 +1114,7 @@ static int fsl_otg_probe(struct platform_device *pdev)
 {
 	int ret;
 
-	if (!pdev->dev.platform_data)
+	if (!dev_get_platdata(&pdev->dev))
 		return -ENODEV;
 
 	/* configure the OTG */
@@ -1146,7 +1146,7 @@ static int fsl_otg_probe(struct platform_device *pdev)
 
 static int fsl_otg_remove(struct platform_device *pdev)
 {
-	struct fsl_usb2_platform_data *pdata = pdev->dev.platform_data;
+	struct fsl_usb2_platform_data *pdata = dev_get_platdata(&pdev->dev);
 
 	usb_remove_phy(&fsl_otg_dev->phy);
 	free_irq(fsl_otg_dev->irq, fsl_otg_dev);
