@@ -8,28 +8,7 @@
 /dts-v1/;
 
 #include "am33xx.dtsi"
-
 #include "am335x-bone-common.dtsi"
-
-/ {
-	bone_capemgr {
-		baseboardmaps {
-			baseboard_beaglebone_black: board@1 {
-				board-name = "A335BNLT";
-				compatible-name = "ti,beaglebone-black";
-			};
-		};
-	};
-};
-
-&am33xx_pinmux {
-	rstctl_pins: pinmux_rstctl_pins {
-		pinctrl-single,pins = <
-			/* eMMC_RSTn */
-			0x50 0x17	/* gpmc_a4.gpio1_20, OUTPUT | MODE7 | PULLUP */
-		>;
-	};
-};
 
 &ldo3_reg {
 	regulator-min-microvolt = <1800000>;
