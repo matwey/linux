@@ -109,13 +109,13 @@
 			reg = <0x48200000 0x1000>;
 		};
 
-        sgx@0x56000000 {
-            compatible = "ti,sgx";
-            ti,hwmods = "gfx";
-            clock-frequency = <200000000>;
-            reg = <0x56000000 0x1000000>;
-            interrupts = <37>;
-        };
+		sgx@0x56000000 {
+			compatible = "ti,sgx";
+			ti,hwmods = "gfx";
+			clock-frequency = <200000000>;
+			reg = <0x56000000 0x1000000>;
+			interrupts = <37>;
+		};
 
 		edma: edma@49000000 {
 			compatible = "ti,edma3";
@@ -129,12 +129,12 @@
 			ti,edma-regions = <4>;
 			ti,edma-slots = <256>;
 			ti,edma-queue-tc-map = <0 0
-						1 1
-						2 2>;
+				1 1
+				2 2>;
 			ti,edma-queue-priority-map = <0 0
-						      1 1
-						      2 2>;
-			ti,edma-default-queue = <1>;
+				1 1
+				2 2>;
+			ti,edma-default-queue = <1>;	
 		};
 
 		gpio0: gpio@44e07000 {
