@@ -609,3 +609,8 @@
 &aes {
 	status = "okay";
 };
+
+&mmc1 {
+	status = "okay";
+	vmmc-supply = <&vmmc_reg>;
+};
