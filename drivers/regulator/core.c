@@ -1224,7 +1224,7 @@ static struct regulator_dev *regulator_dev_lookup(struct device *dev,
 
 /* Internal regulator request function */
 static struct regulator *_regulator_get(struct device *dev, const char *id,
-					bool exclusive)
+					bool exclusive, bool allow_dummy)
 {
 	struct regulator_dev *rdev;
 	struct regulator *regulator = ERR_PTR(-EPROBE_DEFER);
@@ -1249,30 +1249,32 @@ static struct regulator *_regulator_get(struct device *dev, const char *id,
 	 * If we have return value from dev_lookup fail, we do not expect to
 	 * succeed, so, quit with appropriate error value
 	 */
-	if (ret) {
+	if (ret && ret != -ENODEV) {
 		regulator = ERR_PTR(ret);
 		goto out;
 	}
 
-	if (board_wants_dummy_regulator) {
-		rdev = dummy_regulator_rdev;
-		goto found;
-	}
-
-#ifdef CONFIG_REGULATOR_DUMMY
 	if (!devname)
 		devname = "deviceless";
 
-	/* If the board didn't flag that it was fully constrained then
-	 * substitute in a dummy regulator so consumers can continue.
+	/*
+	 * Assume that a regulator is physically present and enabled
+	 * even if it isn't hooked up and just provide a dummy.
 	 */
-	if (!has_full_constraints) {
-		pr_warn("%s supply %s not found, using dummy regulator\n",
-			devname, id);
+	if (has_full_constraints && allow_dummy) {
+		/*
+		 * Log the substitution if regulator configuration is
+		 * not complete to help development.
+		 */
+		if (!has_full_constraints)
+			pr_warn("%s supply %s not found, using dummy regulator\n",
+				devname, id);
+
 		rdev = dummy_regulator_rdev;
 		goto found;
+	} else {
+		dev_err(dev, "dummy supplies not allowed\n");
 	}
-#endif
 
 	mutex_unlock(&regulator_list_mutex);
 	return regulator;
@@ -1330,7 +1332,7 @@ out:
  */
 struct regulator *regulator_get(struct device *dev, const char *id)
 {
-	return _regulator_get(dev, id, false);
+	return _regulator_get(dev, id, false, true);
 }
 EXPORT_SYMBOL_GPL(regulator_get);
 
@@ -1391,7 +1393,7 @@ EXPORT_SYMBOL_GPL(devm_regulator_get);
  */
 struct regulator *regulator_get_exclusive(struct device *dev, const char *id)
 {
-	return _regulator_get(dev, id, true);
+	return _regulator_get(dev, id, true, false);
 }
 EXPORT_SYMBOL_GPL(regulator_get_exclusive);
 
@@ -1420,7 +1422,7 @@ EXPORT_SYMBOL_GPL(regulator_get_exclusive);
  */
 struct regulator *regulator_get_optional(struct device *dev, const char *id)
 {
-	return _regulator_get(dev, id, 0);
+	return _regulator_get(dev, id, false, false);
 }
 EXPORT_SYMBOL_GPL(regulator_get_optional);
 
