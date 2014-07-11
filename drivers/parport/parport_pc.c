@@ -65,6 +65,7 @@
 #include <linux/parport_pc.h>
 #include <linux/via.h>
 #include <asm/parport.h>
+#include <asm/processor.h> /* for Intel bug check */
 
 #define PARPORT_PC_MAX_PORTS PARPORT_MAX
 
@@ -1702,7 +1703,11 @@ static int parport_ECP_supported(struct parport *pb)
 }
 #endif
 
-static int intel_bug_present(struct parport *pb)
+/*  It is believed that CPU model correlates with buggy LPT chipset model.
+    Here we check that or CPU is elder than Pentium Pro: either 80486 or Pentium.
+    If it is then we perform The Check. */
+#ifdef CONFIG_X86_32
+static int intel_bug_present_check_epp(struct parport *pb)
 {
 	const struct parport_pc_private *priv = pb->private_data;
 	int bug_present = 0;
@@ -1725,6 +1730,21 @@ static int intel_bug_present(struct parport *pb)
 
 	return bug_present;
 }
+static int intel_bug_present(struct parport *pb)
+{
+	struct cpuinfo_x86 *c = &cpu_data(0);
+
+	if ((c->x86_vendor == X86_VENDOR_INTEL && (c->x86 == 4 || c->x86 == 5)) ||
+	     c->x86_vendor != X86_VENDOR_INTEL)
+		return intel_bug_present_check_epp(pb);
+	return 0;
+}
+#else
+static int intel_bug_present(struct parport *pb)
+{
+	return 0;
+}
+#endif /* CONFIG_X86_32 */
 
 static int parport_ECPPS2_supported(struct parport *pb)
 {
