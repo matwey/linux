@@ -1,0 +1,136 @@
+/*
+ * Copyright (C) 2014 Teresa Gámez <t.gamez@phytec.de> Phytec Messtechnik GmbH
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/dts-v1/;
+
+#include "am335x-phycore-som.dtsi"
+#include "am335x-wega.dtsi"
+#include "am335x-wega-peb-eval-01.dtsi"
+#include "am335x-wega-peb-av-01.dtsi"
+#include "am335x-wega-peb-av-02.dtsi"
+
+/* SoM */
+&cpsw_emac0 {
+	status = "okay";
+};
+
+&cpsw_emac1 {
+	status = "okay";
+};
+
+&mac {
+	status = "okay";
+};
+
+&davinci_mdio {
+	status = "okay";
+};
+
+&i2c_eeprom {
+	status = "okay";
+};
+
+&i2c_rtc {
+	status = "okay";
+};
+
+&nandflash {
+	partition@0 {
+		label = "xload";
+		reg = <0x0 0x20000>;
+	};
+
+	partition@1 {
+		label = "xload_backup1";
+		reg = <0x20000 0x20000>;
+	};
+
+	partition@2 {
+		label = "xload_backup2";
+		reg = <0x40000 0x20000>;
+	};
+
+	partition@3 {
+		label = "xload_backup3";
+		reg = <0x60000 0x20000>;
+	};
+
+	partition@4 {
+		label = "barebox";
+		reg = <0x80000 0x80000>;
+	};
+
+	partition@5 {
+		label = "bareboxenv";
+		reg = <0x100000 0x40000>;
+	};
+
+	partition@6 {
+		label = "oftree";
+		reg = <0x140000 0x40000>;
+	};
+
+	partition@7 {
+		label = "kernel";
+		reg = <0x180000 0x800000>;
+	};
+
+	partition@8 {
+		label = "root";
+		/*
+		 * setting size to 0x0 here, size will be extended to
+		 * end of nand flash while booting.
+		 */
+		reg = <0x980000 0x0>;
+	};
+};
+
+/* Carrierboard */
+&cppi41dma {
+	status = "okay";
+};
+
+&cpsw_emac1 {
+	status = "okay";
+};
+
+&usb_ctrl_mod {
+	status = "okay";
+};
+
+&dcan1 {
+	status = "okay";
+};
+
+&mmc1 {
+	status = "okay";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&uart1 {
+	status = "okay";
+};
+
+&usb {
+	status = "okay";
+};
+
+&usb0 {
+	status = "okay";
+};
+
+&usb0_phy {
+	status = "okay";
+};
+
+&usb1 {
+	status = "okay";
+};
