@@ -1,0 +1,109 @@
+/*
+ * Copyright (C) 2014 Wadim Egorov <w.egorov@phytec.de> PHYTEC Messtechnik GmbH
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/*
+ * The board specific DTS file have to:
+ *  - Specify pwms and enable gpios for backlight
+ *  - Mux the display enable pins if available
+ *  - Create the i2c_ts node on the specific i2c bus
+*/
+
+&am33xx_pinmux {
+	lcd_pins: pinmux_lcd {
+		pinctrl-single,pins = <
+			0xA0 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data0.lcd_data0 */
+			0xA4 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data1.lcd_data1 */
+			0xA8 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data2.lcd_data2 */
+			0xAC (PIN_OUTPUT | MUX_MODE0)	/* lcd_data3.lcd_data3 */
+			0xB0 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data4.lcd_data4 */
+			0xB4 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data5.lcd_data5 */
+			0xB8 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data6.lcd_data6 */
+			0xBC (PIN_OUTPUT | MUX_MODE0)	/* lcd_data7.lcd_data7 */
+			0xC0 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data8.lcd_data8 */
+			0xC4 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data9.lcd_data9 */
+			0xC8 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data10.lcd_data10 */
+			0xCC (PIN_OUTPUT | MUX_MODE0)	/* lcd_data11.lcd_data11 */
+			0xD0 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data12.lcd_data12 */
+			0xD4 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data13.lcd_data13 */
+			0xD8 (PIN_OUTPUT | MUX_MODE0)	/* lcd_data14.lcd_data14 */
+			0xDC (PIN_OUTPUT | MUX_MODE0)	/* lcd_data15.lcd_data15 */
+			0x3C (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad15.lcd_data16 */
+			0x38 (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad14.lcd_data17 */
+			0x34 (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad13.lcd_data18 */
+			0x30 (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad12.lcd_data19 */
+			0x2C (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad11.lcd_data20 */
+			0x28 (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad10.lcd_data21 */
+			0x24 (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad9.lcd_data22 */
+			0x20 (PIN_OUTPUT | MUX_MODE1)	/* gpmc_ad8.lcd_data23 */
+			0xE0 (PIN_OUTPUT | MUX_MODE0)	/* lcd_vsync.lcd_vsync */
+			0xE4 (PIN_OUTPUT | MUX_MODE0)	/* lcd_hsync.lcd_hsync */
+			0xE8 (PIN_OUTPUT | MUX_MODE0)	/* lcd_pclk.lcd_pclk */
+			0xEC (PIN_OUTPUT | MUX_MODE0)	/* lcd_ac_bias_en.lcd_ac_bias_en */
+		>;
+	};
+};
+
+/ {
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		brightness-levels = <0 4 8 16 32 64 128 255>;
+		default-brightness-level = <6>;
+		power-supply = <&lcd_3v3>;
+		status = "disabled";
+	};
+
+	lcd_3v3: fixedregulator-lcd {
+		compatible = "regulator-fixed";
+		regulator-name = "lcd_3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-boot-on;
+	};
+
+	panel: panel {
+		compatible = "ti,tilcdc,panel";
+		pinctrl-names = "default";
+		pinctrl-0 = <&lcd_pins>;
+		status = "disabled";
+
+		panel-info {
+			ac-bias = <255>;
+			ac-bias-intrpt = <0>;
+			dma-burst-sz = <16>;
+			bpp = <32>;
+			fdd = <0x80>;
+			sync-edge = <0>;
+			sync-ctrl = <1>;
+			raster-order = <0>;
+			fifo-th = <0>;
+			invert-pxl-clk = <1>;
+		};
+
+		display-timings {
+			native-mode = <&timing0>;
+			timing0: ETM0700G0DH6 {
+				clock-frequency	= <40000000>;
+				hactive = <800>;
+				vactive = <480>;
+				hfront-porch = <40>;
+				hback-porch = <216>;
+				hsync-len = <128>;
+				vback-porch = <35>;
+				vfront-porch = <10>;
+				vsync-len = <2>;
+				hsync-active = <1>;
+				vsync-active = <1>;
+			};
+		};
+	};
+};
+
+&i2c_ts {
+	compatible = "edt,edt-ft5x06";
+	reg = <0x38>;
+};
