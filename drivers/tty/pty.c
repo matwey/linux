@@ -33,6 +33,11 @@ static struct tty_driver *pts_driver;
 static DEFINE_MUTEX(devpts_mutex);
 #endif
 
+#if CONFIG_TTY_LOOPBACK
+static struct tty_driver* ttylom_driver;
+static struct tty_driver* ttylos_driver;
+#endif
+
 static void pty_close(struct tty_struct *tty, struct file *filp)
 {
 	BUG_ON(!tty);
@@ -863,10 +868,152 @@ static void __init unix98_pty_init(void)
 static inline void unix98_pty_init(void) { }
 #endif
 
+#if CONFIG_TTY_LOOPBACK
+
+#define TTYLO_MINORS (1 << MINORBITS)
+
+static int ttylomx_open(struct inode *inode, struct file *filp)
+{
+	nonseekable_open(inode, filp);
+
+	/* We refuse fsnotify events on ptmx, since it's a shared resource */
+	filp->f_mode |= FMODE_NONOTIFY;
+
+	return 0;
+}
+
+static const struct tty_operations ttylom_ops = {
+	.lookup = ptm_unix98_lookup,
+	.install = pty_unix98_install,
+	.remove = pty_unix98_remove,
+	.open = pty_open,
+	.close = pty_close,
+	.write = pty_write,
+	.write_room = pty_write_room,
+	.flush_buffer = pty_flush_buffer,
+	.chars_in_buffer = pty_chars_in_buffer,
+	.unthrottle = pty_unthrottle,
+	.ioctl = pty_unix98_ioctl,
+	.resize = pty_resize,
+	.shutdown = pty_unix98_shutdown,
+	.cleanup = pty_cleanup
+};
+
+static const struct tty_operations ttylos_ops = {
+	.lookup = pts_unix98_lookup,
+	.install = pty_unix98_install,
+	.remove = pty_unix98_remove,
+	.open = pty_open,
+	.close = pty_close,
+	.write = pty_write,
+	.write_room = pty_write_room,
+	.flush_buffer = pty_flush_buffer,
+	.chars_in_buffer = pty_chars_in_buffer,
+	.unthrottle = pty_unthrottle,
+	.set_termios = pty_set_termios,
+	.start = pty_start,
+	.stop = pty_stop,
+	.shutdown = pty_unix98_shutdown,
+	.cleanup = pty_cleanup,
+};
+
+static struct file_operations ttylomx_fops;
+static struct cdev ttylomx_cdev;
+
+static int __init ttylo_init(void) {
+	int ret;
+
+	ttylom_driver = tty_alloc_driver(TTYLO_MINORS,
+			TTY_DRIVER_RESET_TERMIOS |
+			TTY_DRIVER_REAL_RAW |
+			TTY_DRIVER_DYNAMIC_DEV |
+			TTY_DRIVER_DEVPTS_MEM |
+			TTY_DRIVER_DYNAMIC_ALLOC);
+	if (!ttylom_driver) {
+		ret = -ENOMEM;
+		goto fail_alloc_lom;
+	}
+
+	ttylos_driver = tty_alloc_driver(TTYLO_MINORS,
+			TTY_DRIVER_RESET_TERMIOS |
+			TTY_DRIVER_REAL_RAW |
+			TTY_DRIVER_DYNAMIC_DEV |
+			TTY_DRIVER_DEVPTS_MEM |
+			TTY_DRIVER_DYNAMIC_ALLOC);
+	if (!ttylos_driver) {
+		ret = -ENOMEM;
+		goto fail_alloc_los;
+	}
+
+	ttylom_driver->driver_name = "ttylo_master";
+	ttylom_driver->name = "ttyLom";
+	ttylom_driver->type = TTY_DRIVER_TYPE_PTY;
+	ttylom_driver->subtype = PTY_TYPE_MASTER;
+	ttylom_driver->init_termios = tty_std_termios;
+	ttylom_driver->other = ttylos_driver;
+	tty_set_operations(ttylom_driver, &ttylom_ops);
+	ret = tty_register_driver(ttylom_driver);
+	if (ret) {
+		goto fail_register_lom;
+	}
+
+	ttylos_driver->driver_name = "ttylo_slave";
+	ttylos_driver->name = "ttyLo";
+	ttylos_driver->type = TTY_DRIVER_TYPE_PTY;
+	ttylos_driver->subtype = PTY_TYPE_SLAVE;
+	ttylos_driver->init_termios = tty_std_termios;
+	ttylos_driver->other = ttylos_driver;
+	tty_set_operations(ttylos_driver, &ttylos_ops);
+	ret = tty_register_driver(ttylos_driver);
+	if (ret) {
+		goto fail_register_los;
+	}
+
+	tty_default_fops(&ttylomx_fops);
+	ttylomx_fops.open = ttylomx_open;
+
+	cdev_init(&ttylomx_cdev, &ttylomx_fops);
+	ret = cdev_add(&ttylomx_cdev, 0, 1);
+	if (ret) {
+		goto fail_cdev_add_lomx;
+	}
+
+	ret = alloc_chrdev_region(&(ttylomx_cdev.dev), 0, 1, "/dev/ttyLomx");
+	if (ret) {
+		goto fail_alloc_region_lomx;
+	}
+
+	device_create(tty_class, NULL, ttylomx_cdev.dev, NULL, "ttyLomx");
+
+success:
+	return 0;
+fail_alloc_region_lomx:
+	cdev_del(&ttylomx_cdev);
+fail_cdev_add_lomx:
+	tty_unregister_driver(ttylos_driver);
+fail_register_los:
+	tty_unregister_driver(ttylom_driver);
+fail_register_lom:
+	put_tty_driver(ttylos_driver);
+fail_alloc_los:
+	put_tty_driver(ttylom_driver);
+fail_alloc_lom:
+	return ret;
+}
+#else
+static inline int ttylo_init(void) {}
+#endif
+
 static int __init pty_init(void)
 {
+	int ret;
+
 	legacy_pty_init();
 	unix98_pty_init();
+	ret = ttylo_init();
+	if (ret) {
+		printk(KERN_WARNING "Could not initialize tty loopback (%d)", ret);
+	}
 	return 0;
 }
 module_init(pty_init);
