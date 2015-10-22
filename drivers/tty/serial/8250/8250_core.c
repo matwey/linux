@@ -986,7 +986,6 @@ int serial8250_register_8250_port(struct uart_8250_port *up)
 		uart->capabilities	= up->capabilities;
 		uart->port.throttle	= up->port.throttle;
 		uart->port.unthrottle	= up->port.unthrottle;
-		uart->port.rs485_config	= up->port.rs485_config;
 		uart->port.rs485	= up->port.rs485;
 		uart->dma		= up->dma;
 
@@ -1025,6 +1024,8 @@ int serial8250_register_8250_port(struct uart_8250_port *up)
 			uart->port.pm = up->port.pm;
 		if (up->port.handle_break)
 			uart->port.handle_break = up->port.handle_break;
+		if (up->port.rs485_config)
+			uart->port.rs485_config	= up->port.rs485_config;
 		if (up->dl_read)
 			uart->dl_read = up->dl_read;
 		if (up->dl_write)
