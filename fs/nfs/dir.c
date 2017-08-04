@@ -1147,7 +1147,7 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct dentry *parent;
 	struct nfs_fh *fhandle = NULL;
 	struct nfs_fattr *fattr = NULL;
-	int error;
+	int error = 0;
 
 	if (nd && (nd->flags & LOOKUP_UMOUNT))
 		/* on unmount, assume all dentries are correct */
@@ -1275,7 +1275,7 @@ out_zap_parent:
 		if (IS_ROOT(dentry))
 			goto out_valid;
 		shrink_dcache_parent(dentry);
-		if (dentry->d_lockref.count > 1)
+		if (error && error != -ENOENT && dentry->d_lockref.count > 1)
 			/* possibly mounted, too dangerous to drop */
 			goto out_valid;
 	}
