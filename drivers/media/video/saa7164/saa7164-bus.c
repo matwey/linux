@@ -378,10 +378,11 @@ int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
 		memcpy(&msg_tmp, bus->m_pdwGetRing + curr_grp, bytes_to_read);
 	}
 
+	memcpy(msg, &msg_tmp, sizeof(*msg));
+
 	/* No need to update the read positions, because this was a peek */
 	/* If the caller specifically want to peek, return */
 	if (peekonly) {
-		memcpy(msg, &msg_tmp, sizeof(*msg));
 		goto peekout;
 	}
 
@@ -426,21 +427,15 @@ int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
 		space_rem = bus->m_dwSizeGetRing - curr_grp;
 
 		if (space_rem < sizeof(*msg)) {
-			/* msg wraps around the ring */
-			memcpy(msg, bus->m_pdwGetRing + curr_grp, space_rem);
-			memcpy((u8 *)msg + space_rem, bus->m_pdwGetRing,
-				sizeof(*msg) - space_rem);
 			if (buf)
 				memcpy(buf, bus->m_pdwGetRing + sizeof(*msg) -
 					space_rem, buf_size);
 
 		} else if (space_rem == sizeof(*msg)) {
-			memcpy(msg, bus->m_pdwGetRing + curr_grp, sizeof(*msg));
 			if (buf)
 				memcpy(buf, bus->m_pdwGetRing, buf_size);
 		} else {
 			/* Additional data wraps around the ring */
-			memcpy(msg, bus->m_pdwGetRing + curr_grp, sizeof(*msg));
 			if (buf) {
 				memcpy(buf, bus->m_pdwGetRing + curr_grp +
 					sizeof(*msg), space_rem - sizeof(*msg));
@@ -453,7 +448,6 @@ int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
 
 	} else {
 		/* No wrapping */
-		memcpy(msg, bus->m_pdwGetRing + curr_grp, sizeof(*msg));
 		if (buf)
 			memcpy(buf, bus->m_pdwGetRing + curr_grp + sizeof(*msg),
 				buf_size);
