@@ -2645,7 +2645,7 @@ isdn_net_newslave(char *parm)
 		/* Slave-Name MUST not be empty */
 		if (!strlen(p + 1))
 			return NULL;
-		strcpy(newname, p + 1);
+		strlcpy(newname, p + 1, sizeof(newname));
 		*p = 0;
 		/* Master must already exist */
 		if (!(n = isdn_net_findif(parm)))
