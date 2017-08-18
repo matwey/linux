@@ -152,12 +152,12 @@ out:
 int __devinit clp_add_pci_device(u32 fid, u32 fh, int configured)
 {
 	struct zpci_dev *zdev;
-	int rc;
+	int rc = -ENOMEM;
 
 	zpci_dbg(3, "add fid:%x, fh:%x, c:%d\n", fid, fh, configured);
 	zdev = kzalloc(sizeof(*zdev), GFP_KERNEL);
 	if (!zdev)
-		return -ENOMEM;
+		goto error;
 
 	zdev->fh = fh;
 	zdev->fid = fid;
@@ -178,6 +178,7 @@ int __devinit clp_add_pci_device(u32 fid, u32 fh, int configured)
 	return 0;
 
 error:
+	zpci_dbg(0, "add fid:%x, rc:%d\n", fid, rc);
 	kfree(zdev);
 	return rc;
 }
