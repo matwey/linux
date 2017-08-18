@@ -1044,6 +1044,16 @@ void zpci_stop_device(struct zpci_dev *zdev)
 }
 EXPORT_SYMBOL_GPL(zpci_stop_device);
 
+void zpci_remove_device(struct zpci_dev *zdev)
+{
+	if (!zdev->bus)
+		return;
+
+	device_unregister(zdev->bus->bridge);
+	__pcibios_remove_bus(zdev->bus);
+	pci_remove_bus(zdev->bus);
+}
+
 static inline int barsize(u8 size)
 {
 	return (size) ? (1 << size) >> 10 : 0;
