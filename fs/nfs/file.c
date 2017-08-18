@@ -861,7 +861,7 @@ do_setlk(struct file *filp, int cmd, struct file_lock *fl, int is_local)
 	 */
 	nfs_sync_mapping(filp->f_mapping);
 	if (!nfs_have_delegation(inode, FMODE_READ))
-		nfs_zap_mapping(inode, filp->f_mapping);
+		nfs_zap_caches(inode);
 out:
 	return status;
 }
