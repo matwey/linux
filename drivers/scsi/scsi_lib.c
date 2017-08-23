@@ -304,8 +304,14 @@ void scsi_device_unbusy(struct scsi_device *sdev)
 	unsigned long flags;
 
 	spin_lock_irqsave(shost->host_lock, flags);
-	shost->host_busy--;
-	starget->target_busy--;
+	if (unlikely(shost->host_busy == 0))
+		sdev_printk(KERN_WARNING, sdev, "host_busy already 0\n");
+	else
+		shost->host_busy--;
+	if (unlikely(starget->target_busy == 0))
+		sdev_printk(KERN_WARNING, sdev, "target_busy already 0\n");
+	else
+		starget->target_busy--;
 	if (unlikely(scsi_host_in_recovery(shost) &&
 		     (shost->host_failed || shost->host_eh_scheduled)))
 		scsi_eh_wakeup(shost);
