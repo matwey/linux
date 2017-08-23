@@ -67,6 +67,8 @@ static struct scsi_host_sg_pool scsi_sg_pools[] = {
 
 struct kmem_cache *scsi_sdb_cache;
 
+void __scsi_device_unbusy(struct scsi_device *, int, int, int);
+
 /*
  * When to reinvoke queueing after a resource shortage. It's 3 msecs to
  * not change behaviour from the previous unplug mechanism, experimentation
@@ -115,6 +117,9 @@ static void __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 	struct scsi_target *starget = scsi_target(device);
 	struct request_queue *q = device->request_queue;
 	unsigned long flags;
+	int host_blocked = -1;
+	int device_blocked = -1;
+	int target_blocked = -1;
 
 	SCSI_LOG_MLQUEUE(1,
 		 printk("Inserting command %p into mlqueue\n", cmd));
@@ -134,14 +139,14 @@ static void __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 	 */
 	switch (reason) {
 	case SCSI_MLQUEUE_HOST_BUSY:
-		host->host_blocked = host->max_host_blocked;
+		host_blocked = host->max_host_blocked;
 		break;
 	case SCSI_MLQUEUE_DEVICE_BUSY:
 	case SCSI_MLQUEUE_EH_RETRY:
-		device->device_blocked = device->max_device_blocked;
+		device_blocked = device->max_device_blocked;
 		break;
 	case SCSI_MLQUEUE_TARGET_BUSY:
-		starget->target_blocked = starget->max_target_blocked;
+		target_blocked = starget->max_target_blocked;
 		break;
 	}
 
@@ -150,7 +155,8 @@ static void __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 	 * active on the host/device.
 	 */
 	if (unbusy)
-		scsi_device_unbusy(device);
+		__scsi_device_unbusy(device, host_blocked, target_blocked,
+				     device_blocked);
 
 	/*
 	 * Requeue this command.  It will go before all other commands
@@ -297,7 +303,8 @@ static void scsi_init_cmd_errh(struct scsi_cmnd *cmd)
 		cmd->cmd_len = scsi_command_size(cmd->cmnd);
 }
 
-void scsi_device_unbusy(struct scsi_device *sdev)
+void __scsi_device_unbusy(struct scsi_device *sdev, int host_blocked,
+			  int target_blocked, int device_blocked)
 {
 	struct Scsi_Host *shost = sdev->host;
 	struct scsi_target *starget = scsi_target(sdev);
@@ -315,10 +322,21 @@ void scsi_device_unbusy(struct scsi_device *sdev)
 	if (unlikely(scsi_host_in_recovery(shost) &&
 		     (shost->host_failed || shost->host_eh_scheduled)))
 		scsi_eh_wakeup(shost);
+	if (host_blocked >= 0)
+		shost->host_blocked = host_blocked;
+	if (target_blocked >= 0)
+		starget->target_blocked = target_blocked;
 	spin_unlock(shost->host_lock);
 	spin_lock(sdev->request_queue->queue_lock);
 	sdev->device_busy--;
+	if (device_blocked >= 0)
+		sdev->device_blocked = device_blocked;
 	spin_unlock_irqrestore(sdev->request_queue->queue_lock, flags);
+}
+
+void scsi_device_unbusy(struct scsi_device *sdev)
+{
+	__scsi_device_unbusy(sdev, 0, 0, 0);
 }
 
 /*
