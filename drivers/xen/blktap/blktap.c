@@ -1729,6 +1729,7 @@ static void make_response(blkif_t *blkif, u64 id,
 		break;
 	default:
 		BUG();
+		return;
 	}
 
 	resp->id        = id;
