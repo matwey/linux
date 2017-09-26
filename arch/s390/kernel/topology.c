@@ -13,6 +13,8 @@
 #include <linux/bootmem.h>
 #include <linux/sched.h>
 #include <linux/workqueue.h>
+#include <linux/uaccess.h>
+#include <linux/sysctl.h>
 #include <linux/cpu.h>
 #include <linux/smp.h>
 #include <linux/cpuset.h>
@@ -209,10 +211,8 @@ static void topology_update_polarization_simple(void)
 {
 	int cpu;
 
-	mutex_lock(&smp_cpu_state_mutex);
 	for_each_possible_cpu(cpu)
 		smp_cpu_polarization[cpu] = POLARIZATION_HRZ;
-	mutex_unlock(&smp_cpu_state_mutex);
 }
 
 static int ptf(unsigned long fc)
@@ -277,12 +277,14 @@ int arch_update_cpu_topology(void)
 {
 	struct sysinfo_15_1_x *info = tl_info;
 	struct sys_device *sysdev;
-	int cpu;
+	int cpu, rc;
 
+	mutex_lock(&smp_cpu_state_mutex);
 	if (!MACHINE_HAS_TOPOLOGY) {
 		update_cpu_core_map();
 		topology_update_polarization_simple();
-		return 0;
+		rc = 0;
+		goto out;
 	}
 	store_topology(info);
 	tl_to_cores(info);
@@ -291,7 +293,10 @@ int arch_update_cpu_topology(void)
 		sysdev = get_cpu_sysdev(cpu);
 		kobject_uevent(&sysdev->kobj, KOBJ_CHANGE);
 	}
-	return 1;
+	rc = 1;
+out:
+	mutex_unlock(&smp_cpu_state_mutex);
+	return rc;
 }
 
 static void topology_work_fn(struct work_struct *work)
@@ -302,6 +307,11 @@ static void topology_work_fn(struct work_struct *work)
 void topology_schedule_update(void)
 {
 	schedule_work(&topology_work);
+}
+
+static void topology_flush_work(void)
+{
+	flush_work(&topology_work);
 }
 
 static void topology_timer_fn(unsigned long ignored)
@@ -326,6 +336,11 @@ static inline int topology_get_mode(int enabled)
 	return MACHINE_HAS_TOPOLOGY ? TOPOLOGY_MODE_HW : TOPOLOGY_MODE_PACKAGE;
 }
 
+static inline int topology_is_enabled(void)
+{
+	return topology_mode != TOPOLOGY_MODE_SINGLE;
+}
+
 static int __init topology_setup(char *str)
 {
 	int enabled;
@@ -341,10 +356,70 @@ static int __init topology_setup(char *str)
 }
 early_param("topology", topology_setup);
 
+static int topology_ctl_handler(struct ctl_table *ctl, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	unsigned int len;
+	int new_mode;
+	char buf[2];
+
+	if (!*lenp || *ppos) {
+		*lenp = 0;
+		return 0;
+	}
+	if (!write) {
+		strncpy(buf, topology_is_enabled() ? "1\n" : "0\n",
+			ARRAY_SIZE(buf));
+		len = strnlen(buf, ARRAY_SIZE(buf));
+		if (len > *lenp)
+			len = *lenp;
+		if (copy_to_user(buffer, buf, len))
+			return -EFAULT;
+		goto out;
+	}
+	len = *lenp;
+	if (copy_from_user(buf, buffer, len > sizeof(buf) ? sizeof(buf) : len))
+		return -EFAULT;
+	if (buf[0] != '0' && buf[0] != '1')
+		return -EINVAL;
+	mutex_lock(&smp_cpu_state_mutex);
+	new_mode = topology_get_mode(buf[0] == '1');
+	if (topology_mode != new_mode) {
+		topology_mode = new_mode;
+		topology_schedule_update();
+	}
+	mutex_unlock(&smp_cpu_state_mutex);
+	topology_flush_work();
+out:
+	*lenp = len;
+	*ppos += len;
+	return 0;
+}
+
+static struct ctl_table topology_ctl_table[] = {
+	{
+		.procname       = "topology",
+		.mode           = 0644,
+		.proc_handler   = topology_ctl_handler,
+	},
+	{ },
+};
+
+static struct ctl_table topology_dir_table[] = {
+	{
+		.procname       = "s390",
+		.maxlen         = 0,
+		.mode           = 0555,
+		.child          = topology_ctl_table,
+	},
+	{ },
+};
+
 static int __init init_topology_update(void)
 {
 	int rc;
 
+	register_sysctl_table(topology_dir_table);
 	rc = 0;
 	if (!MACHINE_HAS_TOPOLOGY) {
 		topology_update_polarization_simple();
