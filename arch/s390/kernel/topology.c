@@ -22,13 +22,20 @@
 #define PTF_VERTICAL	(1UL)
 #define PTF_CHECK	(2UL)
 
+enum {
+	TOPOLOGY_MODE_HW,
+	TOPOLOGY_MODE_SINGLE,
+	TOPOLOGY_MODE_PACKAGE,
+	TOPOLOGY_MODE_UNINITIALIZED
+};
+
 struct mask_info {
 	struct mask_info *next;
 	unsigned char id;
 	cpumask_t mask;
 };
 
-static int topology_enabled = 1;
+static int topology_mode = TOPOLOGY_MODE_UNINITIALIZED;
 static void topology_work_fn(struct work_struct *work);
 static struct sysinfo_15_1_x *tl_info;
 static struct timer_list topology_timer;
@@ -51,20 +58,28 @@ static cpumask_t cpu_group_map(struct mask_info *info, unsigned int cpu)
 {
 	cpumask_t mask;
 
-	cpumask_clear(&mask);
-	if (!topology_enabled || !MACHINE_HAS_TOPOLOGY) {
-		cpumask_copy(&mask, cpumask_of(cpu));
-		return mask;
-	}
-	while (info) {
-		if (cpumask_test_cpu(cpu, &info->mask)) {
-			mask = info->mask;
-			break;
+	cpumask_copy(&mask, cpumask_of(cpu));
+	switch (topology_mode) {
+	case TOPOLOGY_MODE_HW:
+		while (info) {
+			if (cpumask_test_cpu(cpu, &info->mask)) {
+				mask = info->mask;
+				break;
+			}
+			info = info->next;
 		}
-		info = info->next;
-	}
-	if (cpumask_empty(&mask))
+		if (cpumask_empty(&mask))
+			cpumask_copy(&mask, cpumask_of(cpu));
+		break;
+	case TOPOLOGY_MODE_PACKAGE:
+		cpumask_copy(&mask, cpu_present_mask);
+		break;
+	default:
+		/* fallthrough */
+	case TOPOLOGY_MODE_SINGLE:
 		cpumask_copy(&mask, cpumask_of(cpu));
+		break;
+	}
 	return mask;
 }
 
@@ -304,14 +319,27 @@ static void set_topology_timer(void)
 	add_timer(&topology_timer);
 }
 
-static int __init early_parse_topology(char *p)
+static inline int topology_get_mode(int enabled)
 {
-	if (strncmp(p, "off", 3))
-		return 0;
-	topology_enabled = 0;
+	if (!enabled)
+		return TOPOLOGY_MODE_SINGLE;
+	return MACHINE_HAS_TOPOLOGY ? TOPOLOGY_MODE_HW : TOPOLOGY_MODE_PACKAGE;
+}
+
+static int __init topology_setup(char *str)
+{
+	int enabled;
+
+	if (!strncmp(str, "off", 3))
+		enabled = 0;
+	else if (!strncmp(str, "on", 2))
+		enabled = 1;
+	else
+		return -EINVAL;
+	topology_mode = topology_get_mode(enabled);
 	return 0;
 }
-early_param("topology", early_parse_topology);
+early_param("topology", topology_setup);
 
 static int __init init_topology_update(void)
 {
@@ -350,6 +378,12 @@ void __init s390_init_cpu_topology(void)
 	struct sysinfo_15_1_x *info;
 	int i;
 
+	if (topology_mode == TOPOLOGY_MODE_UNINITIALIZED) {
+		if (MACHINE_HAS_TOPOLOGY)
+			topology_mode = TOPOLOGY_MODE_HW;
+		else
+			topology_mode = TOPOLOGY_MODE_SINGLE;
+	}
 	if (!MACHINE_HAS_TOPOLOGY)
 		return;
 	tl_info = alloc_bootmem_pages(PAGE_SIZE);
