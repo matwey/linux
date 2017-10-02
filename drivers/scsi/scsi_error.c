@@ -55,6 +55,14 @@ static void scsi_eh_done(struct scsi_cmnd *scmd);
 #define BUS_RESET_SETTLE_TIME   (10)
 #define HOST_RESET_SETTLE_TIME  (10)
 
+/*
+ * Time to wait for outstanding IOs when about to send
+ * a device reset, e.g. sg_reset. The msecs to wait must
+ * be an multiple of the msecs to wait per try.
+ */
+#define	MSECS_PER_TRY_FOR_IO_ON_RESET		500
+#define	MSECS_TO_WAIT_FOR_IO_ON_RESET (MSECS_PER_TRY_FOR_IO_ON_RESET * 10)
+
 static int scsi_eh_try_stu(struct scsi_cmnd *scmd);
 
 /* called with shost->host_lock held */
@@ -2262,6 +2270,7 @@ scsi_reset_provider(struct scsi_device *dev, int flag)
 	struct request req;
 	unsigned long flags;
 	int rtn;
+	unsigned int msecs_to_wait = MSECS_TO_WAIT_FOR_IO_ON_RESET;
 
 	if (scsi_autopm_get_host(shost) < 0)
 		return FAILED;
@@ -2281,6 +2290,24 @@ scsi_reset_provider(struct scsi_device *dev, int flag)
 
 	spin_lock_irqsave(shost->host_lock, flags);
 	shost->tmf_in_progress = 1;
+
+	/* if any IOs in progress wait for them a while */
+	while ((shost->host_busy > 0) && (msecs_to_wait > 0)) {
+		spin_unlock_irqrestore(shost->host_lock, flags);
+		msleep(MSECS_PER_TRY_FOR_IO_ON_RESET);
+		msecs_to_wait -= MSECS_PER_TRY_FOR_IO_ON_RESET;
+		spin_lock_irqsave(shost->host_lock, flags);
+	}
+	if (shost->host_busy) {
+		shost->tmf_in_progress = 0;
+		spin_unlock_irqrestore(shost->host_lock, flags);
+		scsi_put_command(scmd);
+		scsi_autopm_put_host(shost);
+		SCSI_LOG_ERROR_RECOVERY(3,
+		    printk("%s: device reset failed: outstanding IO\n", __func__));
+		return FAILED;
+	}
+
 	spin_unlock_irqrestore(shost->host_lock, flags);
 
 	switch (flag) {
