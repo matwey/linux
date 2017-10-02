@@ -13,6 +13,8 @@
 #include <linux/bootmem.h>
 #include <linux/sched.h>
 #include <linux/workqueue.h>
+#include <linux/uaccess.h>
+#include <linux/sysctl.h>
 #include <linux/cpu.h>
 #include <linux/smp.h>
 #include <linux/cpuset.h>
@@ -22,13 +24,20 @@
 #define PTF_VERTICAL	(1UL)
 #define PTF_CHECK	(2UL)
 
+enum {
+	TOPOLOGY_MODE_HW,
+	TOPOLOGY_MODE_SINGLE,
+	TOPOLOGY_MODE_PACKAGE,
+	TOPOLOGY_MODE_UNINITIALIZED
+};
+
 struct mask_info {
 	struct mask_info *next;
 	unsigned char id;
 	cpumask_t mask;
 };
 
-static int topology_enabled = 1;
+static int topology_mode = TOPOLOGY_MODE_UNINITIALIZED;
 static void topology_work_fn(struct work_struct *work);
 static struct sysinfo_15_1_x *tl_info;
 static struct timer_list topology_timer;
@@ -51,20 +60,28 @@ static cpumask_t cpu_group_map(struct mask_info *info, unsigned int cpu)
 {
 	cpumask_t mask;
 
-	cpumask_clear(&mask);
-	if (!topology_enabled || !MACHINE_HAS_TOPOLOGY) {
-		cpumask_copy(&mask, cpumask_of(cpu));
-		return mask;
-	}
-	while (info) {
-		if (cpumask_test_cpu(cpu, &info->mask)) {
-			mask = info->mask;
-			break;
+	cpumask_copy(&mask, cpumask_of(cpu));
+	switch (topology_mode) {
+	case TOPOLOGY_MODE_HW:
+		while (info) {
+			if (cpumask_test_cpu(cpu, &info->mask)) {
+				mask = info->mask;
+				break;
+			}
+			info = info->next;
 		}
-		info = info->next;
-	}
-	if (cpumask_empty(&mask))
+		if (cpumask_empty(&mask))
+			cpumask_copy(&mask, cpumask_of(cpu));
+		break;
+	case TOPOLOGY_MODE_PACKAGE:
+		cpumask_copy(&mask, cpu_present_mask);
+		break;
+	default:
+		/* fallthrough */
+	case TOPOLOGY_MODE_SINGLE:
 		cpumask_copy(&mask, cpumask_of(cpu));
+		break;
+	}
 	return mask;
 }
 
@@ -194,10 +211,8 @@ static void topology_update_polarization_simple(void)
 {
 	int cpu;
 
-	mutex_lock(&smp_cpu_state_mutex);
 	for_each_possible_cpu(cpu)
 		smp_cpu_polarization[cpu] = POLARIZATION_HRZ;
-	mutex_unlock(&smp_cpu_state_mutex);
 }
 
 static int ptf(unsigned long fc)
@@ -262,12 +277,14 @@ int arch_update_cpu_topology(void)
 {
 	struct sysinfo_15_1_x *info = tl_info;
 	struct sys_device *sysdev;
-	int cpu;
+	int cpu, rc;
 
+	mutex_lock(&smp_cpu_state_mutex);
 	if (!MACHINE_HAS_TOPOLOGY) {
 		update_cpu_core_map();
 		topology_update_polarization_simple();
-		return 0;
+		rc = 0;
+		goto out;
 	}
 	store_topology(info);
 	tl_to_cores(info);
@@ -276,7 +293,10 @@ int arch_update_cpu_topology(void)
 		sysdev = get_cpu_sysdev(cpu);
 		kobject_uevent(&sysdev->kobj, KOBJ_CHANGE);
 	}
-	return 1;
+	rc = 1;
+out:
+	mutex_unlock(&smp_cpu_state_mutex);
+	return rc;
 }
 
 static void topology_work_fn(struct work_struct *work)
@@ -287,6 +307,11 @@ static void topology_work_fn(struct work_struct *work)
 void topology_schedule_update(void)
 {
 	schedule_work(&topology_work);
+}
+
+static void topology_flush_work(void)
+{
+	flush_work(&topology_work);
 }
 
 static void topology_timer_fn(unsigned long ignored)
@@ -304,19 +329,97 @@ static void set_topology_timer(void)
 	add_timer(&topology_timer);
 }
 
-static int __init early_parse_topology(char *p)
+static inline int topology_get_mode(int enabled)
 {
-	if (strncmp(p, "off", 3))
-		return 0;
-	topology_enabled = 0;
+	if (!enabled)
+		return TOPOLOGY_MODE_SINGLE;
+	return MACHINE_HAS_TOPOLOGY ? TOPOLOGY_MODE_HW : TOPOLOGY_MODE_PACKAGE;
+}
+
+static inline int topology_is_enabled(void)
+{
+	return topology_mode != TOPOLOGY_MODE_SINGLE;
+}
+
+static int __init topology_setup(char *str)
+{
+	int enabled;
+
+	if (!strncmp(str, "off", 3))
+		enabled = 0;
+	else if (!strncmp(str, "on", 2))
+		enabled = 1;
+	else
+		return -EINVAL;
+	topology_mode = topology_get_mode(enabled);
 	return 0;
 }
-early_param("topology", early_parse_topology);
+early_param("topology", topology_setup);
+
+static int topology_ctl_handler(struct ctl_table *ctl, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	unsigned int len;
+	int new_mode;
+	char buf[2];
+
+	if (!*lenp || *ppos) {
+		*lenp = 0;
+		return 0;
+	}
+	if (!write) {
+		strncpy(buf, topology_is_enabled() ? "1\n" : "0\n",
+			ARRAY_SIZE(buf));
+		len = strnlen(buf, ARRAY_SIZE(buf));
+		if (len > *lenp)
+			len = *lenp;
+		if (copy_to_user(buffer, buf, len))
+			return -EFAULT;
+		goto out;
+	}
+	len = *lenp;
+	if (copy_from_user(buf, buffer, len > sizeof(buf) ? sizeof(buf) : len))
+		return -EFAULT;
+	if (buf[0] != '0' && buf[0] != '1')
+		return -EINVAL;
+	mutex_lock(&smp_cpu_state_mutex);
+	new_mode = topology_get_mode(buf[0] == '1');
+	if (topology_mode != new_mode) {
+		topology_mode = new_mode;
+		topology_schedule_update();
+	}
+	mutex_unlock(&smp_cpu_state_mutex);
+	topology_flush_work();
+out:
+	*lenp = len;
+	*ppos += len;
+	return 0;
+}
+
+static struct ctl_table topology_ctl_table[] = {
+	{
+		.procname       = "topology",
+		.mode           = 0644,
+		.proc_handler   = topology_ctl_handler,
+	},
+	{ },
+};
+
+static struct ctl_table topology_dir_table[] = {
+	{
+		.procname       = "s390",
+		.maxlen         = 0,
+		.mode           = 0555,
+		.child          = topology_ctl_table,
+	},
+	{ },
+};
 
 static int __init init_topology_update(void)
 {
 	int rc;
 
+	register_sysctl_table(topology_dir_table);
 	rc = 0;
 	if (!MACHINE_HAS_TOPOLOGY) {
 		topology_update_polarization_simple();
@@ -350,6 +453,12 @@ void __init s390_init_cpu_topology(void)
 	struct sysinfo_15_1_x *info;
 	int i;
 
+	if (topology_mode == TOPOLOGY_MODE_UNINITIALIZED) {
+		if (MACHINE_HAS_TOPOLOGY)
+			topology_mode = TOPOLOGY_MODE_HW;
+		else
+			topology_mode = TOPOLOGY_MODE_SINGLE;
+	}
 	if (!MACHINE_HAS_TOPOLOGY)
 		return;
 	tl_info = alloc_bootmem_pages(PAGE_SIZE);
