@@ -56,6 +56,12 @@ typedef struct netif_st {
 
 	unsigned int     irq;
 
+	struct netif_st *notify_link[2];
+#define RX_IDX 0
+#define TX_IDX 1
+#define rx_notify_link notify_link[RX_IDX]
+#define tx_notify_link notify_link[TX_IDX]
+
 	/* The shared rings and indexes. */
 	netif_tx_back_ring_t tx;
 	netif_rx_back_ring_t rx;
@@ -91,6 +97,7 @@ typedef struct netif_st {
 
 	/* Statistics */
 	unsigned long nr_copied_skbs;
+	unsigned long nr_coalesced_skbs;
 	unsigned long rx_gso_csum_fixups;
 
 	/* Miscellaneous private stuff. */
@@ -216,6 +223,7 @@ static inline int netbk_can_sg(struct net_device *dev)
 
 struct pending_tx_info {
 	netif_tx_request_t req;
+	grant_handle_t grant_handle;
 	netif_t *netif;
 };
 typedef unsigned int pending_ring_idx_t;
@@ -223,7 +231,8 @@ typedef unsigned int pending_ring_idx_t;
 struct netbk_rx_meta {
 	skb_frag_t frag;
 	u16 id;
-	u8 copy:1;
+	u8 copy;
+	u8 tail;
 };
 
 struct netbk_tx_pending_inuse {
@@ -235,63 +244,55 @@ struct netbk_tx_pending_inuse {
 #define MAX_MFN_ALLOC 64
 
 struct xen_netbk {
-	union {
-		struct {
-			struct tasklet_struct net_tx_tasklet;
-			struct tasklet_struct net_rx_tasklet;
-		};
-		struct {
-			wait_queue_head_t netbk_action_wq;
-			struct task_struct *task;
-		};
-	};
-
-	struct sk_buff_head rx_queue;
-	struct sk_buff_head tx_queue;
-
-	struct timer_list net_timer;
-	struct timer_list tx_pending_timer;
-
-	pending_ring_idx_t pending_prod;
-	pending_ring_idx_t pending_cons;
-	pending_ring_idx_t dealloc_prod;
-	pending_ring_idx_t dealloc_cons;
-
-	struct list_head pending_inuse_head;
-	struct list_head schedule_list;
-
-	spinlock_t schedule_list_lock;
-	spinlock_t release_lock;
-
-	struct page **mmap_pages;
-
 	atomic_t nr_groups;
-	unsigned int alloc_index;
 
-	struct pending_tx_info pending_tx_info[MAX_PENDING_REQS];
-	struct netbk_tx_pending_inuse pending_inuse[MAX_PENDING_REQS];
-	struct gnttab_unmap_grant_ref tx_unmap_ops[MAX_PENDING_REQS];
-	struct gnttab_map_grant_ref tx_map_ops[MAX_PENDING_REQS];
+	struct {
+		pending_ring_idx_t pending_prod, pending_cons;
+		pending_ring_idx_t dealloc_prod, dealloc_cons;
+		struct sk_buff_head queue;
+		struct tasklet_struct tasklet;
+		struct list_head schedule_list;
+		spinlock_t schedule_list_lock;
+		spinlock_t release_lock;
+		struct page **mmap_pages;
+		struct timer_list pending_timer;
+		struct list_head pending_inuse_head;
+		struct pending_tx_info pending_info[MAX_PENDING_REQS];
+		struct netbk_tx_pending_inuse pending_inuse[MAX_PENDING_REQS];
+		u16 pending_ring[MAX_PENDING_REQS];
+		u16 dealloc_ring[MAX_PENDING_REQS];
+		union {
+			gnttab_map_grant_ref_t map_ops[MAX_PENDING_REQS];
+			gnttab_unmap_grant_ref_t unmap_ops[MAX_PENDING_REQS];
+			gnttab_copy_t copy_ops[2 * MAX_PENDING_REQS - 1];
+			multicall_entry_t mcl[0];
+		};
+		gnttab_copy_t copy_op;
+		netif_tx_request_t slots[XEN_NETIF_NR_SLOTS_MIN];
+	} tx;
 
-	grant_handle_t grant_tx_handle[MAX_PENDING_REQS];
-	u16 pending_ring[MAX_PENDING_REQS];
-	u16 dealloc_ring[MAX_PENDING_REQS];
+	wait_queue_head_t action_wq;
+	struct task_struct *task;
 
-	struct multicall_entry rx_mcl[NET_RX_RING_SIZE+3];
-	struct mmu_update rx_mmu[NET_RX_RING_SIZE];
-	struct gnttab_transfer grant_trans_op[NET_RX_RING_SIZE];
-	struct gnttab_copy grant_copy_op[NET_RX_RING_SIZE];
-	DECLARE_BITMAP(rx_notify, NR_DYNIRQS);
-#if !defined(NR_DYNIRQS)
-# error
-#elif NR_DYNIRQS <= 0x10000
-	u16 notify_list[NET_RX_RING_SIZE];
-#else
-	int notify_list[NET_RX_RING_SIZE];
-#endif
-	struct netbk_rx_meta meta[NET_RX_RING_SIZE];
-
-	unsigned long mfn_list[MAX_MFN_ALLOC];
+	struct xen_netbk_rx {
+		struct sk_buff_head queue;
+		struct tasklet_struct tasklet;
+		struct timer_list timer;
+		unsigned int alloc_index;
+		struct multicall_entry mcl[NET_RX_RING_SIZE+3];
+		struct mmu_update mmu[NET_RX_RING_SIZE];
+		/*
+		 * An skb may have a maximal number of frags but still be
+		 * small in overall size. Thus the worst case number of copy
+		 * operations is one more (for the head) than MAX_SKB_FRAGS
+		 * per ring slot.
+		 */
+		struct gnttab_copy grant_copy_op[(MAX_SKB_FRAGS + 1) *
+						 NET_RX_RING_SIZE];
+		struct gnttab_transfer grant_trans_op;
+		struct netbk_rx_meta meta[NET_RX_RING_SIZE];
+		unsigned long mfn_list[MAX_MFN_ALLOC];
+	} rx;
 };
 
 extern struct xen_netbk *xen_netbk;
