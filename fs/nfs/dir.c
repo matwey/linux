@@ -2175,14 +2175,17 @@ int nfs_access_cache_shrinker(struct shrinker *shrink,
 	struct nfs_access_entry *cache;
 	int nr_to_scan = sc->nr_to_scan;
 	gfp_t gfp_mask = sc->gfp_mask;
+	int keep_going;
 
 	if ((gfp_mask & GFP_KERNEL) != GFP_KERNEL)
 		return (nr_to_scan == 0) ? 0 : -1;
 
 	if (nr_to_scan == 0)
-		return (atomic_long_read(&nfs_access_nr_entries) / 100) * sysctl_vfs_cache_pressure;
+		return (atomic_long_read(&nfs_access_nr_entries) * sysctl_vfs_cache_pressure) / 100;
 	spin_lock(&nfs_access_lru_lock);
-	list_for_each_entry_safe(nfsi, next, &nfs_access_lru_list, access_cache_inode_lru) {
+	do {
+	    keep_going = 0;
+	    list_for_each_entry_safe(nfsi, next, &nfs_access_lru_list, access_cache_inode_lru) {
 		struct inode *inode;
 
 		if (nr_to_scan-- == 0)
@@ -2191,6 +2194,7 @@ int nfs_access_cache_shrinker(struct shrinker *shrink,
 		spin_lock(&inode->i_lock);
 		if (list_empty(&nfsi->access_cache_entry_lru))
 			goto remove_lru_entry;
+		keep_going = 1;
 		cache = list_entry(nfsi->access_cache_entry_lru.next,
 				struct nfs_access_entry, lru);
 		list_move(&cache->lru, &head);
@@ -2206,10 +2210,11 @@ remove_lru_entry:
 			smp_mb__after_clear_bit();
 		}
 		spin_unlock(&inode->i_lock);
-	}
+	    }
+	} while(keep_going && nr_to_scan > 0);
 	spin_unlock(&nfs_access_lru_lock);
 	nfs_access_free_list(&head);
-	return (atomic_long_read(&nfs_access_nr_entries) / 100) * sysctl_vfs_cache_pressure;
+	return (atomic_long_read(&nfs_access_nr_entries) * sysctl_vfs_cache_pressure) / 100;
 }
 
 static void __nfs_access_zap_cache(struct nfs_inode *nfsi, struct list_head *head)
@@ -2368,6 +2373,27 @@ void nfs_access_add_cache(struct inode *inode, struct nfs_access_entry *set)
 	struct nfs_access_entry *cache = kmalloc(sizeof(*cache), GFP_KERNEL);
 	if (cache == NULL)
 		return;
+	/* If there is an old entry, remove it first to avoid cache getting
+	 * too large
+	 */
+	if (!list_empty(&NFS_I(inode)->access_cache_entry_lru)) {
+		struct nfs_access_entry *old;
+		spin_lock(&inode->i_lock);
+		old = list_first_entry_or_null(&NFS_I(inode)->access_cache_entry_lru,
+					       struct nfs_access_entry, lru);
+		if (old &&
+		    !nfs_have_delegated_attributes(inode) &&
+		    !time_in_range_open(jiffies, old->jiffies,
+					old->jiffies + NFS_I(inode)->attrtimeo)) {
+			list_del_init(&old->lru);
+			rb_erase(&old->rb_node, &NFS_I(inode)->access_cache);
+		} else
+			old = NULL;
+		spin_unlock(&inode->i_lock);
+		if (old)
+			nfs_access_free_entry(old);
+	}
+
 	RB_CLEAR_NODE(&cache->rb_node);
 	cache->jiffies = set->jiffies;
 	cache->cred = get_rpccred(set->cred);
