@@ -51,8 +51,14 @@ unx_destroy(struct rpc_auth *auth)
 static int
 unx_hash_cred(struct auth_cred *acred, unsigned int hashbits)
 {
-	return hash_64(acred->gid | ((u64) acred->uid << (sizeof(gid_t) * 8)),
-		       hashbits);
+	int ret = hash_32(acred->uid, 32);
+	if (acred->group_info) {
+		int g;
+
+		for (g = 0; g < acred->group_info->ngroups && g < NFS_NGROUPS; g++)
+			ret = hash_32(ret ^ GROUP_AT(acred->group_info, g), 32);
+	}
+	return hash_32(ret ^ acred->gid, hashbits);
 }
 
 /*
