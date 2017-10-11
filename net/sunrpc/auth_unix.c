@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/auth.h>
+#include <linux/hash.h>
 
 #define NFS_NGROUPS	16
 
@@ -45,6 +46,13 @@ unx_destroy(struct rpc_auth *auth)
 {
 	dprintk("RPC:       destroying UNIX authenticator %p\n", auth);
 	rpcauth_clear_credcache(auth->au_credcache);
+}
+
+static int
+unx_hash_cred(struct auth_cred *acred, unsigned int hashbits)
+{
+	return hash_64(acred->gid | ((u64) acred->uid << (sizeof(gid_t) * 8)),
+		       hashbits);
 }
 
 /*
@@ -221,6 +229,7 @@ const struct rpc_authops authunix_ops = {
 	.au_name	= "UNIX",
 	.create		= unx_create,
 	.destroy	= unx_destroy,
+	.hash_cred	= unx_hash_cred,
 	.lookup_cred	= unx_lookup_cred,
 	.crcreate	= unx_create_cred,
 };
