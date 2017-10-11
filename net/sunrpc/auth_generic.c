@@ -13,6 +13,7 @@
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/debug.h>
 #include <linux/sunrpc/sched.h>
+#include <linux/hash.h>
 
 #ifdef RPC_DEBUG
 # define RPCDBG_FACILITY	RPCDBG_AUTH
@@ -67,6 +68,13 @@ static struct rpc_cred *generic_bind_cred(struct rpc_task *task,
 	struct auth_cred *acred = &container_of(cred, struct generic_cred, gc_base)->acred;
 
 	return auth->au_ops->lookup_cred(auth, acred, lookupflags);
+}
+
+static int
+generic_hash_cred(struct auth_cred *acred, unsigned int hashbits)
+{
+	return hash_64(acred->gid | ((u64)acred->uid << (sizeof(gid_t) * 8)),
+		       hashbits);
 }
 
 /*
@@ -172,6 +180,7 @@ void rpc_destroy_generic_auth(void)
 static const struct rpc_authops generic_auth_ops = {
 	.owner = THIS_MODULE,
 	.au_name = "Generic",
+	.hash_cred = generic_hash_cred,
 	.lookup_cred = generic_lookup_cred,
 	.crcreate = generic_create_cred,
 };
