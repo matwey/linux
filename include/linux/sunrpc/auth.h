@@ -97,9 +97,11 @@ struct rpc_authops {
 	struct rpc_auth *	(*create)(struct rpc_clnt *, rpc_authflavor_t);
 	void			(*destroy)(struct rpc_auth *);
 
-	int			(*hash_cred)(struct auth_cred *, unsigned int);
 	struct rpc_cred *	(*lookup_cred)(struct rpc_auth *, struct auth_cred *, int);
 	struct rpc_cred *	(*crcreate)(struct rpc_auth*, struct auth_cred *, int);
+#ifndef __GENKSYMS__
+	int			(*hash_cred)(struct auth_cred *, unsigned int);
+#endif
 };
 
 struct rpc_credops {
