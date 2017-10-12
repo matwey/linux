@@ -406,7 +406,7 @@ static void virtscsi_map_cmd(struct virtio_scsi_target_state *tgt,
 static int virtscsi_kick_cmd(struct virtio_scsi_target_state *tgt,
 			     struct virtio_scsi_vq *vq,
 			     struct virtio_scsi_cmd *cmd,
-			     size_t req_size, size_t resp_size, gfp_t gfp)
+			     size_t req_size, size_t resp_size)
 {
 	unsigned int out_num, in_num;
 	unsigned long flags;
@@ -416,7 +416,8 @@ static int virtscsi_kick_cmd(struct virtio_scsi_target_state *tgt,
 	virtscsi_map_cmd(tgt, cmd, &out_num, &in_num, req_size, resp_size);
 
 	spin_lock(&vq->vq_lock);
-	ret = virtqueue_add_buf(vq->vq, tgt->sg, out_num, in_num, cmd, gfp);
+	ret = virtqueue_add_buf(vq->vq, tgt->sg, out_num, in_num, cmd,
+				GFP_ATOMIC);
 	spin_unlock(&tgt->tgt_lock);
 	if (ret >= 0)
 		ret = virtqueue_kick_prepare(vq->vq);
@@ -466,8 +467,7 @@ static int virtscsi_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *sc)
 	memcpy(cmd->req.cmd.cdb, sc->cmnd, sc->cmd_len);
 
 	if (virtscsi_kick_cmd(tgt, &vscsi->req_vq, cmd,
-			      sizeof cmd->req.cmd, sizeof cmd->resp.cmd,
-			      GFP_ATOMIC) >= 0)
+			      sizeof cmd->req.cmd, sizeof cmd->resp.cmd) >= 0)
 		ret = 0;
 	else
 		mempool_free(cmd, virtscsi_cmd_pool);
@@ -484,8 +484,7 @@ static int virtscsi_tmf(struct virtio_scsi *vscsi, struct virtio_scsi_cmd *cmd)
 
 	cmd->comp = &comp;
 	if (virtscsi_kick_cmd(tgt, &vscsi->ctrl_vq, cmd,
-			      sizeof cmd->req.tmf, sizeof cmd->resp.tmf,
-			      GFP_NOIO) < 0)
+			      sizeof cmd->req.tmf, sizeof cmd->resp.tmf) < 0)
 		goto out;
 
 	wait_for_completion(&comp);
