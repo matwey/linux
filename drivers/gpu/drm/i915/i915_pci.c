@@ -431,7 +431,6 @@ static const struct intel_device_info intel_kabylake_gt3_info = {
 };
 
 #define CFL_PLATFORM \
-	.is_alpha_support = 1, \
 	BDW_FEATURES, \
 	.gen = 9, \
 	.platform = INTEL_COFFEELAKE, \
@@ -454,6 +453,8 @@ static const struct intel_device_info intel_cannonlake_info = {
 	.platform = INTEL_CANNONLAKE,
 	.gen = 10,
 	.ddb_size = 1024,
+	.has_csr = 1,
+	.color = { .degamma_lut_size = 0, .gamma_lut_size = 1024 }
 };
 
 /*
@@ -503,6 +504,7 @@ static const struct pci_device_id pciidlist[] = {
 	INTEL_CFL_S_IDS(&intel_coffeelake_info),
 	INTEL_CFL_H_IDS(&intel_coffeelake_info),
 	INTEL_CFL_U_IDS(&intel_coffeelake_gt3_info),
+	INTEL_CNL_IDS(&intel_cannonlake_info),
 	{0, 0, 0}
 };
 MODULE_DEVICE_TABLE(pci, pciidlist);

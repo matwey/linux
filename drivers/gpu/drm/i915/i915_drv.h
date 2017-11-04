@@ -152,6 +152,14 @@ static inline uint_fixed_16_16_t max_fixed_16_16(uint_fixed_16_16_t max1,
 	return max;
 }
 
+static inline uint_fixed_16_16_t clamp_u64_to_fixed16(uint64_t val)
+{
+	uint_fixed_16_16_t fp;
+	WARN_ON(val >> 32);
+	fp.val = clamp_t(uint32_t, val, 0, ~0);
+	return fp;
+}
+
 static inline uint_fixed_16_16_t fixed_16_16_div_round_up(uint32_t val,
 							  uint32_t d)
 {
@@ -186,6 +194,25 @@ static inline uint_fixed_16_16_t mul_u32_fixed_16_16(uint32_t val,
 	WARN_ON(intermediate_val >> 32);
 	fp.val = (uint32_t) intermediate_val;
 	return fp;
+}
+
+static inline uint_fixed_16_16_t add_fixed16(uint_fixed_16_16_t add1,
+					     uint_fixed_16_16_t add2)
+{
+	uint64_t interm_sum;
+
+	interm_sum = (uint64_t) add1.val + add2.val;
+	return clamp_u64_to_fixed16(interm_sum);
+}
+
+static inline uint_fixed_16_16_t add_fixed16_u32(uint_fixed_16_16_t add1,
+						 uint32_t add2)
+{
+	uint64_t interm_sum;
+	uint_fixed_16_16_t interm_add2 = u32_to_fixed_16_16(add2);
+
+	interm_sum = (uint64_t) add1.val + interm_add2.val;
+	return clamp_u64_to_fixed16(interm_sum);
 }
 
 static inline const char *yesno(bool v)
@@ -1211,8 +1238,8 @@ enum intel_pch {
 	PCH_CPT,	/* Cougarpoint PCH */
 	PCH_LPT,	/* Lynxpoint PCH */
 	PCH_SPT,        /* Sunrisepoint PCH */
-	PCH_KBP,        /* Kabypoint PCH */
-	PCH_CNP,        /* Cannonpoint PCH */
+	PCH_KBP,        /* Kaby Lake PCH */
+	PCH_CNP,        /* Cannon Lake PCH */
 	PCH_NOP,
 };
 
@@ -2835,6 +2862,12 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define IS_GLK_REVID(dev_priv, since, until) \
 	(IS_GEMINILAKE(dev_priv) && IS_REVID(dev_priv, since, until))
 
+#define CNL_REVID_A0		0x0
+#define CNL_REVID_B0		0x1
+
+#define IS_CNL_REVID(p, since, until) \
+	(IS_CANNONLAKE(p) && IS_REVID(p, since, until))
+
 /*
  * The genX designation typically refers to the render engine, so render
  * capability related checks should use IS_GEN, while display and other checks
@@ -2948,16 +2981,17 @@ intel_info(const struct drm_i915_private *dev_priv)
 
 #define HAS_POOLED_EU(dev_priv)	((dev_priv)->info.has_pooled_eu)
 
-#define INTEL_PCH_DEVICE_ID_MASK		0xff00
-#define INTEL_PCH_DEVICE_ID_MASK_EXT		0xff80
+#define INTEL_PCH_DEVICE_ID_MASK		0xff80
 #define INTEL_PCH_IBX_DEVICE_ID_TYPE		0x3b00
 #define INTEL_PCH_CPT_DEVICE_ID_TYPE		0x1c00
 #define INTEL_PCH_PPT_DEVICE_ID_TYPE		0x1e00
 #define INTEL_PCH_LPT_DEVICE_ID_TYPE		0x8c00
 #define INTEL_PCH_LPT_LP_DEVICE_ID_TYPE		0x9c00
+#define INTEL_PCH_WPT_DEVICE_ID_TYPE		0x8c80
+#define INTEL_PCH_WPT_LP_DEVICE_ID_TYPE		0x9c80
 #define INTEL_PCH_SPT_DEVICE_ID_TYPE		0xA100
 #define INTEL_PCH_SPT_LP_DEVICE_ID_TYPE		0x9D00
-#define INTEL_PCH_KBP_DEVICE_ID_TYPE		0xA200
+#define INTEL_PCH_KBP_DEVICE_ID_TYPE		0xA280
 #define INTEL_PCH_CNP_DEVICE_ID_TYPE		0xA300
 #define INTEL_PCH_CNP_LP_DEVICE_ID_TYPE		0x9D80
 #define INTEL_PCH_P2X_DEVICE_ID_TYPE		0x7100
@@ -2972,9 +3006,11 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define HAS_PCH_SPT(dev_priv) (INTEL_PCH_TYPE(dev_priv) == PCH_SPT)
 #define HAS_PCH_LPT(dev_priv) (INTEL_PCH_TYPE(dev_priv) == PCH_LPT)
 #define HAS_PCH_LPT_LP(dev_priv) \
-	((dev_priv)->pch_id == INTEL_PCH_LPT_LP_DEVICE_ID_TYPE)
+	((dev_priv)->pch_id == INTEL_PCH_LPT_LP_DEVICE_ID_TYPE || \
+	 (dev_priv)->pch_id == INTEL_PCH_WPT_LP_DEVICE_ID_TYPE)
 #define HAS_PCH_LPT_H(dev_priv) \
-	((dev_priv)->pch_id == INTEL_PCH_LPT_DEVICE_ID_TYPE)
+	((dev_priv)->pch_id == INTEL_PCH_LPT_DEVICE_ID_TYPE || \
+	 (dev_priv)->pch_id == INTEL_PCH_WPT_DEVICE_ID_TYPE)
 #define HAS_PCH_CPT(dev_priv) (INTEL_PCH_TYPE(dev_priv) == PCH_CPT)
 #define HAS_PCH_IBX(dev_priv) (INTEL_PCH_TYPE(dev_priv) == PCH_IBX)
 #define HAS_PCH_NOP(dev_priv) (INTEL_PCH_TYPE(dev_priv) == PCH_NOP)
@@ -2982,7 +3018,7 @@ intel_info(const struct drm_i915_private *dev_priv)
 
 #define HAS_GMCH_DISPLAY(dev_priv) ((dev_priv)->info.has_gmch_display)
 
-#define HAS_LSPCON(dev_priv) (IS_GEN9(dev_priv))
+#define HAS_LSPCON(dev_priv) (INTEL_GEN(dev_priv) >= 9)
 
 /* DPF == dynamic parity feature */
 #define HAS_L3_DPF(dev_priv) ((dev_priv)->info.has_l3_dpf)

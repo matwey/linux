@@ -105,6 +105,7 @@ static void bxt_init_clock_gating(struct drm_i915_private *dev_priv)
 
 static void glk_init_clock_gating(struct drm_i915_private *dev_priv)
 {
+	u32 val;
 	gen9_init_clock_gating(dev_priv);
 
 	/*
@@ -124,6 +125,11 @@ static void glk_init_clock_gating(struct drm_i915_private *dev_priv)
 		I915_WRITE(CHICKEN_MISC_2, val);
 	}
 
+	/* Display WA #1133: WaFbcSkipSegments:glk */
+	val = I915_READ(ILK_DPFC_CHICKEN);
+	val &= ~GLK_SKIP_SEG_COUNT_MASK;
+	val |= GLK_SKIP_SEG_EN | GLK_SKIP_SEG_COUNT(1);
+	I915_WRITE(ILK_DPFC_CHICKEN, val);
 }
 
 static void i915_pineview_get_mem_freq(struct drm_i915_private *dev_priv)
@@ -2291,7 +2297,7 @@ hsw_compute_linetime_wm(const struct intel_crtc_state *cstate)
 static void intel_read_wm_latency(struct drm_i915_private *dev_priv,
 				  uint16_t wm[8])
 {
-	if (IS_GEN9(dev_priv)) {
+	if (INTEL_GEN(dev_priv) >= 9) {
 		uint32_t val;
 		int ret, i;
 		int level, max_level = ilk_wm_max_level(dev_priv);
@@ -2351,7 +2357,7 @@ static void intel_read_wm_latency(struct drm_i915_private *dev_priv,
 		}
 
 		/*
-		 * WaWmMemoryReadLatency:skl,glk
+		 * WaWmMemoryReadLatency:skl+,glk
 		 *
 		 * punit doesn't take into account the read latency so we need
 		 * to add 2us to the various latency levels we retrieve from the
@@ -2390,6 +2396,8 @@ static void intel_read_wm_latency(struct drm_i915_private *dev_priv,
 		wm[0] = 7;
 		wm[1] = (mltr >> MLTR_WM1_SHIFT) & ILK_SRLT_MASK;
 		wm[2] = (mltr >> MLTR_WM2_SHIFT) & ILK_SRLT_MASK;
+	} else {
+		MISSING_CASE(INTEL_DEVID(dev_priv));
 	}
 }
 
@@ -2445,7 +2453,7 @@ static void intel_print_wm_latency(struct drm_i915_private *dev_priv,
 		 * - latencies are in us on gen9.
 		 * - before then, WM1+ latency values are in 0.5us units
 		 */
-		if (IS_GEN9(dev_priv))
+		if (INTEL_GEN(dev_priv) >= 9)
 			latency *= 10;
 		else if (level > 0)
 			latency *= 5;
@@ -3063,8 +3071,6 @@ bool ilk_disable_lp_wm(struct drm_device *dev)
 	return _ilk_disable_lp_wm(dev_priv, WM_DIRTY_LP_ALL);
 }
 
-#define SKL_SAGV_BLOCK_TIME	30 /* µs */
-
 /*
  * FIXME: We still don't have the proper code detect if we need to apply the WA,
  * so assume we'll always need it in order to avoid underruns.
@@ -3082,7 +3088,8 @@ static bool skl_needs_memory_bw_wa(struct intel_atomic_state *state)
 static bool
 intel_has_sagv(struct drm_i915_private *dev_priv)
 {
-	if (IS_KABYLAKE(dev_priv) || IS_COFFEELAKE(dev_priv))
+	if (IS_KABYLAKE(dev_priv) || IS_COFFEELAKE(dev_priv) ||
+	    IS_CANNONLAKE(dev_priv))
 		return true;
 
 	if (IS_SKYLAKE(dev_priv) &&
@@ -3188,12 +3195,13 @@ bool intel_can_enable_sagv(struct drm_atomic_state *state)
 	struct intel_crtc_state *cstate;
 	enum pipe pipe;
 	int level, latency;
+	int sagv_block_time_us = IS_GEN9(dev_priv) ? 30 : 20;
 
 	if (!intel_has_sagv(dev_priv))
 		return false;
 
 	/*
-	 * SKL workaround: bspec recommends we disable the SAGV when we have
+	 * SKL+ workaround: bspec recommends we disable the SAGV when we have
 	 * more then one pipe enabled
 	 *
 	 * If there are no active CRTCs, no additional checks need be performed
@@ -3232,11 +3240,11 @@ bool intel_can_enable_sagv(struct drm_atomic_state *state)
 			latency += 15;
 
 		/*
-		 * If any of the planes on this pipe don't enable wm levels
-		 * that incur memory latencies higher then 30µs we can't enable
-		 * the SAGV
+		 * If any of the planes on this pipe don't enable wm levels that
+		 * incur memory latencies higher than sagv_block_time_us we
+		 * can't enable the SAGV.
 		 */
-		if (latency < SKL_SAGV_BLOCK_TIME)
+		if (latency < sagv_block_time_us)
 			return false;
 	}
 
@@ -3698,8 +3706,9 @@ skl_allocate_pipe_ddb(struct intel_crtc_state *cstate,
  * should allow pixel_rate up to ~2 GHz which seems sufficient since max
  * 2xcdclk is 1350 MHz and the pixel rate should never exceed that.
 */
-static uint_fixed_16_16_t skl_wm_method1(uint32_t pixel_rate, uint8_t cpp,
-					 uint32_t latency)
+static uint_fixed_16_16_t
+skl_wm_method1(const struct drm_i915_private *dev_priv, uint32_t pixel_rate,
+	       uint8_t cpp, uint32_t latency)
 {
 	uint32_t wm_intermediate_val;
 	uint_fixed_16_16_t ret;
@@ -3709,6 +3718,10 @@ static uint_fixed_16_16_t skl_wm_method1(uint32_t pixel_rate, uint8_t cpp,
 
 	wm_intermediate_val = latency * pixel_rate * cpp;
 	ret = fixed_16_16_div_round_up_u64(wm_intermediate_val, 1000 * 512);
+
+	if (INTEL_GEN(dev_priv) >= 10)
+		ret = add_fixed16_u32(ret, 1);
+
 	return ret;
 }
 
@@ -3794,7 +3807,8 @@ static int skl_compute_plane_wm(const struct drm_i915_private *dev_priv,
 	x_tiled = fb->modifier == I915_FORMAT_MOD_X_TILED;
 
 	/* Display WA #1141: kbl,cfl */
-	if ((IS_KABYLAKE(dev_priv) || IS_COFFEELAKE(dev_priv)) &&
+	if ((IS_KABYLAKE(dev_priv) || IS_COFFEELAKE(dev_priv) ||
+	    IS_CNL_REVID(dev_priv, CNL_REVID_A0, CNL_REVID_B0)) &&
 	    dev_priv->ipc_enabled)
 		latency += 4;
 
@@ -3847,9 +3861,13 @@ static int skl_compute_plane_wm(const struct drm_i915_private *dev_priv,
 	if (y_tiled) {
 		interm_pbpl = DIV_ROUND_UP(plane_bytes_per_line *
 					   y_min_scanlines, 512);
+
+		if (INTEL_GEN(dev_priv) >= 10)
+			interm_pbpl++;
+
 		plane_blocks_per_line =
 		      fixed_16_16_div_round_up(interm_pbpl, y_min_scanlines);
-	} else if (x_tiled) {
+	} else if (x_tiled && INTEL_GEN(dev_priv) == 9) {
 		interm_pbpl = DIV_ROUND_UP(plane_bytes_per_line, 512);
 		plane_blocks_per_line = u32_to_fixed_16_16(interm_pbpl);
 	} else {
@@ -3857,7 +3875,7 @@ static int skl_compute_plane_wm(const struct drm_i915_private *dev_priv,
 		plane_blocks_per_line = u32_to_fixed_16_16(interm_pbpl);
 	}
 
-	method1 = skl_wm_method1(plane_pixel_rate, cpp, latency);
+	method1 = skl_wm_method1(dev_priv, plane_pixel_rate, cpp, latency);
 	method2 = skl_wm_method2(plane_pixel_rate,
 				 cstate->base.adjusted_mode.crtc_htotal,
 				 latency,
@@ -5110,7 +5128,7 @@ static u32 intel_rps_limits(struct drm_i915_private *dev_priv, u8 val)
 	 * the hw runs at the minimal clock before selecting the desired
 	 * frequency, if the down threshold expires in that window we will not
 	 * receive a down interrupt. */
-	if (IS_GEN9(dev_priv)) {
+	if (INTEL_GEN(dev_priv) >= 9) {
 		limits = (dev_priv->rps.max_freq_softlimit) << 23;
 		if (val <= dev_priv->rps.min_freq_softlimit)
 			limits |= (dev_priv->rps.min_freq_softlimit) << 14;
@@ -5252,7 +5270,7 @@ static int gen6_set_rps(struct drm_i915_private *dev_priv, u8 val)
 	if (val != dev_priv->rps.cur_freq) {
 		gen6_set_rps_thresholds(dev_priv, val);
 
-		if (IS_GEN9(dev_priv))
+		if (INTEL_GEN(dev_priv) >= 9)
 			I915_WRITE(GEN6_RPNSWREQ,
 				   GEN9_FREQUENCY(val));
 		else if (IS_HASWELL(dev_priv) || IS_BROADWELL(dev_priv))
@@ -5623,7 +5641,7 @@ static void gen6_init_rps_frequencies(struct drm_i915_private *dev_priv)
 
 	dev_priv->rps.efficient_freq = dev_priv->rps.rp1_freq;
 	if (IS_HASWELL(dev_priv) || IS_BROADWELL(dev_priv) ||
-	    IS_GEN9_BC(dev_priv)) {
+	    IS_GEN9_BC(dev_priv) || IS_CANNONLAKE(dev_priv)) {
 		u32 ddcc_status = 0;
 
 		if (sandybridge_pcode_read(dev_priv,
@@ -5636,7 +5654,7 @@ static void gen6_init_rps_frequencies(struct drm_i915_private *dev_priv)
 					dev_priv->rps.max_freq);
 	}
 
-	if (IS_GEN9_BC(dev_priv)) {
+	if (IS_GEN9_BC(dev_priv) || IS_CANNONLAKE(dev_priv)) {
 		/* Store the frequency values in 16.66 MHZ units, which is
 		 * the natural hardware unit for SKL
 		 */
@@ -5942,7 +5960,7 @@ static void gen6_update_ring_freq(struct drm_i915_private *dev_priv)
 	/* convert DDR frequency from units of 266.6MHz to bandwidth */
 	min_ring_freq = mult_frac(min_ring_freq, 8, 3);
 
-	if (IS_GEN9_BC(dev_priv)) {
+	if (IS_GEN9_BC(dev_priv) || IS_CANNONLAKE(dev_priv)) {
 		/* Convert GT frequency to 50 HZ units */
 		min_gpu_freq = dev_priv->rps.min_freq / GEN9_FREQ_SCALER;
 		max_gpu_freq = dev_priv->rps.max_freq / GEN9_FREQ_SCALER;
@@ -5960,7 +5978,7 @@ static void gen6_update_ring_freq(struct drm_i915_private *dev_priv)
 		int diff = max_gpu_freq - gpu_freq;
 		unsigned int ia_freq = 0, ring_freq = 0;
 
-		if (IS_GEN9_BC(dev_priv)) {
+		if (IS_GEN9_BC(dev_priv) || IS_CANNONLAKE(dev_priv)) {
 			/*
 			 * ring_freq = 2 * GT. ring_freq is in 100MHz units
 			 * No floor required for ring frequency on SKL.
@@ -7091,7 +7109,7 @@ void intel_enable_gt_powersave(struct drm_i915_private *dev_priv)
 	} else if (INTEL_GEN(dev_priv) >= 9) {
 		gen9_enable_rc6(dev_priv);
 		gen9_enable_rps(dev_priv);
-		if (IS_GEN9_BC(dev_priv))
+		if (IS_GEN9_BC(dev_priv) || IS_CANNONLAKE(dev_priv))
 			gen6_update_ring_freq(dev_priv);
 	} else if (IS_BROADWELL(dev_priv)) {
 		gen8_enable_rps(dev_priv);
@@ -7213,7 +7231,7 @@ static void ilk_init_lp_watermarks(struct drm_i915_private *dev_priv)
 	 */
 }
 
-static void ironlake_init_clock_gating(struct drm_i915_private *dev_priv)
+static void ilk_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	uint32_t dspclk_gate = ILK_VRHUNIT_CLOCK_GATE_DISABLE;
 
@@ -7496,7 +7514,57 @@ static void gen8_set_l3sqc_credits(struct drm_i915_private *dev_priv,
 	I915_WRITE(GEN7_MISCCPCTL, misccpctl);
 }
 
-static void kabylake_init_clock_gating(struct drm_i915_private *dev_priv)
+static void cnp_init_clock_gating(struct drm_i915_private *dev_priv)
+{
+	if (!HAS_PCH_CNP(dev_priv))
+		return;
+
+	/* Wa #1181 */
+	I915_WRITE(SOUTH_DSPCLK_GATE_D, I915_READ(SOUTH_DSPCLK_GATE_D) |
+		   CNP_PWM_CGE_GATING_DISABLE);
+}
+
+static void cnl_init_clock_gating(struct drm_i915_private *dev_priv)
+{
+	u32 val;
+	cnp_init_clock_gating(dev_priv);
+
+	/* This is not an Wa. Enable for better image quality */
+	I915_WRITE(_3D_CHICKEN3,
+		   _MASKED_BIT_ENABLE(_3D_CHICKEN3_AA_LINE_QUALITY_FIX_ENABLE));
+
+	/* WaEnableChickenDCPR:cnl */
+	I915_WRITE(GEN8_CHICKEN_DCPR_1,
+		   I915_READ(GEN8_CHICKEN_DCPR_1) | MASK_WAKEMEM);
+
+	/* WaFbcWakeMemOn:cnl */
+	I915_WRITE(DISP_ARB_CTL, I915_READ(DISP_ARB_CTL) |
+		   DISP_FBC_MEMORY_WAKE);
+
+	/* WaSarbUnitClockGatingDisable:cnl (pre-prod) */
+	if (IS_CNL_REVID(dev_priv, CNL_REVID_A0, CNL_REVID_B0))
+		I915_WRITE(SLICE_UNIT_LEVEL_CLKGATE,
+			   I915_READ(SLICE_UNIT_LEVEL_CLKGATE) |
+			   SARBUNIT_CLKGATE_DIS);
+
+	/* Display WA #1133: WaFbcSkipSegments:cnl */
+	val = I915_READ(ILK_DPFC_CHICKEN);
+	val &= ~GLK_SKIP_SEG_COUNT_MASK;
+	val |= GLK_SKIP_SEG_EN | GLK_SKIP_SEG_COUNT(1);
+	I915_WRITE(ILK_DPFC_CHICKEN, val);
+}
+
+static void cfl_init_clock_gating(struct drm_i915_private *dev_priv)
+{
+	cnp_init_clock_gating(dev_priv);
+	gen9_init_clock_gating(dev_priv);
+
+	/* WaFbcNukeOnHostModify:cfl */
+	I915_WRITE(ILK_DPFC_CHICKEN, I915_READ(ILK_DPFC_CHICKEN) |
+		   ILK_DPFC_NUKE_ON_ANY_MODIFICATION);
+}
+
+static void kbl_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	gen9_init_clock_gating(dev_priv);
 
@@ -7510,12 +7578,12 @@ static void kabylake_init_clock_gating(struct drm_i915_private *dev_priv)
 		I915_WRITE(GEN6_UCGCTL1, I915_READ(GEN6_UCGCTL1) |
 			   GEN6_GAMUNIT_CLOCK_GATE_DISABLE);
 
-	/* WaFbcNukeOnHostModify:kbl,cfl */
+	/* WaFbcNukeOnHostModify:kbl */
 	I915_WRITE(ILK_DPFC_CHICKEN, I915_READ(ILK_DPFC_CHICKEN) |
 		   ILK_DPFC_NUKE_ON_ANY_MODIFICATION);
 }
 
-static void skylake_init_clock_gating(struct drm_i915_private *dev_priv)
+static void skl_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	gen9_init_clock_gating(dev_priv);
 
@@ -7528,7 +7596,7 @@ static void skylake_init_clock_gating(struct drm_i915_private *dev_priv)
 		   ILK_DPFC_NUKE_ON_ANY_MODIFICATION);
 }
 
-static void broadwell_init_clock_gating(struct drm_i915_private *dev_priv)
+static void bdw_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	enum pipe pipe;
 
@@ -7586,7 +7654,7 @@ static void broadwell_init_clock_gating(struct drm_i915_private *dev_priv)
 		   I915_READ(GEN6_UCGCTL1) | GEN6_EU_TCUNIT_CLOCK_GATE_DISABLE);
 }
 
-static void haswell_init_clock_gating(struct drm_i915_private *dev_priv)
+static void hsw_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	ilk_init_lp_watermarks(dev_priv);
 
@@ -7640,7 +7708,7 @@ static void haswell_init_clock_gating(struct drm_i915_private *dev_priv)
 	lpt_init_clock_gating(dev_priv);
 }
 
-static void ivybridge_init_clock_gating(struct drm_i915_private *dev_priv)
+static void ivb_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	uint32_t snpcr;
 
@@ -7737,7 +7805,7 @@ static void ivybridge_init_clock_gating(struct drm_i915_private *dev_priv)
 	gen6_check_mch_setup(dev_priv);
 }
 
-static void valleyview_init_clock_gating(struct drm_i915_private *dev_priv)
+static void vlv_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	/* WaDisableEarlyCull:vlv */
 	I915_WRITE(_3D_CHICKEN3,
@@ -7817,7 +7885,7 @@ static void valleyview_init_clock_gating(struct drm_i915_private *dev_priv)
 	I915_WRITE(VLV_GUNIT_CLOCK_GATE, GCFG_DIS);
 }
 
-static void cherryview_init_clock_gating(struct drm_i915_private *dev_priv)
+static void chv_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	/* WaVSRefCountFullforceMissDisable:chv */
 	/* WaDSRefCountFullforceMissDisable:chv */
@@ -7877,7 +7945,7 @@ static void g4x_init_clock_gating(struct drm_i915_private *dev_priv)
 	g4x_disable_trickle_feed(dev_priv);
 }
 
-static void crestline_init_clock_gating(struct drm_i915_private *dev_priv)
+static void i965gm_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	I915_WRITE(RENCLK_GATE_D1, I965_RCC_CLOCK_GATE_DISABLE);
 	I915_WRITE(RENCLK_GATE_D2, 0);
@@ -7891,7 +7959,7 @@ static void crestline_init_clock_gating(struct drm_i915_private *dev_priv)
 	I915_WRITE(CACHE_MODE_0, _MASKED_BIT_DISABLE(RC_OP_FLUSH_ENABLE));
 }
 
-static void broadwater_init_clock_gating(struct drm_i915_private *dev_priv)
+static void i965g_init_clock_gating(struct drm_i915_private *dev_priv)
 {
 	I915_WRITE(RENCLK_GATE_D1, I965_RCZ_CLOCK_GATE_DISABLE |
 		   I965_RCC_CLOCK_GATE_DISABLE |
@@ -7976,34 +8044,38 @@ static void nop_init_clock_gating(struct drm_i915_private *dev_priv)
  */
 void intel_init_clock_gating_hooks(struct drm_i915_private *dev_priv)
 {
-	if (IS_SKYLAKE(dev_priv))
-		dev_priv->display.init_clock_gating = skylake_init_clock_gating;
-	else if (IS_KABYLAKE(dev_priv) || IS_COFFEELAKE(dev_priv))
-		dev_priv->display.init_clock_gating = kabylake_init_clock_gating;
+	if (IS_CANNONLAKE(dev_priv))
+		dev_priv->display.init_clock_gating = cnl_init_clock_gating;
+	else if (IS_COFFEELAKE(dev_priv))
+		dev_priv->display.init_clock_gating = cfl_init_clock_gating;
+	else if (IS_SKYLAKE(dev_priv))
+		dev_priv->display.init_clock_gating = skl_init_clock_gating;
+	else if (IS_KABYLAKE(dev_priv))
+		dev_priv->display.init_clock_gating = kbl_init_clock_gating;
 	else if (IS_BROXTON(dev_priv))
 		dev_priv->display.init_clock_gating = bxt_init_clock_gating;
 	else if (IS_GEMINILAKE(dev_priv))
 		dev_priv->display.init_clock_gating = glk_init_clock_gating;
 	else if (IS_BROADWELL(dev_priv))
-		dev_priv->display.init_clock_gating = broadwell_init_clock_gating;
+		dev_priv->display.init_clock_gating = bdw_init_clock_gating;
 	else if (IS_CHERRYVIEW(dev_priv))
-		dev_priv->display.init_clock_gating = cherryview_init_clock_gating;
+		dev_priv->display.init_clock_gating = chv_init_clock_gating;
 	else if (IS_HASWELL(dev_priv))
-		dev_priv->display.init_clock_gating = haswell_init_clock_gating;
+		dev_priv->display.init_clock_gating = hsw_init_clock_gating;
 	else if (IS_IVYBRIDGE(dev_priv))
-		dev_priv->display.init_clock_gating = ivybridge_init_clock_gating;
+		dev_priv->display.init_clock_gating = ivb_init_clock_gating;
 	else if (IS_VALLEYVIEW(dev_priv))
-		dev_priv->display.init_clock_gating = valleyview_init_clock_gating;
+		dev_priv->display.init_clock_gating = vlv_init_clock_gating;
 	else if (IS_GEN6(dev_priv))
 		dev_priv->display.init_clock_gating = gen6_init_clock_gating;
 	else if (IS_GEN5(dev_priv))
-		dev_priv->display.init_clock_gating = ironlake_init_clock_gating;
+		dev_priv->display.init_clock_gating = ilk_init_clock_gating;
 	else if (IS_G4X(dev_priv))
 		dev_priv->display.init_clock_gating = g4x_init_clock_gating;
 	else if (IS_I965GM(dev_priv))
-		dev_priv->display.init_clock_gating = crestline_init_clock_gating;
+		dev_priv->display.init_clock_gating = i965gm_init_clock_gating;
 	else if (IS_I965G(dev_priv))
-		dev_priv->display.init_clock_gating = broadwater_init_clock_gating;
+		dev_priv->display.init_clock_gating = i965g_init_clock_gating;
 	else if (IS_GEN3(dev_priv))
 		dev_priv->display.init_clock_gating = gen3_init_clock_gating;
 	else if (IS_I85X(dev_priv) || IS_I865G(dev_priv))
@@ -8332,7 +8404,7 @@ static int chv_freq_opcode(struct drm_i915_private *dev_priv, int val)
 
 int intel_gpu_freq(struct drm_i915_private *dev_priv, int val)
 {
-	if (IS_GEN9(dev_priv))
+	if (INTEL_GEN(dev_priv) >= 9)
 		return DIV_ROUND_CLOSEST(val * GT_FREQUENCY_MULTIPLIER,
 					 GEN9_FREQ_SCALER);
 	else if (IS_CHERRYVIEW(dev_priv))
@@ -8345,7 +8417,7 @@ int intel_gpu_freq(struct drm_i915_private *dev_priv, int val)
 
 int intel_freq_opcode(struct drm_i915_private *dev_priv, int val)
 {
-	if (IS_GEN9(dev_priv))
+	if (INTEL_GEN(dev_priv) >= 9)
 		return DIV_ROUND_CLOSEST(val * GEN9_FREQ_SCALER,
 					 GT_FREQUENCY_MULTIPLIER);
 	else if (IS_CHERRYVIEW(dev_priv))
