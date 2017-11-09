@@ -511,6 +511,9 @@ void nfs_setattr_update_inode(struct inode *inode, struct iattr *attr)
 	}
 }
 
+static int flush_on_stat = 1;
+module_param(flush_on_stat, bool, 0644);
+
 int nfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
 {
 	struct inode *inode = dentry->d_inode;
@@ -518,7 +521,7 @@ int nfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
 	int err;
 
 	/* Flush out writes to the server in order to update c/mtime.  */
-	if (S_ISREG(inode->i_mode)) {
+	if (S_ISREG(inode->i_mode) && flush_on_stat) {
 		err = filemap_write_and_wait(inode->i_mapping);
 		if (err)
 			goto out;
