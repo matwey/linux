@@ -472,7 +472,7 @@ static u32 intel_panel_compute_brightness(struct intel_connector *connector,
 
 	if (i915.invert_brightness > 0 ||
 	    dev_priv->quirks & QUIRK_INVERT_BRIGHTNESS) {
-		return panel->backlight.max - val;
+		return panel->backlight.max - val + panel->backlight.min;
 	}
 
 	return val;
@@ -1643,6 +1643,8 @@ bxt_setup_backlight(struct intel_connector *connector, enum pipe unused)
 
 	if (!panel->backlight.max)
 		return -ENODEV;
+
+	panel->backlight.min = get_backlight_min_vbt(connector);
 
 	val = bxt_get_backlight(connector);
 	panel->backlight.level = intel_panel_compute_brightness(connector, val);
