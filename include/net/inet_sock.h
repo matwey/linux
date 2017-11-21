@@ -95,7 +95,11 @@ struct inet_request_sock {
 	kmemcheck_bitfield_end(flags);
 	u32                     ir_mark;
 	union {
+#ifdef __GENKSYMS__
+		struct ip_options_rcu	*opt;
+#else
 		struct ip_options_rcu __rcu	*ireq_opt;
+#endif
 		struct sk_buff		*pktopts;
 	};
 };
