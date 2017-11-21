@@ -866,8 +866,8 @@ static void pl2303_suse_disconnect(struct usb_serial *serial)
 
 	for (i = 0; i < serial->num_ports; ++i) {
 		priv = usb_get_serial_port_data(serial->port[i]);
-
-		wake_up_all(&priv->delta_msr_wait);
+		if (priv != NULL)
+			wake_up_all(&priv->delta_msr_wait);
 	}
 }
 
