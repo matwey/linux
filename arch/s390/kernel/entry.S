@@ -225,6 +225,7 @@ ENTRY(sie64a)
 	jnz	.Lsie_skip
 	TSTMSK	__LC_CPU_FLAGS,_CIF_FPU
 	jo	.Lsie_skip			# exit if fp/vx regs changed
+.Lsie_entry:
 	sie	0(%r14)
 .Lsie_skip:
 	ni	__SIE_PROG0C+3(%r14),0xfe	# no longer in SIE
@@ -507,12 +508,15 @@ ENTRY(pgm_check_handler)
 	tmhh	%r8,0x0001		# test problem state bit
 	jnz	2f			# -> fault in user space
 #if IS_ENABLED(CONFIG_KVM)
-	# cleanup critical section for sie64a
+	# cleanup critical section for program checks in sie64a
 	lgr	%r14,%r9
 	slg	%r14,BASED(.Lsie_critical_start)
 	clg	%r14,BASED(.Lsie_critical_length)
 	jhe	0f
-	brasl	%r14,.Lcleanup_sie
+	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
+	ni	__SIE_PROG0C+3(%r14),0xfe	# no longer in SIE
+	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
+	larl	%r9,sie_exit			# skip forward to sie_exit
 #endif
 0:	tmhh	%r8,0x4000		# PER bit set in old PSW ?
 	jnz	1f			# -> enabled, can't be a double fault
@@ -1111,7 +1115,13 @@ cleanup_critical:
 	.quad	.Lsie_done
 
 .Lcleanup_sie:
-	lg	%r9,__SF_EMPTY(%r15)		# get control block pointer
+	cghi    %r11,__LC_SAVE_AREA_ASYNC 	#Is this in normal interrupt?
+	je      1f
+	slg     %r9,BASED(.Lsie_crit_mcck_start)
+	clg     %r9,BASED(.Lsie_crit_mcck_length)
+	jh      1f
+	oi      __LC_CPU_FLAGS+7, _CIF_MCCK_GUEST
+1:	lg	%r9,__SF_EMPTY(%r15)		# get control block pointer
 	ni	__SIE_PROG0C+3(%r9),0xfe	# no longer in SIE
 	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
 	larl	%r9,sie_exit			# skip forward to sie_exit
@@ -1296,6 +1306,10 @@ cleanup_critical:
 	.quad	.Lsie_gmap
 .Lsie_critical_length:
 	.quad	.Lsie_done - .Lsie_gmap
+.Lsie_crit_mcck_start:
+	.quad   .Lsie_entry
+.Lsie_crit_mcck_length:
+	.quad   .Lsie_skip - .Lsie_entry
 #endif
 
 	.section .rodata, "a"

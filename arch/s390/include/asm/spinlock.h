@@ -13,6 +13,7 @@
 #include <asm/atomic_ops.h>
 #include <asm/barrier.h>
 #include <asm/processor.h>
+#include <asm/alternative.h>
 
 #define SPINLOCK_LOCKVAL (S390_lowcore.spinlock_lockval)
 
@@ -92,10 +93,9 @@ static inline void arch_spin_unlock(arch_spinlock_t *lp)
 {
 	typecheck(int, lp->lock);
 	asm volatile(
-		"st	%1,%0\n"
-		: "+Q" (lp->lock)
-		: "d" (0)
-		: "cc", "memory");
+		ALTERNATIVE("", ".long 0xb2fa0070", 49)	/* NIAI 7 */
+		"	st	%1,%0\n"
+		: "=Q" (lp->lock) : "d" (0) : "cc", "memory");
 }
 
 static inline void arch_spin_unlock_wait(arch_spinlock_t *lock)
