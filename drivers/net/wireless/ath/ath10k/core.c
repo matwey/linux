@@ -887,7 +887,7 @@ out:
 	if (!ar->board_data || !ar->board_len) {
 		ath10k_err(ar,
 			   "failed to fetch board data for %s from %s/%s\n",
-			   ar->hw_params.fw.dir, boardname, filename);
+			   boardname, ar->hw_params.fw.dir, filename);
 		ret = -ENODATA;
 		goto err;
 	}
@@ -1794,7 +1794,7 @@ static int ath10k_core_probe_fw(struct ath10k *ar)
 	if (ret && ret != -EOPNOTSUPP) {
 		ath10k_err(ar, "failed to get board id from otp for qca99x0: %d\n",
 			   ret);
-		return ret;
+		goto err_free_firmware_files;
 	}
 
 	ret = ath10k_core_fetch_board_file(ar);
