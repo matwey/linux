@@ -234,6 +234,8 @@ int usbnet_generic_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 					info->ether->bLength);
 				goto bad_desc;
 			}
+			if (!info->ether->wMaxSegmentSize)
+				goto bad_desc;
 			dev->hard_mtu = le16_to_cpu(
 						info->ether->wMaxSegmentSize);
 			/* because of Zaurus, we may be ignoring the host
