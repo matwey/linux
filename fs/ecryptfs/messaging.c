@@ -552,13 +552,14 @@ void ecryptfs_release_messaging(void)
 	if (ecryptfs_daemon_hash) {
 		struct hlist_node *elem;
 		struct ecryptfs_daemon *daemon;
+		struct hlist_node *n;
 		int i;
 
 		mutex_lock(&ecryptfs_daemon_hash_mux);
 		for (i = 0; i < (1 << ecryptfs_hash_bits); i++) {
 			int rc;
 
-			hlist_for_each_entry(daemon, elem,
+			hlist_for_each_entry_safe(daemon, elem, n,
 					     &ecryptfs_daemon_hash[i],
 					     euid_chain) {
 				rc = ecryptfs_exorcise_daemon(daemon);
