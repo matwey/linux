@@ -960,7 +960,7 @@ static int acm_probe(struct usb_interface *intf,
 		}
 	}
 
-	while (buflen > 0) {
+	while (buflen >= 3) { /* minimum length making sense */
 		if (buffer[1] != USB_DT_CS_INTERFACE) {
 			dev_err(&intf->dev, "skipping garbage\n");
 			goto next_desc;
@@ -968,6 +968,8 @@ static int acm_probe(struct usb_interface *intf,
 
 		switch (buffer[2]) {
 		case USB_CDC_UNION_TYPE: /* we've found it */
+			if (buflen < sizeof(struct usb_cdc_union_desc))
+				break;
 			if (union_header) {
 				dev_err(&intf->dev, "More than one "
 					"union descriptor, skipping ...\n");
@@ -976,6 +978,8 @@ static int acm_probe(struct usb_interface *intf,
 			union_header = (struct usb_cdc_union_desc *)buffer;
 			break;
 		case USB_CDC_COUNTRY_TYPE: /* export through sysfs*/
+			if (buflen < sizeof(struct usb_cdc_country_functional_desc))
+				break;
 			cfd = (struct usb_cdc_country_functional_desc *)buffer;
 			break;
 		case USB_CDC_HEADER_TYPE: /* maybe check version */
@@ -984,6 +988,8 @@ static int acm_probe(struct usb_interface *intf,
 			ac_management_function = buffer[3];
 			break;
 		case USB_CDC_CALL_MANAGEMENT_TYPE:
+			if (buflen < 4)
+				break;
 			call_management_function = buffer[3];
 			call_interface_num = buffer[4];
 			if ( (quirks & NOT_A_MODEM) == 0 && (call_management_function & 3) != 3)
