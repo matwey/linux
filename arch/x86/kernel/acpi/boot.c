@@ -354,6 +354,7 @@ acpi_parse_lapic_nmi(struct acpi_subtable_header * header, const unsigned long e
 #endif				/*CONFIG_X86_LOCAL_APIC */
 
 #ifdef CONFIG_X86_IO_APIC
+#define MP_ISA_BUS		0
 
 static int __init mp_register_ioapic_irq(u8 bus_irq, u8 polarity,
 						u8 trigger, u32 gsi)
@@ -990,10 +991,6 @@ extern int es7000_plat;
 
 void __init mp_override_legacy_irq(u8 bus_irq, u8 polarity, u8 trigger, u32 gsi)
 {
-	int ioapic;
-	int pin;
-	struct mpc_intsrc mp_irq;
-
 	/*
 	 * Check bus_irq boundary.
 	 */
@@ -1003,14 +1000,6 @@ void __init mp_override_legacy_irq(u8 bus_irq, u8 polarity, u8 trigger, u32 gsi)
 	}
 
 	/*
-	 * Convert 'gsi' to 'ioapic.pin'.
-	 */
-	ioapic = mp_find_ioapic(gsi);
-	if (ioapic < 0)
-		return;
-	pin = mp_find_ioapic_pin(ioapic, gsi);
-
-	/*
 	 * TBD: This check is for faulty timer entries, where the override
 	 *      erroneously sets the trigger to level, resulting in a HUGE
 	 *      increase of timer interrupts!
@@ -1018,15 +1007,8 @@ void __init mp_override_legacy_irq(u8 bus_irq, u8 polarity, u8 trigger, u32 gsi)
 	if ((bus_irq == 0) && (trigger == 3))
 		trigger = 1;
 
-	mp_irq.type = MP_INTSRC;
-	mp_irq.irqtype = mp_INT;
-	mp_irq.irqflag = (trigger << 2) | polarity;
-	mp_irq.srcbus = MP_ISA_BUS;
-	mp_irq.srcbusirq = bus_irq;	/* IRQ */
-	mp_irq.dstapic = mpc_ioapic_id(ioapic); /* APIC ID */
-	mp_irq.dstirq = pin;	/* INTIN# */
-
-	mp_save_irq(&mp_irq);
+	if (mp_register_ioapic_irq(bus_irq, polarity, trigger, gsi) < 0)
+		return;
 
 	isa_irq_to_gsi[bus_irq] = gsi;
 }
