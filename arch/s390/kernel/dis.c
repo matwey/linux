@@ -1583,7 +1583,7 @@ void show_code(struct pt_regs *regs)
 {
 	char *mode = (regs->psw.mask & PSW_MASK_PSTATE) ? "User" : "Krnl";
 	unsigned char code[64];
-	char buffer[64], *ptr;
+	char buffer[128], *ptr;
 	mm_segment_t old_fs;
 	unsigned long addr;
 	int start, end, opsize, hops, i;
@@ -1641,7 +1641,7 @@ void show_code(struct pt_regs *regs)
 		start += opsize;
 		printk(buffer);
 		ptr = buffer;
-		ptr += sprintf(ptr, "\n          ");
+		ptr += sprintf(ptr, "\n\t  ");
 		hops++;
 	}
 	printk("\n");
