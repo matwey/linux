@@ -369,6 +369,7 @@ static void ib_uverbs_release_file(struct kref *ref)
 	if (atomic_dec_and_test(&file->device->refcount))
 		ib_uverbs_comp_dev(file->device);
 
+	kobject_put(&file->device->kobj);
 	kfree(file);
 }
 
@@ -995,7 +996,6 @@ err:
 static int ib_uverbs_close(struct inode *inode, struct file *filp)
 {
 	struct ib_uverbs_file *file = filp->private_data;
-	struct ib_uverbs_device *dev = file->device;
 
 	mutex_lock(&file->cleanup_mutex);
 	if (file->ucontext) {
@@ -1015,7 +1015,6 @@ static int ib_uverbs_close(struct inode *inode, struct file *filp)
 		kref_put(&file->async_file->ref, ib_uverbs_release_event_file);
 
 	kref_put(&file->ref, ib_uverbs_release_file);
-	kobject_put(&dev->kobj);
 
 	return 0;
 }
@@ -1230,7 +1229,6 @@ static void ib_uverbs_free_hw_resources(struct ib_uverbs_device *uverbs_dev,
 		kref_get(&file->ref);
 		mutex_unlock(&uverbs_dev->lists_mutex);
 
-		ib_uverbs_event_handler(&file->event_handler, &event);
 
 		mutex_lock(&file->cleanup_mutex);
 		ucontext = file->ucontext;
@@ -1247,6 +1245,7 @@ static void ib_uverbs_free_hw_resources(struct ib_uverbs_device *uverbs_dev,
 			 * for example due to freeing the resources
 			 * (e.g mmput).
 			 */
+			ib_uverbs_event_handler(&file->event_handler, &event);
 			ib_dev->disassociate_ucontext(ucontext);
 			ib_uverbs_cleanup_ucontext(file, ucontext);
 		}
