@@ -599,6 +599,8 @@ static int uas_switch_interface(struct usb_device *udev,
 
 	for (i = 0; i < intf->num_altsetting; i++) {
 		struct usb_host_interface *alt = &intf->altsetting[i];
+		if (!alt)
+			continue;
 		if (alt == intf->cur_altsetting)
 			continue;
 		if (uas_is_interface(alt))
