@@ -81,8 +81,11 @@ struct ecryptfs_page_crypt_context {
 static inline struct ecryptfs_auth_tok *
 ecryptfs_get_key_payload_data(struct key *key)
 {
-	return (struct ecryptfs_auth_tok *)
-		(((struct user_key_payload*)key->payload.data)->data);
+	struct user_key_payload *ukp = key->payload.data;
+
+	if (!ukp)
+		return ERR_PTR(-EKEYREVOKED);
+	return (struct ecryptfs_auth_tok *)(ukp->data);
 }
 
 #define ECRYPTFS_MAX_KEYSET_SIZE 1024
