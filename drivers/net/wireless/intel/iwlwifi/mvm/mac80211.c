@@ -1546,6 +1546,11 @@ static void iwl_mvm_mc_iface_iterator(void *_data, u8 *mac,
 	struct iwl_mvm_mc_iter_data *data = _data;
 	struct iwl_mvm *mvm = data->mvm;
 	struct iwl_mcast_filter_cmd *cmd = mvm->mcast_filter_cmd;
+	struct iwl_host_cmd hcmd = {
+		.id = MCAST_FILTER_CMD,
+		.flags = CMD_ASYNC,
+		.dataflags[0] = IWL_HCMD_DFL_NOCOPY,
+	};
 	int ret, len;
 
 	/* if we don't have free ports, mcast frames will be dropped */
@@ -1560,7 +1565,10 @@ static void iwl_mvm_mc_iface_iterator(void *_data, u8 *mac,
 	memcpy(cmd->bssid, vif->bss_conf.bssid, ETH_ALEN);
 	len = roundup(sizeof(*cmd) + cmd->count * ETH_ALEN, 4);
 
-	ret = iwl_mvm_send_cmd_pdu(mvm, MCAST_FILTER_CMD, CMD_ASYNC, len, cmd);
+	hcmd.len[0] = len;
+	hcmd.data[0] = cmd;
+
+	ret = iwl_mvm_send_cmd(mvm, &hcmd);
 	if (ret)
 		IWL_ERR(mvm, "mcast filter cmd error. ret=%d\n", ret);
 }
@@ -4251,9 +4259,7 @@ void iwl_mvm_sync_rx_queues_internal(struct iwl_mvm *mvm,
 
 	lockdep_assert_held(&mvm->mutex);
 
-	/* TODO - remove a000 disablement when we have RXQ config API */
-	if (!iwl_mvm_has_new_rx_api(mvm) ||
-	    mvm->trans->cfg->device_family == IWL_DEVICE_FAMILY_A000)
+	if (!iwl_mvm_has_new_rx_api(mvm))
 		return;
 
 	notif->cookie = mvm->queue_sync_cookie;
@@ -4261,6 +4267,13 @@ void iwl_mvm_sync_rx_queues_internal(struct iwl_mvm *mvm,
 	if (notif->sync)
 		atomic_set(&mvm->queue_sync_counter,
 			   mvm->trans->num_rx_queues);
+
+	/* TODO - remove this when we have RXQ config API */
+	if (mvm->trans->cfg->device_family == IWL_DEVICE_FAMILY_A000) {
+		qmask = BIT(0);
+		if (notif->sync)
+			atomic_set(&mvm->queue_sync_counter, 1);
+	}
 
 	ret = iwl_mvm_notify_rx_queue(mvm, qmask, (u8 *)notif, size);
 	if (ret) {

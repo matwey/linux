@@ -21,6 +21,8 @@ struct dax_operations {
 			struct iov_iter *);
 };
 
+extern struct attribute_group dax_attribute_group;
+
 #if IS_ENABLED(CONFIG_DAX)
 struct dax_device *dax_get_by_host(const char *host);
 void put_dax(struct dax_device *dax_dev);
@@ -53,6 +55,7 @@ static inline void fs_put_dax(struct dax_device *dax_dev)
 	put_dax(dax_dev);
 }
 
+struct dax_device *fs_dax_get_by_bdev(struct block_device *bdev);
 #else
 static inline int bdev_dax_supported(struct super_block *sb, int blocksize)
 {
@@ -67,6 +70,11 @@ static inline struct dax_device *fs_dax_get_by_host(const char *host)
 static inline void fs_put_dax(struct dax_device *dax_dev)
 {
 }
+
+static inline struct dax_device *fs_dax_get_by_bdev(struct block_device *bdev)
+{
+	return NULL;
+}
 #endif
 
 int dax_read_lock(void);
@@ -78,6 +86,11 @@ void kill_dax(struct dax_device *dax_dev);
 void *dax_get_private(struct dax_device *dax_dev);
 long dax_direct_access(struct dax_device *dax_dev, pgoff_t pgoff, long nr_pages,
 		void **kaddr, pfn_t *pfn);
+size_t dax_copy_from_iter(struct dax_device *dax_dev, pgoff_t pgoff, void *addr,
+		size_t bytes, struct iov_iter *i);
+void dax_flush(struct dax_device *dax_dev, void *addr, size_t size);
+void dax_write_cache(struct dax_device *dax_dev, bool wc);
+bool dax_write_cache_enabled(struct dax_device *dax_dev);
 
 /*
  * We use lowest available bit in exceptional entry for locking, one bit for
@@ -109,7 +122,9 @@ static inline void *dax_radix_locked_entry(sector_t sector, unsigned long flags)
 ssize_t dax_iomap_rw(struct kiocb *iocb, struct iov_iter *iter,
 		const struct iomap_ops *ops);
 int dax_iomap_fault(struct vm_fault *vmf, enum page_entry_size pe_size,
-		    const struct iomap_ops *ops);
+		    pfn_t *pfnp, const struct iomap_ops *ops);
+int dax_finish_sync_fault(struct vm_fault *vmf, enum page_entry_size pe_size,
+			  pfn_t pfn);
 int dax_delete_mapping_entry(struct address_space *mapping, pgoff_t index);
 int dax_invalidate_mapping_entry_sync(struct address_space *mapping,
 				      pgoff_t index);
@@ -140,11 +155,6 @@ static inline unsigned int dax_radix_order(void *entry)
 	return 0;
 }
 #endif
-
-static inline bool vma_is_dax(struct vm_area_struct *vma)
-{
-	return vma->vm_file && IS_DAX(vma->vm_file->f_mapping->host);
-}
 
 static inline bool dax_mapping(struct address_space *mapping)
 {

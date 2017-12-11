@@ -41,17 +41,9 @@
 
 #define NVME_RDMA_MAX_INLINE_SEGMENTS	1
 
-/*
- * We handle AEN commands ourselves and don't even let the
- * block layer know about them.
- */
-#define NVME_RDMA_NR_AEN_COMMANDS      1
-#define NVME_RDMA_AQ_BLKMQ_DEPTH       \
-	(NVME_AQ_DEPTH - NVME_RDMA_NR_AEN_COMMANDS)
-
 struct nvme_rdma_device {
-	struct ib_device       *dev;
-	struct ib_pd	       *pd;
+	struct ib_device	*dev;
+	struct ib_pd		*pd;
 	struct kref		ref;
 	struct list_head	entry;
 };
@@ -105,7 +97,6 @@ struct nvme_rdma_ctrl {
 
 	/* other member variables */
 	struct blk_mq_tag_set	tag_set;
-	struct work_struct	delete_work;
 	struct work_struct	err_work;
 
 	struct nvme_rdma_qe	async_event_sqe;
@@ -494,7 +485,7 @@ static int nvme_rdma_create_queue_ib(struct nvme_rdma_queue *queue)
 	return 0;
 
 out_destroy_qp:
-	ib_destroy_qp(queue->qp);
+	rdma_destroy_qp(queue->cm_id);
 out_destroy_ib_cq:
 	ib_free_cq(queue->ib_cq);
 out_put_dev:
@@ -571,6 +562,12 @@ static void nvme_rdma_free_queue(struct nvme_rdma_queue *queue)
 {
 	if (!test_and_clear_bit(NVME_RDMA_Q_ALLOCATED, &queue->flags))
 		return;
+
+	if (nvme_rdma_queue_idx(queue) == 0) {
+		nvme_rdma_free_qe(queue->device->dev,
+			&queue->ctrl->async_event_sqe,
+			sizeof(struct nvme_command), DMA_TO_DEVICE);
+	}
 
 	nvme_rdma_destroy_queue_ib(queue);
 	rdma_destroy_id(queue->cm_id);
@@ -691,7 +688,7 @@ static struct blk_mq_tag_set *nvme_rdma_alloc_tagset(struct nvme_ctrl *nctrl,
 		set = &ctrl->admin_tag_set;
 		memset(set, 0, sizeof(*set));
 		set->ops = &nvme_rdma_admin_mq_ops;
-		set->queue_depth = NVME_RDMA_AQ_BLKMQ_DEPTH;
+		set->queue_depth = NVME_AQ_MQ_TAG_DEPTH;
 		set->reserved_tags = 2; /* connect + keep-alive */
 		set->numa_node = NUMA_NO_NODE;
 		set->cmd_size = sizeof(struct nvme_rdma_request) +
@@ -740,8 +737,6 @@ out:
 static void nvme_rdma_destroy_admin_queue(struct nvme_rdma_ctrl *ctrl,
 		bool remove)
 {
-	nvme_rdma_free_qe(ctrl->queues[0].device->dev, &ctrl->async_event_sqe,
-			sizeof(struct nvme_command), DMA_TO_DEVICE);
 	nvme_rdma_stop_queue(&ctrl->queues[0]);
 	if (remove) {
 		blk_cleanup_queue(ctrl->ctrl.admin_q);
@@ -766,8 +761,10 @@ static int nvme_rdma_configure_admin_queue(struct nvme_rdma_ctrl *ctrl,
 
 	if (new) {
 		ctrl->ctrl.admin_tagset = nvme_rdma_alloc_tagset(&ctrl->ctrl, true);
-		if (IS_ERR(ctrl->ctrl.admin_tagset))
+		if (IS_ERR(ctrl->ctrl.admin_tagset)) {
+			error = PTR_ERR(ctrl->ctrl.admin_tagset);
 			goto out_free_queue;
+		}
 
 		ctrl->ctrl.admin_q = blk_mq_init_queue(&ctrl->admin_tag_set);
 		if (IS_ERR(ctrl->ctrl.admin_q)) {
@@ -775,8 +772,7 @@ static int nvme_rdma_configure_admin_queue(struct nvme_rdma_ctrl *ctrl,
 			goto out_free_tagset;
 		}
 	} else {
-		error = blk_mq_reinit_tagset(&ctrl->admin_tag_set,
-					     nvme_rdma_reinit_request);
+		error = nvme_reinit_tagset(&ctrl->ctrl, ctrl->ctrl.admin_tagset);
 		if (error)
 			goto out_free_queue;
 	}
@@ -847,8 +843,10 @@ static int nvme_rdma_configure_io_queues(struct nvme_rdma_ctrl *ctrl, bool new)
 
 	if (new) {
 		ctrl->ctrl.tagset = nvme_rdma_alloc_tagset(&ctrl->ctrl, false);
-		if (IS_ERR(ctrl->ctrl.tagset))
+		if (IS_ERR(ctrl->ctrl.tagset)) {
+			ret = PTR_ERR(ctrl->ctrl.tagset);
 			goto out_free_io_queues;
+		}
 
 		ctrl->ctrl.connect_q = blk_mq_init_queue(&ctrl->tag_set);
 		if (IS_ERR(ctrl->ctrl.connect_q)) {
@@ -856,8 +854,7 @@ static int nvme_rdma_configure_io_queues(struct nvme_rdma_ctrl *ctrl, bool new)
 			goto out_free_tag_set;
 		}
 	} else {
-		ret = blk_mq_reinit_tagset(&ctrl->tag_set,
-					   nvme_rdma_reinit_request);
+		ret = nvme_reinit_tagset(&ctrl->ctrl, ctrl->ctrl.tagset);
 		if (ret)
 			goto out_free_io_queues;
 
@@ -915,7 +912,7 @@ static void nvme_rdma_reconnect_or_remove(struct nvme_rdma_ctrl *ctrl)
 				ctrl->ctrl.opts->reconnect_delay * HZ);
 	} else {
 		dev_info(ctrl->ctrl.device, "Removing controller...\n");
-		queue_work(nvme_wq, &ctrl->delete_work);
+		nvme_delete_ctrl(&ctrl->ctrl);
 	}
 }
 
@@ -1304,7 +1301,7 @@ static struct blk_mq_tags *nvme_rdma_tagset(struct nvme_rdma_queue *queue)
 	return queue->ctrl->tag_set.tags[queue_idx - 1];
 }
 
-static void nvme_rdma_submit_async_event(struct nvme_ctrl *arg, int aer_idx)
+static void nvme_rdma_submit_async_event(struct nvme_ctrl *arg)
 {
 	struct nvme_rdma_ctrl *ctrl = to_rdma_ctrl(arg);
 	struct nvme_rdma_queue *queue = &ctrl->queues[0];
@@ -1314,14 +1311,11 @@ static void nvme_rdma_submit_async_event(struct nvme_ctrl *arg, int aer_idx)
 	struct ib_sge sge;
 	int ret;
 
-	if (WARN_ON_ONCE(aer_idx != 0))
-		return;
-
 	ib_dma_sync_single_for_cpu(dev, sqe->dma, sizeof(*cmd), DMA_TO_DEVICE);
 
 	memset(cmd, 0, sizeof(*cmd));
 	cmd->common.opcode = nvme_admin_async_event;
-	cmd->common.command_id = NVME_RDMA_AQ_BLKMQ_DEPTH;
+	cmd->common.command_id = NVME_AQ_BLK_MQ_DEPTH;
 	cmd->common.flags |= NVME_CMD_SGL_METABUF;
 	nvme_rdma_set_sg_null(cmd);
 
@@ -1383,7 +1377,7 @@ static int __nvme_rdma_recv_done(struct ib_cq *cq, struct ib_wc *wc, int tag)
 	 * for them but rather special case them here.
 	 */
 	if (unlikely(nvme_rdma_queue_idx(queue) == 0 &&
-			cqe->command_id >= NVME_RDMA_AQ_BLKMQ_DEPTH))
+			cqe->command_id >= NVME_AQ_BLK_MQ_DEPTH))
 		nvme_complete_async_event(&queue->ctrl->ctrl, cqe->status,
 				&cqe->result);
 	else
@@ -1580,6 +1574,10 @@ nvme_rdma_timeout(struct request *rq, bool reserved)
 {
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 
+	dev_warn(req->queue->ctrl->ctrl.device,
+		 "I/O %d QID %d timeout, reset controller\n",
+		 rq->tag, nvme_rdma_queue_idx(req->queue));
+
 	/* queue error recovery */
 	nvme_rdma_error_recovery(req->queue->ctrl);
 
@@ -1604,12 +1602,15 @@ nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue, struct request *rq)
 			/*
 			 * reconnecting state means transport disruption, which
 			 * can take a long time and even might fail permanently,
-			 * so we can't let incoming I/O be requeued forever.
-			 * fail it fast to allow upper layers a chance to
-			 * failover.
+			 * fail fast to give upper layers a chance to failover.
+			 * deleting state means that the ctrl will never accept
+			 * commands again, fail it permanently.
 			 */
-			if (queue->ctrl->ctrl.state == NVME_CTRL_RECONNECTING)
+			if (queue->ctrl->ctrl.state == NVME_CTRL_RECONNECTING ||
+			    queue->ctrl->ctrl.state == NVME_CTRL_DELETING) {
+				nvme_req(rq)->status = NVME_SC_ABORT_REQ;
 				return BLK_STS_IOERR;
+			}
 			return BLK_STS_RESOURCE; /* try again later */
 		}
 	}
@@ -1754,50 +1755,9 @@ static void nvme_rdma_shutdown_ctrl(struct nvme_rdma_ctrl *ctrl, bool shutdown)
 	nvme_rdma_destroy_admin_queue(ctrl, shutdown);
 }
 
-static void nvme_rdma_remove_ctrl(struct nvme_rdma_ctrl *ctrl)
+static void nvme_rdma_delete_ctrl(struct nvme_ctrl *ctrl)
 {
-	nvme_remove_namespaces(&ctrl->ctrl);
-	nvme_rdma_shutdown_ctrl(ctrl, true);
-	nvme_uninit_ctrl(&ctrl->ctrl);
-	nvme_put_ctrl(&ctrl->ctrl);
-}
-
-static void nvme_rdma_del_ctrl_work(struct work_struct *work)
-{
-	struct nvme_rdma_ctrl *ctrl = container_of(work,
-				struct nvme_rdma_ctrl, delete_work);
-
-	nvme_stop_ctrl(&ctrl->ctrl);
-	nvme_rdma_remove_ctrl(ctrl);
-}
-
-static int __nvme_rdma_del_ctrl(struct nvme_rdma_ctrl *ctrl)
-{
-	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_DELETING))
-		return -EBUSY;
-
-	if (!queue_work(nvme_wq, &ctrl->delete_work))
-		return -EBUSY;
-
-	return 0;
-}
-
-static int nvme_rdma_del_ctrl(struct nvme_ctrl *nctrl)
-{
-	struct nvme_rdma_ctrl *ctrl = to_rdma_ctrl(nctrl);
-	int ret = 0;
-
-	/*
-	 * Keep a reference until all work is flushed since
-	 * __nvme_rdma_del_ctrl can free the ctrl mem
-	 */
-	if (!kref_get_unless_zero(&ctrl->ctrl.kref))
-		return -EBUSY;
-	ret = __nvme_rdma_del_ctrl(ctrl);
-	if (!ret)
-		flush_work(&ctrl->delete_work);
-	nvme_put_ctrl(&ctrl->ctrl);
-	return ret;
+	nvme_rdma_shutdown_ctrl(to_rdma_ctrl(ctrl), true);
 }
 
 static void nvme_rdma_reset_ctrl_work(struct work_struct *work)
@@ -1833,7 +1793,10 @@ static void nvme_rdma_reset_ctrl_work(struct work_struct *work)
 
 out_fail:
 	dev_warn(ctrl->ctrl.device, "Removing after reset failure\n");
-	nvme_rdma_remove_ctrl(ctrl);
+	nvme_remove_namespaces(&ctrl->ctrl);
+	nvme_rdma_shutdown_ctrl(ctrl, true);
+	nvme_uninit_ctrl(&ctrl->ctrl);
+	nvme_put_ctrl(&ctrl->ctrl);
 }
 
 static const struct nvme_ctrl_ops nvme_rdma_ctrl_ops = {
@@ -1845,9 +1808,87 @@ static const struct nvme_ctrl_ops nvme_rdma_ctrl_ops = {
 	.reg_write32		= nvmf_reg_write32,
 	.free_ctrl		= nvme_rdma_free_ctrl,
 	.submit_async_event	= nvme_rdma_submit_async_event,
-	.delete_ctrl		= nvme_rdma_del_ctrl,
+	.delete_ctrl		= nvme_rdma_delete_ctrl,
 	.get_address		= nvmf_get_address,
+	.reinit_request		= nvme_rdma_reinit_request,
 };
+
+static inline bool
+__nvme_rdma_options_match(struct nvme_rdma_ctrl *ctrl,
+	struct nvmf_ctrl_options *opts)
+{
+	char *stdport = __stringify(NVME_RDMA_IP_PORT);
+
+
+	if (!nvmf_ctlr_matches_baseopts(&ctrl->ctrl, opts) ||
+	    strcmp(opts->traddr, ctrl->ctrl.opts->traddr))
+		return false;
+
+	if (opts->mask & NVMF_OPT_TRSVCID &&
+	    ctrl->ctrl.opts->mask & NVMF_OPT_TRSVCID) {
+		if (strcmp(opts->trsvcid, ctrl->ctrl.opts->trsvcid))
+			return false;
+	} else if (opts->mask & NVMF_OPT_TRSVCID) {
+		if (strcmp(opts->trsvcid, stdport))
+			return false;
+	} else if (ctrl->ctrl.opts->mask & NVMF_OPT_TRSVCID) {
+		if (strcmp(stdport, ctrl->ctrl.opts->trsvcid))
+			return false;
+	}
+	/* else, it's a match as both have stdport. Fall to next checks */
+
+	/*
+	 * checking the local address is rough. In most cases, one
+	 * is not specified and the host port is selected by the stack.
+	 *
+	 * Assume no match if:
+	 *  local address is specified and address is not the same
+	 *  local address is not specified but remote is, or vice versa
+	 *    (admin using specific host_traddr when it matters).
+	 */
+	if (opts->mask & NVMF_OPT_HOST_TRADDR &&
+	    ctrl->ctrl.opts->mask & NVMF_OPT_HOST_TRADDR) {
+		if (strcmp(opts->host_traddr, ctrl->ctrl.opts->host_traddr))
+			return false;
+	} else if (opts->mask & NVMF_OPT_HOST_TRADDR ||
+		   ctrl->ctrl.opts->mask & NVMF_OPT_HOST_TRADDR)
+		return false;
+	/*
+	 * if neither controller had an host port specified, assume it's
+	 * a match as everything else matched.
+	 */
+
+	return true;
+}
+
+/*
+ * Fails a connection request if it matches an existing controller
+ * (association) with the same tuple:
+ * <Host NQN, Host ID, local address, remote address, remote port, SUBSYS NQN>
+ *
+ * if local address is not specified in the request, it will match an
+ * existing controller with all the other parameters the same and no
+ * local port address specified as well.
+ *
+ * The ports don't need to be compared as they are intrinsically
+ * already matched by the port pointers supplied.
+ */
+static bool
+nvme_rdma_existing_controller(struct nvmf_ctrl_options *opts)
+{
+	struct nvme_rdma_ctrl *ctrl;
+	bool found = false;
+
+	mutex_lock(&nvme_rdma_ctrl_mutex);
+	list_for_each_entry(ctrl, &nvme_rdma_ctrl_list, list) {
+		found = __nvme_rdma_options_match(ctrl, opts);
+		if (found)
+			break;
+	}
+	mutex_unlock(&nvme_rdma_ctrl_mutex);
+
+	return found;
+}
 
 static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 		struct nvmf_ctrl_options *opts)
@@ -1885,6 +1926,11 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 		}
 	}
 
+	if (!opts->duplicate_connect && nvme_rdma_existing_controller(opts)) {
+		ret = -EALREADY;
+		goto out_free_ctrl;
+	}
+
 	ret = nvme_init_ctrl(&ctrl->ctrl, dev, &nvme_rdma_ctrl_ops,
 				0 /* no quirks, we're perfect! */);
 	if (ret)
@@ -1893,7 +1939,6 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	INIT_DELAYED_WORK(&ctrl->reconnect_work,
 			nvme_rdma_reconnect_ctrl_work);
 	INIT_WORK(&ctrl->err_work, nvme_rdma_error_recovery_work);
-	INIT_WORK(&ctrl->delete_work, nvme_rdma_del_ctrl_work);
 	INIT_WORK(&ctrl->ctrl.reset_work, nvme_rdma_reset_ctrl_work);
 
 	ctrl->ctrl.queue_count = opts->nr_io_queues + 1; /* +1 for admin queue */
@@ -1952,7 +1997,7 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	dev_info(ctrl->ctrl.device, "new ctrl: NQN \"%s\", addr %pISpcs\n",
 		ctrl->ctrl.opts->subsysnqn, &ctrl->addr);
 
-	kref_get(&ctrl->ctrl.kref);
+	nvme_get_ctrl(&ctrl->ctrl);
 
 	mutex_lock(&nvme_rdma_ctrl_mutex);
 	list_add_tail(&ctrl->list, &nvme_rdma_ctrl_list);
@@ -1997,7 +2042,7 @@ static void nvme_rdma_remove_one(struct ib_device *ib_device, void *client_data)
 		dev_info(ctrl->ctrl.device,
 			"Removing ctrl: NQN \"%s\", addr %pISp\n",
 			ctrl->ctrl.opts->subsysnqn, &ctrl->addr);
-		__nvme_rdma_del_ctrl(ctrl);
+		nvme_delete_ctrl(&ctrl->ctrl);
 	}
 	mutex_unlock(&nvme_rdma_ctrl_mutex);
 
