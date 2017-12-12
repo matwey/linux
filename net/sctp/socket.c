@@ -70,7 +70,9 @@
 #include <linux/init.h>
 #include <linux/crypto.h>
 #include <linux/slab.h>
+#ifndef __GENKSYMS__
 #include <linux/nsproxy.h>
+#endif
 
 #include <net/ip.h>
 #include <net/icmp.h>
