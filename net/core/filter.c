@@ -39,6 +39,7 @@
 #include <linux/filter.h>
 #include <linux/reciprocal_div.h>
 #include <linux/ratelimit.h>
+#include <linux/system.h>
 #include <linux/seccomp.h>
 
 /* No hurry in this branch */
@@ -275,9 +276,11 @@ load_b:
 			X = K;
 			continue;
 		case BPF_S_LD_MEM:
+			gmb();
 			A = mem[K];
 			continue;
 		case BPF_S_LDX_MEM:
+			gmb();
 			X = mem[K];
 			continue;
 		case BPF_S_MISC_TAX:
