@@ -20,6 +20,7 @@
 #include <linux/slab.h>
 #include <linux/firmware.h>
 #include <linux/etherdevice.h>
+#include <linux/system.h>
 
 #include <net/mac80211.h>
 
@@ -361,6 +362,7 @@ static int p54_conf_tx(struct ieee80211_hw *dev, u16 queue,
 
 	mutex_lock(&priv->conf_mutex);
 	if (queue < dev->queues) {
+		gmb();
 		P54_SET_QUEUE(priv->qos_params[queue], params->aifs,
 			params->cw_min, params->cw_max, params->txop);
 		ret = p54_set_edcf(priv);
