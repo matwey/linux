@@ -166,6 +166,8 @@ extern int copy_from_user_real(void *dest, void __user *src, size_t count);
 
 #define nop() asm volatile("nop")
 
+#include <asm/alternative.h>
+
 /*
  * Force strict CPU ordering.
  * And yes, this is required on UP too when we're talking
@@ -189,6 +191,12 @@ extern int copy_from_user_real(void *dest, void __user *src, size_t count);
 #define smp_mb__before_clear_bit()     smp_mb()
 #define smp_mb__after_clear_bit()      smp_mb()
 
+static inline void gmb(void)
+{
+	asm volatile(
+		ALTERNATIVE("", ".long 0xb2e8f000", 49)
+		: : : "memory");
+}
 
 #define set_mb(var, value)      do { var = value; mb(); } while (0)
 
