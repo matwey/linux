@@ -62,7 +62,7 @@
 #endif
 
 #define _PAGE_FILE	(_AT(pteval_t, 1) << _PAGE_BIT_FILE)
-#define _PAGE_PROTNONE	(_AT(pteval_t, 1) << _PAGE_BIT_PROTNONE)
+#define _PAGE_PROTNONE  (_AT(pteval_t, 1) << _PAGE_BIT_PROTNONE)
 
 #ifndef __ASSEMBLY__
 #if defined(CONFIG_X86_64) && CONFIG_XEN_COMPAT <= 0x030002
@@ -81,6 +81,33 @@ extern unsigned int __kernel_page_user;
 #define _PAGE_CHG_MASK	(PTE_PFN_MASK | _PAGE_CACHE_MASK | _PAGE_IOMAP | \
 			 _PAGE_SPECIAL | _PAGE_ACCESSED | _PAGE_DIRTY)
 #define _HPAGE_CHG_MASK (_PAGE_CHG_MASK | _PAGE_PSE)
+
+/* The ASID is the lower 12 bits of CR3 */
+#define X86_CR3_PCID_ASID_MASK  (_AC((1<<12)-1,UL))
+
+/* Mask for all the PCID-related bits in CR3: */
+#define X86_CR3_PCID_MASK       (X86_CR3_PCID_NOFLUSH | X86_CR3_PCID_ASID_MASK)
+#define X86_CR3_PCID_ASID_KERN  (_AC(0x0,UL))
+
+#if defined(CONFIG_KAISER) && defined(CONFIG_X86_64)
+/* Let X86_CR3_PCID_ASID_USER be usable for the X86_CR3_PCID_NOFLUSH bit */
+#define X86_CR3_PCID_ASID_USER	(_AC(0x80,UL))
+
+#define X86_CR3_PCID_KERN_FLUSH		(X86_CR3_PCID_ASID_KERN)
+#define X86_CR3_PCID_USER_FLUSH		(X86_CR3_PCID_ASID_USER)
+#define X86_CR3_PCID_KERN_NOFLUSH	(X86_CR3_PCID_NOFLUSH | X86_CR3_PCID_ASID_KERN)
+#define X86_CR3_PCID_USER_NOFLUSH	(X86_CR3_PCID_NOFLUSH | X86_CR3_PCID_ASID_USER)
+#else
+#define X86_CR3_PCID_ASID_USER  (_AC(0x0,UL))
+/*
+ * PCIDs are unsupported on 32-bit and none of these bits can be
+ * set in CR3:
+ */
+#define X86_CR3_PCID_KERN_FLUSH		(0)
+#define X86_CR3_PCID_USER_FLUSH		(0)
+#define X86_CR3_PCID_KERN_NOFLUSH	(0)
+#define X86_CR3_PCID_USER_NOFLUSH	(0)
+#endif
 
 /*
  * PAT settings are part of the hypervisor interface, which sets the
@@ -121,7 +148,8 @@ extern unsigned int __kernel_page_user;
 #define __PAGE_KERNEL_NOCACHE		(__PAGE_KERNEL | _PAGE_PCD | _PAGE_PWT)
 #define __PAGE_KERNEL_UC_MINUS		(__PAGE_KERNEL | _PAGE_PCD)
 #define __PAGE_KERNEL_VSYSCALL		(__PAGE_KERNEL_RX | _PAGE_USER)
-#define __PAGE_KERNEL_VSYSCALL_NOCACHE	(__PAGE_KERNEL_VSYSCALL | _PAGE_PCD | _PAGE_PWT)
+#define __PAGE_KERNEL_VVAR		(__PAGE_KERNEL_RO | _PAGE_USER)
+#define __PAGE_KERNEL_VVAR_NOCACHE	(__PAGE_KERNEL_VVAR | _PAGE_PCD | _PAGE_PWT)
 #define __PAGE_KERNEL_LARGE		(__PAGE_KERNEL | _PAGE_PSE)
 #define __PAGE_KERNEL_LARGE_NOCACHE	(__PAGE_KERNEL | _PAGE_CACHE_UC | _PAGE_PSE)
 #define __PAGE_KERNEL_LARGE_EXEC	(__PAGE_KERNEL_EXEC | _PAGE_PSE)
@@ -143,7 +171,8 @@ extern unsigned int __kernel_page_user;
 #define PAGE_KERNEL_LARGE_NOCACHE	__pgprot(__PAGE_KERNEL_LARGE_NOCACHE)
 #define PAGE_KERNEL_LARGE_EXEC		__pgprot(__PAGE_KERNEL_LARGE_EXEC)
 #define PAGE_KERNEL_VSYSCALL		__pgprot(__PAGE_KERNEL_VSYSCALL)
-#define PAGE_KERNEL_VSYSCALL_NOCACHE	__pgprot(__PAGE_KERNEL_VSYSCALL_NOCACHE)
+#define PAGE_KERNEL_VVAR		__pgprot(__PAGE_KERNEL_VVAR)
+#define PAGE_KERNEL_VVAR_NOCACHE	__pgprot(__PAGE_KERNEL_VVAR_NOCACHE)
 
 #define PAGE_KERNEL_IO			__pgprot(__PAGE_KERNEL_IO)
 #define PAGE_KERNEL_IO_NOCACHE		__pgprot(__PAGE_KERNEL_IO_NOCACHE)

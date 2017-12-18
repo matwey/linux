@@ -115,9 +115,31 @@ static inline pgd_t *__user_pgd(pgd_t *pgd)
 			 + ((unsigned long)pgd & ~PAGE_MASK));
 }
 
+#ifdef CONFIG_KAISER
+extern pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd);
+
+static inline pgd_t *xen_get_shadow_pgd(pgd_t *pgdp)
+{
+#ifdef CONFIG_DEBUG_VM
+	/* linux/mmdebug.h may not have been included at this point */
+	BUG_ON(!kaiser_enabled);
+#endif
+	return (pgd_t *)((unsigned long)pgdp | (unsigned long)PAGE_SIZE);
+}
+#else
+static inline pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
+{
+	return pgd;
+}
+static inline pgd_t *xen_get_shadow_pgd(pgd_t *pgdp)
+{
+	return NULL;
+}
+#endif /* CONFIG_KAISER */
+
 static inline void xen_set_pgd(pgd_t *pgdp, pgd_t pgd)
 {
-	xen_l4_entry_update(pgdp, pgd);
+	xen_l4_entry_update(pgdp, kaiser_set_shadow_pgd(pgdp, pgd));
 }
 
 #define xen_pgd_clear(pgd)			\

@@ -1129,6 +1129,7 @@ ENTRY(simd_coprocessor_error)
 	.word X86_FEATURE_XMM
 	.byte 662b-661b
 	.byte 664f-663f
+	.byte 0
 .previous
 .section .altinstr_replacement,"ax"
 663:	pushl $do_simd_coprocessor_error

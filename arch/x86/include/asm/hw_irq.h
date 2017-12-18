@@ -176,7 +176,11 @@ extern void (*__initconst interrupt[NR_VECTORS-FIRST_EXTERNAL_VECTOR])(void);
 #endif
 
 typedef int vector_irq_t[NR_VECTORS];
+#ifndef __GENKSYMS__
+DECLARE_PER_CPU_USER_MAPPED(vector_irq_t, vector_irq);
+#else
 DECLARE_PER_CPU(vector_irq_t, vector_irq);
+#endif
 extern void setup_vector_irq(int cpu);
 
 #ifdef CONFIG_X86_IO_APIC

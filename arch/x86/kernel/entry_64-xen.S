@@ -57,6 +57,9 @@
 #include <asm/ftrace.h>
 #include <asm/percpu.h>
 #include <asm/pgtable_types.h>
+#include <asm/alternative-asm.h>
+#include <asm/cpufeature.h>
+#include <asm/kaiser.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/features.h>
 
@@ -354,6 +357,7 @@ ENTRY(save_args)
 	testl $3, CS(%rdi)
 	je 1f
 	SWAPGS
+	SWITCH_KERNEL_CR3
 	/*
 	 * irq_count is used to check if a CPU is already on an interrupt stack
 	 * or not. While this is essentially redundant with preempt_count it is
@@ -394,6 +398,12 @@ END(save_rest)
 #ifndef CONFIG_XEN
 /* save complete stack frame */
 	.pushsection .kprobes.text, "ax"
+/*
+ * Return: ebx=0: needs swapgs but not SWITCH_USER_CR3 in paranoid_exit
+ *         ebx=1: needs neither swapgs nor SWITCH_USER_CR3 in paranoid_exit
+ *         ebx=2: needs both swapgs and SWITCH_USER_CR3 in paranoid_exit
+ *         ebx=3: needs SWITCH_USER_CR3 but not swapgs in paranoid_exit
+ */
 ENTRY(save_paranoid)
 	XCPT_FRAME offset=ORIG_RAX-R15+8
 	cld
@@ -419,7 +429,26 @@ ENTRY(save_paranoid)
 	js 1f	/* negative -> in kernel */
 	SWAPGS
 	xorl %ebx,%ebx
-1:	ret
+1:
+#ifdef CONFIG_KAISER
+	/*
+	 * We might have come in between a swapgs and a SWITCH_KERNEL_CR3
+	 * on entry, or between a SWITCH_USER_CR3 and a swapgs on exit.
+	 * Do a conditional SWITCH_KERNEL_CR3: this could safely be done
+	 * unconditionally, but we need to find out whether the reverse
+	 * should be done on return (conveyed to paranoid_exit in %ebx).
+	 */
+	ALTERNATIVE "jmp 2f", "movq %cr3, %rax", X86_FEATURE_KAISER
+	testl	$KAISER_SHADOW_PGD_OFFSET, %eax
+	jz	2f
+	orl	$2, %ebx
+	andq	$(~(X86_CR3_PCID_ASID_MASK | KAISER_SHADOW_PGD_OFFSET)), %rax
+	/* If PCID enabled, set X86_CR3_PCID_NOFLUSH_BIT */
+	ALTERNATIVE "", "bts $63, %rax", X86_FEATURE_PCID
+	movq	%rax, %cr3
+2:
+#endif
+	ret
 	CFI_ENDPROC
 END(save_paranoid)
 	.popsection
@@ -1152,30 +1181,41 @@ paranoidzeroentry machine_check *machine_check_vector(%rip)
 	 * is fundamentally NMI-unsafe. (we cannot change the soft and
 	 * hard flags at once, atomically)
 	 */
-
-	/* ebx:	no swapgs flag */
+/*
+ * On entry: ebx=0: needs swapgs but not SWITCH_USER_CR3
+ *           ebx=1: needs neither swapgs nor SWITCH_USER_CR3
+ *           ebx=2: needs both swapgs and SWITCH_USER_CR3
+ *           ebx=3: needs SWITCH_USER_CR3 but not swapgs
+ */
 ENTRY(paranoid_exit)
 	DEFAULT_FRAME
 	DISABLE_INTERRUPTS(CLBR_NONE)
 	TRACE_IRQS_OFF
-	testl %ebx,%ebx				/* swapgs needed? */
-	jnz paranoid_restore
-	testl $3,CS(%rsp)
-	jnz   paranoid_userspace
-paranoid_swapgs:
+	movq	%rbx, %r12		/* paranoid_userspace uses %ebx */
+	testl	$3, CS(%rsp)
+	jnz	paranoid_userspace
+paranoid_kernel:
+	movq	%r12, %rbx		/* restore after paranoid_userspace */
 	TRACE_IRQS_IRETQ 0
+#ifdef CONFIG_KAISER
+	/* No ALTERNATIVE for X86_FEATURE_KAISER: save_paranoid sets %ebx */
+	testl	$2, %ebx		/* SWITCH_USER_CR3 needed? */
+	jz	paranoid_exit_no_switch
+	SWITCH_USER_CR3
+paranoid_exit_no_switch:
+#endif
+	testl	$1, %ebx		/* swapgs needed? */
+	jnz	paranoid_exit_no_swapgs
 	SWAPGS_UNSAFE_STACK
+paranoid_exit_no_swapgs:
 	RESTORE_ALL 8
-	jmp irq_return
-paranoid_restore:
-	TRACE_IRQS_IRETQ 0
-	RESTORE_ALL 8
-	jmp irq_return
+	jmp	irq_return
+
 paranoid_userspace:
 	GET_THREAD_INFO(%rcx)
 	movl TI_flags(%rcx),%ebx
 	andl $_TIF_WORK_MASK,%ebx
-	jz paranoid_swapgs
+	jz paranoid_kernel
 	movq %rsp,%rdi			/* &pt_regs */
 	call sync_regs
 	movq %rax,%rsp			/* switch stack for scheduling */
@@ -1225,6 +1265,13 @@ ENTRY(error_entry)
 	movq %r14, R14+8(%rsp)
 	movq %r15, R15+8(%rsp)
 #ifndef CONFIG_XEN
+	/*
+	 * error_entry() always returns with a kernel gsbase and
+	 * CR3.  We must also have a kernel CR3/gsbase before
+	 * calling TRACE_IRQS_*.  Just unconditionally switch to
+	 * the kernel CR3 here.
+	 */
+	SWITCH_KERNEL_CR3
 	xorl %ebx,%ebx
 	testl $3,CS+8(%rsp)
 	je error_kernelspace
