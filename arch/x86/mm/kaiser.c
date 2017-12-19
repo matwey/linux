@@ -27,7 +27,7 @@ EXPORT_SYMBOL(kaiser_enabled);	/* for inlined TLB flush functions */
 
 DEFINE_PER_CPU_USER_MAPPED(unsigned long, unsafe_stack_register_backup);
 
-extern char __sched_text_start[];
+extern char __sched_text_start[], __irqentry_text_start[], __irqentry_text_end[];
 
 /*
  * These can have bit 63 set, so we can not just use a plain "or"
