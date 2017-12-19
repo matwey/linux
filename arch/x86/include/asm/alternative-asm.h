@@ -15,53 +15,48 @@
 	.endm
 #endif
 
-.macro altinstruction_entry orig alt feature orig_len alt_len pad_len
-	.long \orig - .
-	.long \alt - .
+.macro altinstruction_entry orig alt feature orig_len alt_len
+	.align 8
+	.quad \orig
+	.quad \alt
 	.word \feature
 	.byte \orig_len
 	.byte \alt_len
-	.byte \pad_len
 .endm
 
 .macro ALTERNATIVE oldinstr, newinstr, feature
 140:
-	\oldinstr
+       \oldinstr
 141:
-	.skip -(((144f-143f)-(141b-140b)) > 0) * ((144f-143f)-(141b-140b)),0x90
-142:
 
-	.pushsection .altinstructions,"a"
-	altinstruction_entry 140b,143f,\feature,142b-140b,144f-143f,142b-141b
-	.popsection
+       .pushsection .altinstructions,"a"
+       altinstruction_entry 140b,143f,\feature,141b-140b,144f-143f
+       .popsection
 
-	.pushsection .altinstr_replacement,"ax"
+       .pushsection .altinstr_replacement,"ax"
 143:
-	\newinstr
+       \newinstr
 144:
-	.popsection
+       .popsection
 .endm
 
 .macro ALTERNATIVE_2 oldinstr, newinstr1, feature1, newinstr2, feature2
 140:
-	\oldinstr
+       \oldinstr
 141:
-	.skip -(((144f-143f)-(141b-140b)) > 0) * ((144f-143f)-(141b-140b)),0x90
-	.skip -(((145f-144f)-(144f-143f)-(141b-140b)) > 0) * ((145f-144f)-(144f-143f)-(141b-140b)),0x90
-142:
 
-	.pushsection .altinstructions,"a"
-	altinstruction_entry 140b,143f,\feature1,142b-140b,144f-143f,142b-141b
-	altinstruction_entry 140b,144f,\feature2,142b-140b,145f-144f,142b-141b
-	.popsection
+       .pushsection .altinstructions,"a"
+       altinstruction_entry 140b,143f,\feature1,141b-140b,144f-143f
+       altinstruction_entry 140b,144f,\feature2,141b-140b,145f-144f
+       .popsection
 
-	.pushsection .altinstr_replacement,"ax"
+       .pushsection .altinstr_replacement,"ax"
 143:
-	\newinstr1
+       \newinstr1
 144:
-	\newinstr2
+       \newinstr2
 145:
-	.popsection
+       .popsection
 .endm
 
 #endif  /*  __ASSEMBLY__  */

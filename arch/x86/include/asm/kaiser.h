@@ -1,6 +1,7 @@
 #ifndef _ASM_X86_KAISER_H
 #define _ASM_X86_KAISER_H
 
+#include <asm/nops.h>
 #include <asm/processor-flags.h> /* For PCID constants */
 
 /*
@@ -26,7 +27,7 @@
 movq %cr3, \reg
 andq $(~(X86_CR3_PCID_ASID_MASK | KAISER_SHADOW_PGD_OFFSET)), \reg
 /* If PCID enabled, set X86_CR3_PCID_NOFLUSH_BIT */
-ALTERNATIVE "", "bts $63, \reg", X86_FEATURE_PCID
+ALTERNATIVE ASM_NOP5, "bts $63, \reg", X86_FEATURE_PCID
 movq \reg, %cr3
 .endm
 
@@ -47,26 +48,27 @@ movq \reg, %cr3
 .endm
 
 .macro SWITCH_KERNEL_CR3
-ALTERNATIVE "jmp 8f", "pushq %rax", X86_FEATURE_KAISER
+ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
+pushq %rax
 _SWITCH_TO_KERNEL_CR3 %rax
 popq %rax
-8:
+.Lend_\@:
 .endm
 
 .macro SWITCH_USER_CR3
-ALTERNATIVE "jmp 8f", "pushq %rax", X86_FEATURE_KAISER
+ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
+pushq %rax
 _SWITCH_TO_USER_CR3 %rax %al
 popq %rax
-8:
+.Lend_\@:
 .endm
 
 .macro SWITCH_KERNEL_CR3_NO_STACK
-ALTERNATIVE "jmp 8f", \
-	__stringify(movq %rax, PER_CPU_VAR(unsafe_stack_register_backup)), \
-	X86_FEATURE_KAISER
+ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
+movq %rax, PER_CPU_VAR(unsafe_stack_register_backup)
 _SWITCH_TO_KERNEL_CR3 %rax
 movq PER_CPU_VAR(unsafe_stack_register_backup), %rax
-8:
+.Lend_\@:
 .endm
 
 #else /* CONFIG_KAISER */

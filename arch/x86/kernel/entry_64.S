@@ -410,13 +410,14 @@ ENTRY(save_paranoid)
 	 * unconditionally, but we need to find out whether the reverse
 	 * should be done on return (conveyed to paranoid_exit in %ebx).
 	 */
-	ALTERNATIVE "jmp 2f", "movq %cr3, %rax", X86_FEATURE_KAISER
+	ALTERNATIVE "jmp 2f", "", X86_FEATURE_KAISER
+	movq %cr3, %rax
 	testl	$KAISER_SHADOW_PGD_OFFSET, %eax
 	jz	2f
 	orl	$2, %ebx
 	andq	$(~(X86_CR3_PCID_ASID_MASK | KAISER_SHADOW_PGD_OFFSET)), %rax
 	/* If PCID enabled, set X86_CR3_PCID_NOFLUSH_BIT */
-	ALTERNATIVE "", "bts $63, %rax", X86_FEATURE_PCID
+	ALTERNATIVE ASM_NOP5, "bts $63, %rax", X86_FEATURE_PCID
 	movq	%rax, %cr3
 2:
 #endif
