@@ -188,34 +188,6 @@ STACK_SIZE  = 1 << STACK_SHIFT
 	ssm	__SF_EMPTY(%r15)
 	.endm
 
-	.macro BPOFF
-	.pushsection .altinstr_replacement, "ax"
-0:	.long	0xb2e8c000	# FIXME: PPA 12 correct ?
-	.popsection
-1:	.long	0x47000000
-	.pushsection .altnobp, "a"
-        .long 1b - .
-	.long 0b - .
-	.word 49		# FIXME: facility bit 49 correct ?
-	.byte 4
-	.byte 4
-	.popsection
-	.endm
-
-	.macro BPON
-	.pushsection .altinstr_replacement, "ax"
-0:	.long	0xb2e8d000	# FIXME: PPA 13 correct ?
-	.popsection
-1:	.long	0x47000000
-	.pushsection .altnobp, "a"
-        .long 1b - .
-	.long 0b - .
-	.word 49		# FIXME: facility bit 49 correct ?
-	.byte 4
-	.byte 4
-	.popsection
-	.endm
-
 	.section .kprobes.text, "ax"
 
 /*
@@ -283,9 +255,7 @@ sysc_nr_ok:
 	mvc	SP_ARGS(4,%r15),SP_R7(%r15)
 	l	%r8,0(%r7,%r10)	  # get system call addr.
 	bnz	BASED(sysc_tracesys)
-	BPOFF
 	basr	%r14,%r8	  # call sys_xxxx
-	BPON
 	st	%r2,SP_R2(%r15)   # store return value (change R2 on stack)
 
 sysc_return:
@@ -405,9 +375,7 @@ sysc_tracego:
 	lm	%r3,%r6,SP_R3(%r15)
 	mvc	SP_ARGS(4,%r15),SP_R7(%r15)
 	l	%r2,SP_ORIG_R2(%r15)
-	BPOFF
 	basr	%r14,%r8		# call sys_xxx
-	BPON
 	st	%r2,SP_R2(%r15)		# store return value
 sysc_tracenogo:
 	tm	__TI_flags+2(%r12),_TIF_SYSCALL
