@@ -6,7 +6,9 @@
 
 #include <asm/processor.h>
 #include <asm/system.h>
+#ifndef __GENKSYMS__
 #include <asm/smp.h>
+#endif
 
 /*
  * Declare a couple of kaiser interfaces here for convenience,
