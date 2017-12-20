@@ -63,7 +63,6 @@
 #include <asm/kvm_virtio.h>
 #include <asm/diag.h>
 #include <asm/os_info.h>
-#include <asm/alternative.h>
 #include <asm/sclp.h>
 
 long psw_kernel_bits	= (PSW_BASE_BITS | PSW_MASK_DAT | PSW_ASC_PRIMARY |
@@ -1115,8 +1114,6 @@ setup_arch(char **cmdline_p)
         /* Setup default console */
 	conmode_default();
 	set_preferred_console();
-
-	apply_alternative_instructions();
 
 	/* Setup zfcpdump support */
 	setup_zfcpdump(console_devno);
