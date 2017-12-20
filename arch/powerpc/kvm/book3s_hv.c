@@ -2266,6 +2266,9 @@ static void prepare_threads(struct kvmppc_vcore *vc)
 	for_each_runnable_thread(i, vcpu, vc) {
 		if (signal_pending(vcpu->arch.run_task))
 			vcpu->arch.ret = -EINTR;
+		else if (kvm_is_radix(vc->kvm) != radix_enabled())
+			/* can't actually run HPT guest on radix host yet... */
+			vcpu->arch.ret = -EINVAL;
 		else if (vcpu->arch.vpa.update_pending ||
 			 vcpu->arch.slb_shadow.update_pending ||
 			 vcpu->arch.dtl.update_pending)
@@ -2520,14 +2523,13 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	 * Hard-disable interrupts, and check resched flag and signals.
 	 * If we need to reschedule or deliver a signal, clean up
 	 * and return without going into the guest(s).
-	 * If the hpte_setup_done flag has been cleared, don't go into the
+	 * If the mmu_ready flag has been cleared, don't go into the
 	 * guest because that means a HPT resize operation is in progress.
 	 */
 	local_irq_disable();
 	hard_irq_disable();
 	if (lazy_irq_pending() || need_resched() ||
-	    recheck_signals(&core_info) ||
-	    (!kvm_is_radix(vc->kvm) && !vc->kvm->arch.hpte_setup_done)) {
+	    recheck_signals(&core_info) || !vc->kvm->arch.mmu_ready) {
 		local_irq_enable();
 		vc->vcore_state = VCORE_INACTIVE;
 		/* Unlock all except the primary vcore */
@@ -2950,11 +2952,21 @@ static int kvmppc_run_vcpu(struct kvm_run *kvm_run, struct kvm_vcpu *vcpu)
 
 	while (vcpu->arch.state == KVMPPC_VCPU_RUNNABLE &&
 	       !signal_pending(current)) {
-		/* See if the HPT and VRMA are ready to go */
-		if (!kvm_is_radix(vcpu->kvm) &&
-		    !vcpu->kvm->arch.hpte_setup_done) {
+		/* See if the MMU is ready to go */
+		if (!vcpu->kvm->arch.mmu_ready) {
 			spin_unlock(&vc->lock);
-			r = kvmppc_hv_setup_htab_rma(vcpu);
+			mutex_lock(&vcpu->kvm->lock);
+			r = 0;
+			if (!vcpu->kvm->arch.mmu_ready) {
+				if (!kvm_is_radix(vcpu->kvm))
+					r = kvmppc_hv_setup_htab_rma(vcpu);
+				if (!r) {
+					if (cpu_has_feature(CPU_FTR_ARCH_300))
+						kvmppc_setup_partition_table(vcpu->kvm);
+					vcpu->kvm->arch.mmu_ready = 1;
+				}
+			}
+			mutex_unlock(&vcpu->kvm->lock);
 			spin_lock(&vc->lock);
 			if (r) {
 				kvm_run->exit_reason = KVM_EXIT_FAIL_ENTRY;
@@ -3040,6 +3052,7 @@ static int kvmppc_vcpu_run_hv(struct kvm_run *run, struct kvm_vcpu *vcpu)
 	unsigned long ebb_regs[3] = {};	/* shut up GCC */
 	unsigned long user_tar = 0;
 	unsigned int user_vrsave;
+	struct kvm *kvm;
 
 	if (!vcpu->arch.sane) {
 		run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
@@ -3077,8 +3090,9 @@ static int kvmppc_vcpu_run_hv(struct kvm_run *run, struct kvm_vcpu *vcpu)
 		return -EINTR;
 	}
 
-	atomic_inc(&vcpu->kvm->arch.vcpus_running);
-	/* Order vcpus_running vs. hpte_setup_done, see kvmppc_alloc_reset_hpt */
+	kvm = vcpu->kvm;
+	atomic_inc(&kvm->arch.vcpus_running);
+	/* Order vcpus_running vs. mmu_ready, see kvmppc_alloc_reset_hpt */
 	smp_mb();
 
 	flush_all_to_thread(current);
@@ -3134,22 +3148,21 @@ static int kvmppc_vcpu_run_hv(struct kvm_run *run, struct kvm_vcpu *vcpu)
 }
 
 static void kvmppc_add_seg_page_size(struct kvm_ppc_one_seg_page_size **sps,
-				     int linux_psize)
+				     int shift, int sllp)
 {
-	struct mmu_psize_def *def = &mmu_psize_defs[linux_psize];
-
-	if (!def->shift)
-		return;
-	(*sps)->page_shift = def->shift;
-	(*sps)->slb_enc = def->sllp;
-	(*sps)->enc[0].page_shift = def->shift;
-	(*sps)->enc[0].pte_enc = def->penc[linux_psize];
+	(*sps)->page_shift = shift;
+	(*sps)->slb_enc = sllp;
+	(*sps)->enc[0].page_shift = shift;
+	(*sps)->enc[0].pte_enc = kvmppc_pgsize_lp_encoding(shift, shift);
 	/*
-	 * Add 16MB MPSS support if host supports it
+	 * Add 16MB MPSS support (may get filtered out by userspace)
 	 */
-	if (linux_psize != MMU_PAGE_16M && def->penc[MMU_PAGE_16M] != -1) {
-		(*sps)->enc[1].page_shift = 24;
-		(*sps)->enc[1].pte_enc = def->penc[MMU_PAGE_16M];
+	if (shift != 24) {
+		int penc = kvmppc_pgsize_lp_encoding(shift, 24);
+		if (penc != -1) {
+			(*sps)->enc[1].page_shift = 24;
+			(*sps)->enc[1].pte_enc = penc;
+		}
 	}
 	(*sps)++;
 }
@@ -3160,22 +3173,22 @@ static int kvm_vm_ioctl_get_smmu_info_hv(struct kvm *kvm,
 	struct kvm_ppc_one_seg_page_size *sps;
 
 	/*
-	 * Since we don't yet support HPT guests on a radix host,
-	 * return an error if the host uses radix.
+	 * POWER7, POWER8 and POWER9 all support 32 storage keys for data.
+	 * POWER7 doesn't support keys for instruction accesses,
+	 * POWER8 and POWER9 do.
 	 */
-	if (radix_enabled())
-		return -EINVAL;
+	info->data_keys = 32;
+	info->instr_keys = cpu_has_feature(CPU_FTR_ARCH_207S) ? 32 : 0;
 
-	info->flags = KVM_PPC_PAGE_SIZES_REAL;
-	if (mmu_has_feature(MMU_FTR_1T_SEGMENT))
-		info->flags |= KVM_PPC_1T_SEGMENTS;
-	info->slb_size = mmu_slb_size;
+	/* POWER7, 8 and 9 all have 1T segments and 32-entry SLB */
+	info->flags = KVM_PPC_PAGE_SIZES_REAL | KVM_PPC_1T_SEGMENTS;
+	info->slb_size = 32;
 
 	/* We only support these sizes for now, and no muti-size segments */
 	sps = &info->sps[0];
-	kvmppc_add_seg_page_size(&sps, MMU_PAGE_4K);
-	kvmppc_add_seg_page_size(&sps, MMU_PAGE_64K);
-	kvmppc_add_seg_page_size(&sps, MMU_PAGE_16M);
+	kvmppc_add_seg_page_size(&sps, 12, 0);
+	kvmppc_add_seg_page_size(&sps, 16, SLB_VSID_L | SLB_VSID_LP_01);
+	kvmppc_add_seg_page_size(&sps, 24, SLB_VSID_L);
 
 	return 0;
 }
@@ -3190,7 +3203,7 @@ static int kvm_vm_ioctl_get_dirty_log_hv(struct kvm *kvm,
 	struct kvm_memory_slot *memslot;
 	int i, r;
 	unsigned long n;
-	unsigned long *buf;
+	unsigned long *buf, *p;
 	struct kvm_vcpu *vcpu;
 
 	mutex_lock(&kvm->slots_lock);
@@ -3206,8 +3219,8 @@ static int kvm_vm_ioctl_get_dirty_log_hv(struct kvm *kvm,
 		goto out;
 
 	/*
-	 * Use second half of bitmap area because radix accumulates
-	 * bits in the first half.
+	 * Use second half of bitmap area because both HPT and radix
+	 * accumulate bits in the first half.
 	 */
 	n = kvm_dirty_bitmap_bytes(memslot);
 	buf = memslot->dirty_bitmap + n / sizeof(long);
@@ -3219,6 +3232,16 @@ static int kvm_vm_ioctl_get_dirty_log_hv(struct kvm *kvm,
 		r = kvmppc_hv_get_dirty_log_hpt(kvm, memslot, buf);
 	if (r)
 		goto out;
+
+	/*
+	 * We accumulate dirty bits in the first half of the
+	 * memslot's dirty_bitmap area, for when pages are paged
+	 * out or modified by the host directly.  Pick up these
+	 * bits and add them to the map.
+	 */
+	p = memslot->dirty_bitmap;
+	for (i = 0; i < n / sizeof(long); ++i)
+		buf[i] |= xchg(&p[i], 0);
 
 	/* Harvest dirty bits from VPA and DTL updates */
 	/* Note: we never modify the SLB shadow buffer areas */
@@ -3251,15 +3274,6 @@ static void kvmppc_core_free_memslot_hv(struct kvm_memory_slot *free,
 static int kvmppc_core_create_memslot_hv(struct kvm_memory_slot *slot,
 					 unsigned long npages)
 {
-	/*
-	 * For now, if radix_enabled() then we only support radix guests,
-	 * and in that case we don't need the rmap array.
-	 */
-	if (radix_enabled()) {
-		slot->arch.rmap = NULL;
-		return 0;
-	}
-
 	slot->arch.rmap = vzalloc(npages * sizeof(*slot->arch.rmap));
 	if (!slot->arch.rmap)
 		return -ENOMEM;
@@ -3280,8 +3294,6 @@ static void kvmppc_core_commit_memory_region_hv(struct kvm *kvm,
 				const struct kvm_memory_slot *new)
 {
 	unsigned long npages = mem->memory_size >> PAGE_SHIFT;
-	struct kvm_memslots *slots;
-	struct kvm_memory_slot *memslot;
 
 	/*
 	 * If we are making a new memslot, it might make
@@ -3291,18 +3303,6 @@ static void kvmppc_core_commit_memory_region_hv(struct kvm *kvm,
 	 */
 	if (npages)
 		atomic64_inc(&kvm->arch.mmio_update);
-
-	if (npages && old->npages && !kvm_is_radix(kvm)) {
-		/*
-		 * If modifying a memslot, reset all the rmap dirty bits.
-		 * If this is a new memslot, we don't need to do anything
-		 * since the rmap array starts out as all zeroes,
-		 * i.e. no pages are dirty.
-		 */
-		slots = kvm_memslots(kvm);
-		memslot = id_to_memslot(slots, mem->slot);
-		kvmppc_hv_get_dirty_log_hpt(kvm, memslot, NULL);
-	}
 }
 
 /*
@@ -3336,7 +3336,7 @@ static void kvmppc_mmu_destroy_hv(struct kvm_vcpu *vcpu)
 	return;
 }
 
-static void kvmppc_setup_partition_table(struct kvm *kvm)
+void kvmppc_setup_partition_table(struct kvm *kvm)
 {
 	unsigned long dw0, dw1;
 
@@ -3358,6 +3358,10 @@ static void kvmppc_setup_partition_table(struct kvm *kvm)
 	mmu_partition_table_set_entry(kvm->arch.lpid, dw0, dw1);
 }
 
+/*
+ * Set up HPT (hashed page table) and RMA (real-mode area).
+ * Must be called with kvm->lock held.
+ */
 static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu)
 {
 	int err = 0;
@@ -3368,10 +3372,6 @@ static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu)
 	unsigned long lpcr = 0, senc;
 	unsigned long psize, porder;
 	int srcu_idx;
-
-	mutex_lock(&kvm->lock);
-	if (kvm->arch.hpte_setup_done)
-		goto out;	/* another vcpu beat us to it */
 
 	/* Allocate hashed page table (if not done already) and reset it */
 	if (!kvm->arch.hpt.virt) {
@@ -3431,23 +3431,47 @@ static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu)
 		/* the -4 is to account for senc values starting at 0x10 */
 		lpcr = senc << (LPCR_VRMASD_SH - 4);
 		kvmppc_update_lpcr(kvm, lpcr, LPCR_VRMASD);
-	} else {
-		kvmppc_setup_partition_table(kvm);
 	}
 
-	/* Order updates to kvm->arch.lpcr etc. vs. hpte_setup_done */
+	/* Order updates to kvm->arch.lpcr etc. vs. mmu_ready */
 	smp_wmb();
-	kvm->arch.hpte_setup_done = 1;
 	err = 0;
  out_srcu:
 	srcu_read_unlock(&kvm->srcu, srcu_idx);
  out:
-	mutex_unlock(&kvm->lock);
 	return err;
 
  up_out:
 	up_read(&current->mm->mmap_sem);
 	goto out_srcu;
+}
+
+/* Must be called with kvm->lock held and mmu_ready = 0 and no vcpus running */
+int kvmppc_switch_mmu_to_hpt(struct kvm *kvm)
+{
+	kvmppc_free_radix(kvm);
+	kvmppc_update_lpcr(kvm, LPCR_VPM1,
+			   LPCR_VPM1 | LPCR_UPRT | LPCR_GTSE | LPCR_HR);
+	kvmppc_rmap_reset(kvm);
+	kvm->arch.radix = 0;
+	kvm->arch.process_table = 0;
+	return 0;
+}
+
+/* Must be called with kvm->lock held and mmu_ready = 0 and no vcpus running */
+int kvmppc_switch_mmu_to_radix(struct kvm *kvm)
+{
+	int err;
+
+	err = kvmppc_init_vm_radix(kvm);
+	if (err)
+		return err;
+
+	kvmppc_free_hpt(&kvm->arch.hpt);
+	kvmppc_update_lpcr(kvm, LPCR_UPRT | LPCR_GTSE | LPCR_HR,
+			   LPCR_VPM1 | LPCR_UPRT | LPCR_GTSE | LPCR_HR);
+	kvm->arch.radix = 1;
+	return 0;
 }
 
 #ifdef CONFIG_KVM_XICS
@@ -3593,10 +3617,11 @@ static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 	}
 
 	/*
-	 * For now, if the host uses radix, the guest must be radix.
+	 * If the host uses radix, the guest starts out as radix.
 	 */
 	if (radix_enabled()) {
 		kvm->arch.radix = 1;
+		kvm->arch.mmu_ready = 1;
 		lpcr &= ~LPCR_VPM1;
 		lpcr |= LPCR_UPRT | LPCR_GTSE | LPCR_HR;
 		ret = kvmppc_init_vm_radix(kvm);
@@ -3616,7 +3641,7 @@ static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 	 * Work out how many sets the TLB has, for the use of
 	 * the TLB invalidation loop in book3s_hv_rmhandlers.S.
 	 */
-	if (kvm_is_radix(kvm))
+	if (radix_enabled())
 		kvm->arch.tlb_sets = POWER9_TLB_SETS_RADIX;	/* 128 */
 	else if (cpu_has_feature(CPU_FTR_ARCH_300))
 		kvm->arch.tlb_sets = POWER9_TLB_SETS_HASH;	/* 256 */
@@ -3993,6 +4018,7 @@ static int kvmhv_configure_mmu(struct kvm *kvm, struct kvm_ppc_mmuv3_cfg *cfg)
 {
 	unsigned long lpcr;
 	int radix;
+	int err;
 
 	/* If not on a POWER9, reject it */
 	if (!cpu_has_feature(CPU_FTR_ARCH_300))
@@ -4002,12 +4028,8 @@ static int kvmhv_configure_mmu(struct kvm *kvm, struct kvm_ppc_mmuv3_cfg *cfg)
 	if (cfg->flags & ~(KVM_PPC_MMUV3_RADIX | KVM_PPC_MMUV3_GTSE))
 		return -EINVAL;
 
-	/* We can't change a guest to/from radix yet */
-	radix = !!(cfg->flags & KVM_PPC_MMUV3_RADIX);
-	if (radix != kvm_is_radix(kvm))
-		return -EINVAL;
-
 	/* GR (guest radix) bit in process_table field must match */
+	radix = !!(cfg->flags & KVM_PPC_MMUV3_RADIX);
 	if (!!(cfg->process_table & PATB_GR) != radix)
 		return -EINVAL;
 
@@ -4015,15 +4037,40 @@ static int kvmhv_configure_mmu(struct kvm *kvm, struct kvm_ppc_mmuv3_cfg *cfg)
 	if ((cfg->process_table & PRTS_MASK) > 24)
 		return -EINVAL;
 
+	/* We can change a guest to/from radix now, if the host is radix */
+	if (radix && !radix_enabled())
+		return -EINVAL;
+
 	mutex_lock(&kvm->lock);
+	if (radix != kvm_is_radix(kvm)) {
+		if (kvm->arch.mmu_ready) {
+			kvm->arch.mmu_ready = 0;
+			/* order mmu_ready vs. vcpus_running */
+			smp_mb();
+			if (atomic_read(&kvm->arch.vcpus_running)) {
+				kvm->arch.mmu_ready = 1;
+				err = -EBUSY;
+				goto out_unlock;
+			}
+		}
+		if (radix)
+			err = kvmppc_switch_mmu_to_radix(kvm);
+		else
+			err = kvmppc_switch_mmu_to_hpt(kvm);
+		if (err)
+			goto out_unlock;
+	}
+
 	kvm->arch.process_table = cfg->process_table;
 	kvmppc_setup_partition_table(kvm);
 
 	lpcr = (cfg->flags & KVM_PPC_MMUV3_GTSE) ? LPCR_GTSE : 0;
 	kvmppc_update_lpcr(kvm, lpcr, LPCR_GTSE);
-	mutex_unlock(&kvm->lock);
+	err = 0;
 
-	return 0;
+ out_unlock:
+	mutex_unlock(&kvm->lock);
+	return err;
 }
 
 static struct kvmppc_ops kvm_ops_hv = {
@@ -4164,4 +4211,3 @@ module_exit(kvmppc_book3s_exit_hv);
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_MISCDEV(KVM_MINOR);
 MODULE_ALIAS("devname:kvm");
-
