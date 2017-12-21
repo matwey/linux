@@ -1142,7 +1142,7 @@ cleanup_io_restore:
 	ltr	%r11,%r11
 	jz	2f
 	l	%r12,__LC_THREAD_INFO	# load pointer to thread_info struct
-	oi	__TI_flag+3(%r12),_TIF_NOBP
+	oi	__TI_flags+3(%r12),_TIF_NOBP
 	BPOFF
 2:	l	%r15,SP_R15(%r15)
 1:	la	%r12,__LC_RETURN_PSW
