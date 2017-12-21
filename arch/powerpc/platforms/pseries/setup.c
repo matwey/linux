@@ -386,8 +386,6 @@ static void __init pSeries_setup_arch(void)
 
 	fwnmi_init();
 
-	setup_rfi_flush();
-
 	/* Find and initialize PCI host bridges */
 	init_pci_config_tokens();
 	find_and_init_phbs();
