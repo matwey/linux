@@ -130,6 +130,7 @@ void smp_switch_to_ipl_cpu(void (*func)(void *), void *data)
 	struct pt_regs *regs;
 	unsigned long sp;
 
+	__bpon();
 	if (smp_processor_id() == 0)
 		func(data);
 	__load_psw_mask(PSW_BASE_BITS | PSW_DEFAULT_KEY);
@@ -784,6 +785,7 @@ void __cpu_die(unsigned int cpu)
 void __noreturn cpu_die(void)
 {
 	idle_task_exit();
+	__bpon();
 	while (sigp(smp_processor_id(), sigp_stop) == sigp_busy)
 		cpu_relax();
 	for (;;);

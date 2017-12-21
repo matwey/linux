@@ -84,7 +84,6 @@ static inline struct thread_info *current_thread_info(void)
 /*
  * thread information flags bit numbers
  */
-#define TIF_NOBP		0	/* BP is disabled */
 #define TIF_NOTIFY_RESUME	1	/* callback before returning to user */
 #define TIF_SIGPENDING		2	/* signal pending */
 #define TIF_NEED_RESCHED	3	/* rescheduling necessary */
@@ -104,7 +103,6 @@ static inline struct thread_info *current_thread_info(void)
 #define TIF_SINGLE_STEP		20	/* This task is single stepped */
 #define TIF_FREEZE		21	/* thread is freezing for suspend */
 
-#define _TIF_NOBP		(1<<TIF_NOBP)
 #define _TIF_NOTIFY_RESUME	(1<<TIF_NOTIFY_RESUME)
 #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
 #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
