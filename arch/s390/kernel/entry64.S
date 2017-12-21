@@ -58,7 +58,7 @@ _TIF_SYSCALL = (_TIF_SYSCALL_TRACE>>8 | _TIF_SYSCALL_AUDIT>>8 | \
 		_TIF_SECCOMP>>8 | _TIF_SYSCALL_TRACEPOINT>>8)
 _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 
-#define BASED(name) name-system_call(%r13)
+#define BASED(name) name-cleanup_critical(%r13)
 
 	.macro SPP newpp
 #if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
@@ -73,6 +73,8 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	tm	__TI_flags+6(%r12),_TIF_SIE>>8
 	jz	0f
 	SPP	__LC_CMF_HPP			# set host id
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
 	clc	SP_PSW+8(8,%r15),BASED(.Lsie_loop)
 	jl	0f
 	clc	SP_PSW+8(8,%r15),BASED(.Lsie_done)
@@ -144,13 +146,13 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 #endif
 1:	lg	%r15,__LC_KERNEL_STACK	# problem state -> load ksp
 2:	aghi	%r15,-SP_SIZE		# make room for registers & psw
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	.endm
 
 	.macro	SAVE_ALL_ASYNC psworg,savearea
 	stmg	%r11,%r15,\savearea
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	la	%r12,\psworg
 	tm	\psworg+1,0x01		# test problem state bit
@@ -210,6 +212,34 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	ssm	__SF_EMPTY(%r15)
 	.endm
 
+	.macro BPOFF
+	.pushsection .altinstr_replacement, "ax"
+660:	.long	0xb2e8c000
+	.popsection
+661:	.long	0x47000000
+	.pushsection .altnobp, "a"
+        .long 661b - .
+	.long 660b - .
+	.word 82
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
+	.macro BPON
+	.pushsection .altinstr_replacement, "ax"
+662:	.long	0xb2e8d000
+	.popsection
+663:	.long	0x47000000
+	.pushsection .altnobp, "a"
+        .long 663b - .
+	.long 662b - .
+	.word 82
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
 	.section .kprobes.text, "ax"
 
 /*
@@ -229,7 +259,16 @@ __switch_to:
 	oi	__TI_flags+7(%r5),_TIF_MCCK_PENDING	# set it in next
 0:	stmg	%r6,%r15,__SF_GPRS(%r15)	# store gprs of prev task
 	stg	%r15,__THREAD_ksp(%r2)		# store kernel stack of prev
-	lg	%r15,__THREAD_ksp(%r3)		# load kernel stack of next
+	tm	__TI_flags+7(%r5),_TIF_NOBP
+	jz	1f
+	tm	__TI_flags+7(%r4),_TIF_NOBP
+	jnz	2f
+	BPOFF
+	j	2f
+1:	tm	__TI_flags+7(%r4),_TIF_NOBP
+	jz	2f
+	BPON
+2:	lg	%r15,__THREAD_ksp(%r3)		# load kernel stack of next
 	lctl	%c4,%c4,__TASK_pid(%r3)		# load pid to control reg. 4
 	lmg	%r6,%r15,__SF_GPRS(%r15)	# load gprs of next task
 	stg	%r3,__LC_CURRENT		# store task struct of next
@@ -261,6 +300,8 @@ sysc_stime:
 sysc_update:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
 sysc_do_svc:
 	llgh	%r7,SP_SVCNR(%r15)
 	slag	%r7,%r7,2	# shift and test for svc 0
@@ -291,6 +332,9 @@ sysc_return:
 sysc_tif:
 	tm	__TI_flags+7(%r12),_TIF_WORK_SVC
 	jnz	sysc_work	# there is work to do (signals etc.)
+sysc_bpon:
+	ni	__TI_flags+7(%r12),255-_TIF_NOBP
+	BPON
 sysc_restore:
 	RESTORE_ALL __LC_RETURN_PSW,1
 sysc_done:
@@ -410,7 +454,6 @@ sysc_tracenogo:
 #
 	.globl	ret_from_fork
 ret_from_fork:
-	lg	%r13,__LC_SVC_NEW_PSW+8
 	lg	%r12,__LC_THREAD_INFO	# load pointer to thread_info struct
 	tm	SP_PSW+1(%r15),0x01	# forking a kernel thread ?
 	jo	0f
@@ -443,7 +486,6 @@ kernel_execve:
 0:	stnsm	__SF_EMPTY(%r15),0xfc	# disable interrupts
 	lg	%r15,__LC_KERNEL_STACK	# load ksp
 	aghi	%r15,-SP_SIZE		# make room for registers & psw
-	lg	%r13,__LC_SVC_NEW_PSW+8
 	mvc	SP_PTREGS(__PT_SIZE,%r15),0(%r12)	# copy pt_regs
 	lg	%r12,__LC_THREAD_INFO
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
@@ -488,8 +530,11 @@ pgm_check_handler:
 	lg	%r14,__TI_task(%r12)
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
-	jz	pgm_no_vtime
+	jz	pgm_no_tdb
 	mvc	__THREAD_trap_tdb(256,%r14),0(%r13)
+pgm_no_tdb:
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
 pgm_no_vtime:
 	stg	%r11,SP_ARGS(%r15)
 	lgf	%r3,__LC_PGM_ILC	# load program interruption code
@@ -503,7 +548,10 @@ pgm_no_vtime:
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	basr	%r14,%r1		# branch to interrupt-handler
 pgm_exit:
-	j	sysc_return
+	LOCKDEP_SYS_EXIT
+	tm	SP_PSW+1(%r15),0x01	# interrupting from user ?
+	jno	sysc_restore
+	j	sysc_tif
 
 #
 # handle per exception
@@ -535,8 +583,11 @@ pgm_per_std:
 	lg	%r14,__TI_task(%r12)
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
-	jz	pgm_no_vtime2
+	jz	pgm_no_tdb2
 	mvc	__THREAD_trap_tdb(256,%r14),0(%r13)
+pgm_no_tdb2:
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
 pgm_no_vtime2:
 	lg	%r1,__TI_task(%r12)
 	tm	SP_PSW+1(%r15),0x01	# kernel per event ?
@@ -557,7 +608,10 @@ pgm_no_vtime2:
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	basr	%r14,%r1		# branch to interrupt-handler
 pgm_exit2:
-	j	sysc_return
+	LOCKDEP_SYS_EXIT
+	tm	SP_PSW+1(%r15),0x01	# interrupting from user ?
+	jno	sysc_restore
+	j	sysc_tif
 
 #
 # it was a single stepped SVC that is causing all the trouble
@@ -572,6 +626,8 @@ pgm_svcper:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
 	lg	%r8,__TI_task(%r12)
 	mvc	__THREAD_per_cause(2,%r8),__LC_PER_CAUSE
 	mvc	__THREAD_per_address(8,%r8),__LC_PER_ADDRESS
@@ -610,6 +666,12 @@ io_int_handler:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
 	LAST_BREAK
 io_no_vtime:
+	lghi	%r11,_TIF_NOBP
+	ng	%r11,__TI_flags(%r12)
+	jz	io_bpon
+	ni	__TI_flags+7(%r12),255-_TIF_NOBP
+	BPON
+io_bpon:
 	TRACE_IRQS_OFF
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	brasl	%r14,do_IRQ		# call standard irq handler
@@ -620,6 +682,11 @@ io_tif:
 	tm	__TI_flags+7(%r12),_TIF_WORK_INT
 	jnz	io_work 		# there is work to do (signals etc.)
 io_restore:
+	ltgr	%r11,%r11
+	jz	io_bpoff
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
+io_bpoff:
 	RESTORE_ALL __LC_RETURN_PSW,0
 io_done:
 
@@ -745,6 +812,12 @@ ext_int_handler:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
 	LAST_BREAK
 ext_no_vtime:
+	lghi	%r11,_TIF_NOBP
+	ng	%r11,__TI_flags(%r12)
+	jz	ext_bpon
+	ni	__TI_flags+7(%r12),255-_TIF_NOBP
+	BPON
+ext_bpon:
 	TRACE_IRQS_OFF
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lghi	%r1,4096
@@ -767,7 +840,7 @@ mcck_int_handler:
 	spt	__LC_CPU_TIMER_SAVE_AREA-4095(%r1)	# revalidate cpu timer
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)# revalidate gprs
 	stmg	%r11,%r15,__LC_SAVE_AREA+80
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	la	%r12,__LC_MCK_OLD_PSW
 	tm	__LC_MCCK_CODE,0x80	# system damage?
@@ -817,6 +890,12 @@ mcck_int_main:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_MCCK_ENTER_TIMER
 	LAST_BREAK
 mcck_no_vtime:
+	lghi	%f11,_TIF_NOBP
+	ng	%r11,__TI_flags(%r12)
+	jz	mcck_bpon
+	ni	__TI_flags+7(%r12),255-_TIF_NOBP
+	BPON
+mcck_bpon:
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
 	brasl	%r14,s390_do_machine_check
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
@@ -833,6 +912,11 @@ mcck_no_vtime:
 	brasl	%r14,s390_handle_mcck
 	TRACE_IRQS_ON
 mcck_return:
+	ltgr	%r11,%r11
+	jz	mcck_bpoff
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
+mcck_bpoff:
 	mvc	__LC_RETURN_MCCK_PSW(16),SP_PSW(%r15) # move return PSW
 	ni	__LC_RETURN_MCCK_PSW+1,0xfd # clear wait state bit
 	lmg	%r0,%r15,SP_R0(%r15)	# load gprs 0-15
@@ -932,17 +1016,6 @@ stack_overflow:
 	jg	kernel_stack_overflow
 #endif
 
-cleanup_table_system_call:
-	.quad	system_call, sysc_do_svc
-cleanup_table_sysc_tif:
-	.quad	sysc_tif, sysc_restore
-cleanup_table_sysc_restore:
-	.quad	sysc_restore, sysc_done
-cleanup_table_io_tif:
-	.quad	io_tif, io_restore
-cleanup_table_io_restore:
-	.quad	io_restore, io_done
-
 cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_system_call)
 	jl	0f
@@ -953,6 +1026,11 @@ cleanup_critical:
 	jl	0f
 	clc	8(8,%r12),BASED(cleanup_table_sysc_tif+8)
 	jl	cleanup_sysc_tif
+0:
+	clc	8(8,%r12),BASED(cleanup_table_sysc_bpon)
+	jl	0f
+	clc	8(8,%r12),BASED(cleanup_table_sysc_bpon+8)
+	jl	cleanup_sysc_bpon
 0:
 	clc	8(8,%r12),BASED(cleanup_table_sysc_restore)
 	jl	0f
@@ -970,6 +1048,19 @@ cleanup_critical:
 	jl	cleanup_io_restore
 0:
 	br	%r14
+
+cleanup_table_system_call:
+	.quad	system_call, sysc_do_svc
+cleanup_table_sysc_tif:
+	.quad	sysc_tif, sysc_bpon
+cleanup_table_sysc_bpon:
+	.quad	sysc_bpon, sysc_restore
+cleanup_table_sysc_restore:
+	.quad	sysc_restore, sysc_done
+cleanup_table_io_tif:
+	.quad	io_tif, io_restore
+cleanup_table_io_restore:
+	.quad	io_restore, io_done
 
 cleanup_system_call:
 	mvc	__LC_RETURN_PSW(16),0(%r12)
@@ -1011,6 +1102,9 @@ cleanup_update:
 	jz	0f
 	stg	%r11,__TI_last_break(%r12)
 0:	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_system_call+8)
+	lg	%r12,__LC_THREAD_INFO	# load pointer to thread_info struct
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
 	la	%r12,__LC_RETURN_PSW
 	br	%r14
 cleanup_system_call_insn:
@@ -1026,6 +1120,11 @@ cleanup_sysc_tif:
 	la	%r12,__LC_RETURN_PSW
 	br	%r14
 
+cleanup_sysc_bpon:
+	lg	%r11,__LC_THREAD_INFO	# load pointer to thread_info struct
+	ni	__TI_flags+7(%r11),255-_TIF_NOBP
+	BPON
+	/* Fallthrough */
 cleanup_sysc_restore:
 	clc	8(8,%r12),BASED(cleanup_sysc_restore_insn)
 	je	2f
@@ -1064,7 +1163,13 @@ cleanup_io_restore:
 0:	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
 	mvc	__LC_SAVE_AREA+80(40),SP_R11(%r15)
 	lmg	%r0,%r10,SP_R0(%r15)
-	lg	%r15,SP_R15(%r15)
+	lg	%r12,SP_R11(%r15)
+	ltgr	%r12,%r12
+	jz	2f
+	lg	%r12,__LC_THREAD_INFO	# load pointer to thread_info struct
+	oi	__TI_flags+7(%r12),_TIF_NOBP
+	BPOFF
+2:	lg	%r15,SP_R15(%r15)
 1:	la	%r12,__LC_RETURN_PSW
 	br	%r14
 cleanup_io_restore_insn:
@@ -1098,12 +1203,16 @@ sie_loop:
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	tm	__TI_flags+7(%r14),_TIF_EXIT_SIE
 	jnz	sie_exit
+	ni	__TI_flags+7(%r14),255-_TIF_NOBP
+	BPON
 	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
 	SPP	__SF_EMPTY(%r15)		# set guest id
 	sie	0(%r14)
 sie_done:
 	SPP	__LC_CMF_HPP			# set host id
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
+	oi	__TI_flags+7(%r14),_TIF_NOBP
+	BPOFF
 	.globl sie_exit
 sie_exit:
 	ni	__TI_flags+6(%r14),255-(_TIF_SIE>>8)
