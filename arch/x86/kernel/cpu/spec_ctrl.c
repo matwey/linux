@@ -47,7 +47,9 @@ EXPORT_SYMBOL_GPL(x86_enable_ibrs);
  */
 void stuff_RSB(void)
 {
+#ifndef CONFIG_XEN
 	stuff_rsb();
+#endif
 }
 EXPORT_SYMBOL_GPL(stuff_RSB);
 
