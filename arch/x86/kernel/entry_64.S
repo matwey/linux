@@ -55,9 +55,9 @@
 #include <asm/percpu.h>
 #include <asm/asm.h>
 #include <asm/pgtable_types.h>
-#include <asm/alternative-asm.h>
 #include <asm/cpufeature.h>
 #include <asm/kaiser.h>
+#include <asm/spec_ctrl.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
@@ -332,6 +332,8 @@ ENTRY(save_args)
 	je 1f
 	SWAPGS
 	SWITCH_KERNEL_CR3
+	ENABLE_IBRS
+	STUFF_RSB
 	/*
 	 * irq_count is used to check if a CPU is already on an interrupt stack
 	 * or not. While this is essentially redundant with preempt_count it is
@@ -394,6 +396,10 @@ ENTRY(save_paranoid)
 	movq %r13, R13+8(%rsp)
 	movq %r14, R14+8(%rsp)
 	movq %r15, R15+8(%rsp)
+
+	/* Do the stuffing unconditionally from user/kernel to be safe */
+	STUFF_RSB
+
 	movl $1,%ebx
 	movl $MSR_GS_BASE,%ecx
 	rdmsr
@@ -421,6 +427,8 @@ ENTRY(save_paranoid)
 	movq	%rax, %cr3
 2:
 #endif
+
+	ENABLE_IBRS
 	ret
 	CFI_ENDPROC
 END(save_paranoid)
@@ -518,6 +526,10 @@ ENTRY(system_call_after_swapgs)
 	movq  %rcx,RIP-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
 	GET_THREAD_INFO(%rcx)
+
+	ENABLE_IBRS
+	STUFF_RSB
+
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
 system_call_fastpath:
@@ -550,6 +562,8 @@ sysret_check:
 	CFI_REGISTER	rip,rcx
 	RESTORE_ARGS 1,-ARG_SKIP,0
 	/*CFI_REGISTER	rflags,r11*/
+
+	DISABLE_IBRS
 	/*
 	 * This opens a window where we have a user CR3, but are
 	 * running in the kernel.  This makes using the CS
@@ -904,6 +918,9 @@ retint_swapgs:		/* return to user-space */
 	 * switch CR3 in NMIs.  Normal interrupts are OK because
 	 * they are off here.
 	 */
+
+	DISABLE_IBRS
+
 	SWITCH_USER_CR3
 	SWAPGS
 	jmp restore_args
@@ -946,6 +963,10 @@ native_irq_return_ldt:
 	pushq_cfi %rdi
 	SWAPGS
 	SWITCH_KERNEL_CR3
+
+	ENABLE_IBRS
+	STUFF_RSB
+
 	movq PER_CPU_VAR(espfix_waddr),%rdi
 	movq %rax,(0*8)(%rdi)	/* RAX */
 	movq (2*8)(%rsp),%rax	/* RIP */
@@ -961,6 +982,9 @@ native_irq_return_ldt:
 	andl $0xffff0000,%eax
 	popq_cfi %rdi
 	orq PER_CPU_VAR(espfix_stack),%rax
+
+	DISABLE_IBRS
+
 	SWITCH_USER_CR3
 	SWAPGS
 	movq %rax,%rsp
@@ -1512,6 +1536,9 @@ ENTRY(paranoid_exit)
 paranoid_kernel:
 	movq	%r12, %rbx		/* restore after paranoid_userspace */
 	TRACE_IRQS_IRETQ 0
+
+	DISABLE_IBRS
+
 #ifdef CONFIG_KAISER
 	/* No ALTERNATIVE for X86_FEATURE_KAISER: save_paranoid sets %ebx */
 	testl	$2, %ebx		/* SWITCH_USER_CR3 needed? */
@@ -1578,6 +1605,9 @@ ENTRY(error_entry)
 	movq %r13, R13+8(%rsp)
 	movq %r14, R14+8(%rsp)
 	movq %r15, R15+8(%rsp)
+
+	STUFF_RSB
+
 	/*
 	 * error_entry() always returns with a kernel gsbase and
 	 * CR3.  We must also have a kernel CR3/gsbase before
@@ -1585,6 +1615,9 @@ ENTRY(error_entry)
 	 * the kernel CR3 here.
 	 */
 	SWITCH_KERNEL_CR3
+
+	ENABLE_IBRS
+
 	xorl %ebx,%ebx
 	testl $3,CS+8(%rsp)
 	je error_kernelspace
@@ -1732,6 +1765,7 @@ ENTRY(nmi)
 
 	SWAPGS_UNSAFE_STACK
 	SWITCH_KERNEL_CR3_NO_STACK
+
 	cld
 	movq	%rsp, %rdx
 	movq	PER_CPU_VAR(kernel_stack), %rsp
@@ -1758,6 +1792,8 @@ ENTRY(nmi)
 	pushq	%r14		/* pt_regs->r14 */
 	pushq	%r15		/* pt_regs->r15 */
 
+	ENABLE_IBRS
+
 	/*
 	 * At this point we no longer need to worry about stack damage
 	 * due to nesting -- we're on the normal thread stack and we're
@@ -1767,6 +1803,8 @@ ENTRY(nmi)
 	movq	%rsp, %rdi
 	movq	$-1, %rsi
 	call	do_nmi
+
+	DISABLE_IBRS
 
 	/*
 	 * Return back to user mode.  We must *not* do the normal exit
@@ -1977,6 +2015,76 @@ ENTRY(ignore_sysret)
 	sysret
 	CFI_ENDPROC
 END(ignore_sysret)
+
+ENTRY(stuff_rsb)
+	call	1f
+	pause
+1:	call	2f
+	pause
+2:	call	3f;
+	pause
+3:	call	4f
+	pause
+4:	call	5f
+	pause
+5:	call	6f
+	pause
+6:	call	7f
+	pause
+7:	call	8f
+	pause
+8:	call	9f
+	pause
+9:	call	10f
+	pause
+10:	call	11f
+	pause
+11:	call	12f
+	pause
+12:	call	13f
+	pause
+13:	call	14f
+	pause
+14:	call	15f
+	pause
+15:	call	16f
+	pause
+16:	call	17f
+	pause
+17:	call	18f
+	pause
+18:	call	19f
+	pause
+19:	call	20f
+	pause
+20:	call	21f
+	pause
+21:	call	22f
+	pause
+22:	call	23f
+	pause
+23:	call	24f
+	pause
+24:	call	25f
+	pause
+25:	call	26f
+	pause
+26:	call	27f
+	pause
+27:	call	28f
+	pause
+28:	call	29f
+	pause
+29:	call	30f
+	pause
+30:	call	31f
+	pause
+31:	call	32f
+	pause
+32:
+	add $(32*8), %rsp
+	ret
+END(stuff_rsb)
 
 /*
  * End of kprobes section

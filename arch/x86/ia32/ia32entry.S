@@ -13,11 +13,11 @@
 #include <asm/thread_info.h>	
 #include <asm/segment.h>
 #include <asm/pgtable_types.h>
-#include <asm/alternative-asm.h>
 #include <asm/cpufeature.h>
 #include <asm/kaiser.h>
 #include <asm/irqflags.h>
 #include <linux/linkage.h>
+#include <asm/spec_ctrl.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
@@ -148,6 +148,10 @@ ENTRY(ia32_sysenter_target)
 	CFI_REL_OFFSET rip,0
 	pushq_cfi %rax
 	cld
+
+	ENABLE_IBRS
+	STUFF_RSB
+
 	SAVE_ARGS 0,0,1
  	/* no need to do an access_ok check here because rbp has been
  	   32bit zero extended */ 
@@ -188,6 +192,9 @@ sysexit_from_sys_call:
 	popq_cfi %rcx				/* User %esp */
 	CFI_REGISTER rsp,rcx
 	TRACE_IRQS_ON
+
+	DISABLE_IBRS
+
 	SWITCH_USER_CR3
 	ENABLE_INTERRUPTS_SYSEXIT32
 
@@ -309,6 +316,10 @@ ENTRY(ia32_cstar_target)
 	/*CFI_REL_OFFSET rflags,EFLAGS-ARGOFFSET*/
 	movq	%r8,RSP-ARGOFFSET(%rsp)	
 	CFI_REL_OFFSET rsp,RSP-ARGOFFSET
+
+	ENABLE_IBRS
+	STUFF_RSB
+
 	/* no need to do an access_ok check here because r8 has been
 	   32bit zero extended */ 
 	/* hardware stack frame is complete now */	
@@ -344,6 +355,9 @@ sysretl_from_sys_call:
 	xorq	%r9,%r9
 	xorq	%r8,%r8
 	TRACE_IRQS_ON
+
+	DISABLE_IBRS
+
 	SWITCH_USER_CR3
 	movl RSP-ARGOFFSET(%rsp),%esp
 	CFI_RESTORE rsp
@@ -432,6 +446,10 @@ ENTRY(ia32_syscall)
 	GET_THREAD_INFO(%r10)
 	orl   $TS_COMPAT,TI_status(%r10)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
+
+	ENABLE_IBRS
+	STUFF_RSB
+
 	jnz ia32_tracesys
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja ia32_badsys

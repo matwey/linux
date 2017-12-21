@@ -904,7 +904,8 @@ static u32 msrs_to_save[] = {
 #ifdef CONFIG_X86_64
 	MSR_CSTAR, MSR_KERNEL_GS_BASE, MSR_SYSCALL_MASK, MSR_LSTAR,
 #endif
-	MSR_IA32_TSC, MSR_IA32_CR_PAT, MSR_VM_HSAVE_PA
+	MSR_IA32_TSC, MSR_IA32_CR_PAT, MSR_VM_HSAVE_PA,
+	MSR_IA32_SPEC_CTRL,
 };
 
 static unsigned num_msrs_to_save;
@@ -2549,6 +2550,11 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		F(BMI1) | F(HLE) | F(AVX2) | F(SMEP) | F(BMI2) | F(RTM) | F(FSGSBASE) | F(ERMS) |
 		f_invpcid;
 
+	const u32 kvm_cpuid_7_0_edx_x86_features = F(SPEC_CTRL);
+
+	/* cpuid 0x80000008.0.ebx */
+	const u32 kvm_cpuid_80000008_0_ebx_x86_features = F(IBPB);
+
 	/* all calls to cpuid_count() should be made on the same cpu */
 	get_cpu();
 	do_cpuid_1_ent(entry, function, index);
@@ -2612,7 +2618,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 			entry->ebx = 0;
 		entry->eax = 0;
 		entry->ecx = 0;
-		entry->edx = 0;
+		entry->edx &= kvm_cpuid_7_0_edx_x86_features;
 		break;
 	}
 	/* function 0xb has additional index. */
@@ -2674,6 +2680,14 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		entry->ecx &= kvm_supported_word6_x86_features;
 		cpuid_mask(&entry->ecx, 6);
 		break;
+
+	case 0x80000008:
+		entry->eax = 0;
+		entry->ebx &= kvm_cpuid_80000008_0_ebx_x86_features;
+		entry->ecx = 0;
+		entry->edx = 0;
+		break;
+
 	/*Add support for Centaur's CPUID instruction*/
 	case 0xC0000000:
 		/*Just support up to 0xC0000004 now*/

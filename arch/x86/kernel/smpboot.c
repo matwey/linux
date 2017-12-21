@@ -71,6 +71,7 @@
 
 #include <asm/smpboot_hooks.h>
 #include <asm/i8259.h>
+#include <asm/spec_ctrl.h>
 
 /* State of each CPU */
 DEFINE_PER_CPU(int, cpu_state) = { 0 };
@@ -1432,8 +1433,12 @@ void native_play_dead(void)
 	play_dead_common();
 	tboot_shutdown(TB_SHUTDOWN_WFS);
 
+	x86_disable_ibrs();
+
 	mwait_play_dead();	/* Only returns on failure */
 	hlt_play_dead();
+
+	x86_enable_ibrs();
 }
 
 #else /* ... !CONFIG_HOTPLUG_CPU */

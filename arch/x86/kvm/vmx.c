@@ -39,6 +39,9 @@
 #include <asm/mce.h>
 #include <asm/i387.h>
 #include <asm/xcr.h>
+#include <asm/msr-index.h>
+#include <asm/spec_ctrl.h>
+#include <asm/proto.h>
 
 #include "trace.h"
 
@@ -463,6 +466,8 @@ struct vcpu_vmx {
 
 	/* Support for a guest hypervisor (nested VMX) */
 	struct nested_vmx nested;
+
+	u64 spec_ctrl;
 };
 
 enum segment_cache_field {
@@ -1605,6 +1610,8 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	if (per_cpu(current_vmcs, cpu) != vmx->loaded_vmcs->vmcs) {
 		per_cpu(current_vmcs, cpu) = vmx->loaded_vmcs->vmcs;
 		vmcs_load(vmx->loaded_vmcs->vmcs);
+
+		x86_ibp_barrier();
 	}
 
 	if (vmx->loaded_vmcs->cpu != cpu) {
@@ -2266,6 +2273,7 @@ static int vmx_set_vmx_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 data)
  */
 static int vmx_get_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 *pdata)
 {
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 data;
 	struct shared_msr_entry *msr;
 
@@ -2283,14 +2291,17 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 *pdata)
 		data = vmcs_readl(GUEST_GS_BASE);
 		break;
 	case MSR_KERNEL_GS_BASE:
-		vmx_load_host_state(to_vmx(vcpu));
-		data = to_vmx(vcpu)->msr_guest_kernel_gs_base;
+		vmx_load_host_state(vmx);
+		data = vmx->msr_guest_kernel_gs_base;
 		break;
 #endif
 	case MSR_EFER:
 		return kvm_get_msr_common(vcpu, msr_index, pdata);
 	case MSR_IA32_TSC:
 		data = guest_read_tsc();
+		break;
+	case MSR_IA32_SPEC_CTRL:
+		data = vmx->spec_ctrl;
 		break;
 	case MSR_IA32_SYSENTER_CS:
 		data = vmcs_read32(GUEST_SYSENTER_CS);
@@ -2302,16 +2313,16 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 *pdata)
 		data = vmcs_readl(GUEST_SYSENTER_ESP);
 		break;
 	case MSR_TSC_AUX:
-		if (!to_vmx(vcpu)->rdtscp_enabled)
+		if (!vmx->rdtscp_enabled)
 			return 1;
 		/* Otherwise falls through */
 	default:
-		vmx_load_host_state(to_vmx(vcpu));
+		vmx_load_host_state(vmx);
 		if (vmx_get_vmx_msr(vcpu, msr_index, pdata))
 			return 0;
-		msr = find_msr_entry(to_vmx(vcpu), msr_index);
+		msr = find_msr_entry(vmx, msr_index);
 		if (msr) {
-			vmx_load_host_state(to_vmx(vcpu));
+			vmx_load_host_state(vmx);
 			data = msr->data;
 			break;
 		}
@@ -2365,6 +2376,9 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		break;
 	case MSR_IA32_TSC:
 		kvm_write_tsc(vcpu, msr_info);
+		break;
+	case MSR_IA32_SPEC_CTRL:
+		vmx->spec_ctrl = msr_info->data;
 		break;
 	case MSR_IA32_CR_PAT:
 		if (vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_PAT) {
@@ -6725,6 +6739,10 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
 
+	if (x86_ibrs_enabled())
+		add_atomic_switch_msr(vmx, MSR_IA32_SPEC_CTRL,
+				      vmx->spec_ctrl, FEATURE_ENABLE_IBRS);
+
 	vmx->__launched = vmx->loaded_vmcs->launched;
 	asm(
 		/* Store host registers */
@@ -6824,6 +6842,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 #endif
 	      );
+
+	stuff_RSB();
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
@@ -8082,6 +8102,8 @@ static int __init vmx_init(void)
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_CS, false);
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_ESP, false);
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_EIP, false);
+	vmx_disable_intercept_for_msr(MSR_IA32_SPEC_CTRL, false);
+	vmx_disable_intercept_for_msr(MSR_IA32_PRED_CMD, false);
 	memcpy(vmx_msr_bitmap_legacy_x2apic,
 			vmx_msr_bitmap_legacy, PAGE_SIZE);
 	memcpy(vmx_msr_bitmap_longmode_x2apic,

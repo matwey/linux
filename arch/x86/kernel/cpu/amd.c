@@ -8,6 +8,7 @@
 #include <asm/apic.h>
 #include <asm/cpu.h>
 #include <asm/pci-direct.h>
+#include <asm/spec_ctrl.h>
 
 #ifdef CONFIG_X86_64
 # include <asm/numa_64.h>
@@ -629,8 +630,17 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 		set_cpu_cap(c, X86_FEATURE_K8);
 
 	if (cpu_has_xmm2) {
-		/* MFENCE stops RDTSC speculation */
-		set_cpu_cap(c, X86_FEATURE_MFENCE_RDTSC);
+		/*
+		 * Use LFENCE for execution serialization. On families which
+		 * don't have that MSR, LFENCE is already serialized.
+		 */
+		if (c->x86 > 0xf)
+			rdmsrl(MSR_F10H_DECFG, value);
+			value |= MSR_F10H_DECFG_LFENCE_SERIALIZE_BIT;
+			wrmsrl(MSR_F10H_DECFG, value);
+
+		/* LFENCE with MSR_F10H_DECFG[1]=1 stops RDTSC speculation */
+		set_cpu_cap(c, X86_FEATURE_LFENCE_RDTSC);
 	}
 
 #ifdef CONFIG_X86_64
@@ -693,6 +703,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 			wrmsrl_safe(MSR_AMD64_MCx_MASK(4), mask);
 		}
 	}
+	x86_spec_check();
 #endif
 }
 
