@@ -6,7 +6,7 @@
 
 #include <asm/required-features.h>
 
-#define NCAPINTS	11	/* N 32-bit words worth of info */
+#define NCAPINTS	10	/* N 32-bit words worth of info */
 
 /*
  * Note: If the comment begins with a quoted string, that string is used
@@ -89,7 +89,10 @@
 #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* "" Lfence synchronizes RDTSC */
 #define X86_FEATURE_11AP	(3*32+19) /* "" Bad local APIC aka 11AP */
 #define X86_FEATURE_NOPL	(3*32+20) /* The NOPL (0F 1F) instructions */
-					  /* 21 available, was AMD_C1E */
+
+/* It is in word 13 upstream - move it here due to kABI breakage. */
+#define X86_FEATURE_IBPB       (3*32+21) /* Indirect Branch Prediction Barrier */
+
 #define X86_FEATURE_XTOPOLOGY	(3*32+22) /* cpu topology enum extensions */
 #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
 #define X86_FEATURE_NONSTOP_TSC	(3*32+24) /* TSC does not stop in C states */
@@ -212,14 +215,6 @@
 #define X86_FEATURE_ERMS	(9*32+ 9) /* Enhanced REP MOVSB/STOSB */
 #define X86_FEATURE_INVPCID	(9*32+10) /* Invalidate Processor Context ID */
 #define X86_FEATURE_RTM		(9*32+11) /* Restricted Transactional Memory */
-
-/*
- * AMD-defined CPU features, CPUID level 0x80000008 (ebx), word 10.
- *
- * It is word 13 upstream - move it there when backporting the intermediary
- * words. Boris.
- */
-#define X86_FEATURE_IBPB       (10*32+12) /* Indirect Branch Prediction Barrier */
 
 #if defined(__KERNEL__) && !defined(__ASSEMBLY__)
 

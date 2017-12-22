@@ -2552,9 +2552,6 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	const u32 kvm_cpuid_7_0_edx_x86_features = F(SPEC_CTRL);
 
-	/* cpuid 0x80000008.0.ebx */
-	const u32 kvm_cpuid_80000008_0_ebx_x86_features = F(IBPB);
-
 	/* all calls to cpuid_count() should be made on the same cpu */
 	get_cpu();
 	do_cpuid_1_ent(entry, function, index);
@@ -2683,9 +2680,17 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	case 0x80000008:
 		entry->eax = 0;
-		entry->ebx &= kvm_cpuid_80000008_0_ebx_x86_features;
 		entry->ecx = 0;
 		entry->edx = 0;
+
+		/*
+		 * cpuid 0x80000008.0.ebx
+		 *
+		 * Boris: hardcode due to prior kABI fix.
+		 */
+		if (boot_cpu_has(X86_FEATURE_IBPB))
+			 entry->ebx |= (1 << 12);
+
 		break;
 
 	/*Add support for Centaur's CPUID instruction*/
