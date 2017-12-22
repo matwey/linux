@@ -518,7 +518,8 @@ int nfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
 	int err;
 
 	/* Flush out writes to the server in order to update c/mtime.  */
-	if (S_ISREG(inode->i_mode)) {
+	if (S_ISREG(inode->i_mode) &&
+	    !(NFS_SERVER(inode)->flags & NFS_MOUNT_NOSTATFLUSH)) {
 		err = filemap_write_and_wait(inode->i_mapping);
 		if (err)
 			goto out;
