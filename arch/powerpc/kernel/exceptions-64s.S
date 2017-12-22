@@ -224,14 +224,14 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
 	mtspr	SPRN_SRR1,r10
-	rfid
+	RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
 
 /* Fast LE/BE switch system call */
 1:	mfspr	r12,SPRN_SRR1
 	xori	r12,r12,MSR_LE
 	mtspr	SPRN_SRR1,r12
-	rfid		/* return to userspace */
+	RFI_TO_USER	/* return to userspace */
 	b	.
 
 	STD_EXCEPTION_PSERIES(0xd00, 0xd00, single_step)
@@ -312,7 +312,7 @@ masked_interrupt:
 	mtspr	SPRN_SRR1,r10
 	ld	r10,PACA_EXGEN+EX_R10(r13)
 	GET_SCRATCH0(r13)
-	rfid
+	RFI_TO_KERNEL
 	b	.
 
 masked_Hinterrupt:
@@ -325,7 +325,7 @@ masked_Hinterrupt:
 	mtspr	SPRN_HSRR1,r10
 	ld	r10,PACA_EXGEN+EX_R10(r13)
 	GET_SCRATCH0(r13)
-	hrfid
+	HRFI_TO_KERNEL
 	b	.
 
 #ifndef CONFIG_BIGMEM
@@ -382,7 +382,7 @@ slb_miss_user_pseries:
 	mtspr	SRR0,r12
 	mfspr	r12,SRR1			/* and SRR1 */
 	mtspr	SRR1,r10
-	rfid
+	RFI_TO_KERNEL
 	b	.				/* prevent spec. execution */
 #endif /* __DISABLED__ */
 
@@ -591,7 +591,7 @@ slb_miss_user_common:
 	ld	r11,PACA_EXGEN+EX_R11(r13)
 	ld	r12,PACA_EXGEN+EX_R12(r13)
 	ld	r13,PACA_EXGEN+EX_R13(r13)
-	rfid
+	RFI_TO_USER
 	b	.
 
 slb_miss_fault:
@@ -649,6 +649,9 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	andi.	r10,r12,MSR_RI	/* check for unrecoverable exception */
 	beq-	2f
 
+	andi.	r10,r12,MSR_PR	/* check for userspace exception */
+	beq	1f		/* returning to kernel */
+
 .machine	push
 .machine	"power4"
 	mtcrf	0x80,r9
@@ -667,8 +670,31 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	ld	r11,PACA_EXSLB+EX_R11(r13)
 	ld	r12,PACA_EXSLB+EX_R12(r13)
 	ld	r13,PACA_EXSLB+EX_R13(r13)
-	rfid
+	RFI_TO_USER
 	b	.	/* prevent speculative execution */
+
+1:
+.machine	push
+.machine	"power4"
+	mtcrf	0x80,r9
+	mtcrf	0x01,r9		/* slb_allocate uses cr0 and cr7 */
+.machine	pop
+
+#ifdef CONFIG_PPC_ISERIES
+BEGIN_FW_FTR_SECTION
+	mtspr	SPRN_SRR0,r11
+	mtspr	SPRN_SRR1,r12
+END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
+#endif /* CONFIG_PPC_ISERIES */
+	RESTORE_PPR_PACA(PACA_EXSLB, r9)
+	ld	r9,PACA_EXSLB+EX_R9(r13)
+	ld	r10,PACA_EXSLB+EX_R10(r13)
+	ld	r11,PACA_EXSLB+EX_R11(r13)
+	ld	r12,PACA_EXSLB+EX_R12(r13)
+	ld	r13,PACA_EXSLB+EX_R13(r13)
+	RFI_TO_KERNEL
+	b	.	/* prevent speculative execution */
+
 
 2:
 #ifdef CONFIG_PPC_ISERIES
@@ -682,7 +708,7 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
 	mtspr	SPRN_SRR1,r10
-	rfid
+	RFI_TO_KERNEL
 	b	.
 
 unrecov_slb:
@@ -850,9 +876,20 @@ fast_exception_return:
 
 	mtspr	SPRN_SRR1,r12
 	mtspr	SPRN_SRR0,r11
+	mfcr	r11
+	andi.	r12,r12,__MASK(MSR_PR_LG)
+	beq	3f
+
+	mtcr	r11
 	REST_4GPRS(10, r1)
 	ld	r1,GPR1(r1)
-	rfid
+	RFI_TO_USER
+	b	.	/* prevent speculative execution */
+
+3:	mtcr	r11
+	REST_4GPRS(10, r1)
+	ld	r1,GPR1(r1)
+	RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
 
 unrecov_fer:
@@ -1105,7 +1142,7 @@ _GLOBAL(do_stab_bolted)
 	ld	r11,PACA_EXSLB+EX_R11(r13)
 	ld	r12,PACA_EXSLB+EX_R12(r13)
 	ld	r13,PACA_EXSLB+EX_R13(r13)
-	rfid
+	RFI_TO_USER
 	b	.	/* prevent speculative execution */
 
 #endif

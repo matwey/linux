@@ -162,7 +162,7 @@ kvmppc_handler_skip_ins:
 	GET_SCRATCH0(r13)
 
 	/* And get back into the code */
-	RFI
+	RFI_TO_GUEST
 
 /*
  * This trampoline brings us back to a real mode handler
@@ -199,7 +199,7 @@ _GLOBAL(kvmppc_rmcall)
 	sync
 	mtsrr0	r3
 	mtsrr1	r4
-	RFI
+	RFI_TO_KERNEL
 
 #if defined(CONFIG_PPC_BOOK3S_32)
 #define STACK_LR	INT_FRAME_SIZE+4
