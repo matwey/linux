@@ -18,6 +18,7 @@ void syscall32_cpu_init(void);
 
 void x86_configure_nx(void);
 void x86_report_nx(void);
+void stuff_rsb(void);
 
 extern int reboot_force;
 

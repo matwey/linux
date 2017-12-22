@@ -265,8 +265,10 @@ void __init kaiser_check_boottime_disable(void)
 {
 	bool enable = true;
 	char arg[5];
+	int ret;
 
-	if (cmdline_find_option(boot_command_line, "pti", arg, sizeof(arg))) {
+	ret = cmdline_find_option(boot_command_line, "pti", arg, sizeof(arg));
+	if (ret > 0) {
 		if (!strncmp(arg, "on", 2))
 			goto enable;
 
