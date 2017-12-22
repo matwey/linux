@@ -76,6 +76,9 @@ enum {
 	NETIF_F_HW_TC_BIT,		/* Offload TC infrastructure */
 	NETIF_F_HW_ESP_BIT,		/* Hardware ESP transformation offload */
 	NETIF_F_HW_ESP_TX_CSUM_BIT,	/* ESP with TX checksum offload */
+	NETIF_F_RX_UDP_TUNNEL_PORT_BIT, /* Offload of RX port for UDP tunnels */
+
+	NETIF_F_GRO_HW_BIT,		/* Hardware Generic receive offload */
 
 	/*
 	 * Add your fresh new feature above and remember to update
@@ -96,6 +99,7 @@ enum {
 #define NETIF_F_FRAGLIST	__NETIF_F(FRAGLIST)
 #define NETIF_F_FSO		__NETIF_F(FSO)
 #define NETIF_F_GRO		__NETIF_F(GRO)
+#define NETIF_F_GRO_HW		__NETIF_F(GRO_HW)
 #define NETIF_F_GSO		__NETIF_F(GSO)
 #define NETIF_F_GSO_ROBUST	__NETIF_F(GSO_ROBUST)
 #define NETIF_F_HIGHDMA		__NETIF_F(HIGHDMA)
@@ -140,6 +144,7 @@ enum {
 #define NETIF_F_HW_TC		__NETIF_F(HW_TC)
 #define NETIF_F_HW_ESP		__NETIF_F(HW_ESP)
 #define NETIF_F_HW_ESP_TX_CSUM	__NETIF_F(HW_ESP_TX_CSUM)
+#define	NETIF_F_RX_UDP_TUNNEL_PORT  __NETIF_F(RX_UDP_TUNNEL_PORT)
 
 #define for_each_netdev_feature(mask_addr, bit)	\
 	for_each_set_bit(bit, (unsigned long *)mask_addr, NETDEV_FEATURE_COUNT)
