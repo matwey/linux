@@ -1034,10 +1034,8 @@
 #define PV_630p	0x0041
 #define PV_970MP	0x0044
 #define PV_970GX	0x0045
-#define PVR_POWER7      0x003F
 #define PVR_POWER7p     0x004A
 #define PVR_POWER8E	0x004B
-#define PVR_POWER8NVL   0x004C
 #define PVR_POWER8	0x004D
 #define PV_BE		0x0070
 #define PV_PA6T		0x0090
