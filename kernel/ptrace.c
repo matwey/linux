@@ -169,10 +169,9 @@ int ptrace_check_attach(struct task_struct *child, int kill)
 	return ret;
 }
 
-int ___ptrace_may_access(struct task_struct *cur, struct task_struct *task,
-		unsigned int mode)
+int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 {
-	const struct cred *cred = __task_cred(cur), *tcred;
+	const struct cred *cred = current_cred(), *tcred;
 
 	/* May we inspect the given task?
 	 * This check is used both for attaching with ptrace
@@ -184,7 +183,7 @@ int ___ptrace_may_access(struct task_struct *cur, struct task_struct *task,
 	 */
 	int dumpable = 0;
 	/* Don't let security modules deny introspection */
-	if (same_thread_group(task, cur))
+	if (same_thread_group(task, current))
 		return 0;
 	rcu_read_lock();
 	tcred = __task_cred(task);
@@ -208,16 +207,7 @@ ok:
 	if (dumpable != SUID_DUMP_USER && !task_ns_capable(task, CAP_SYS_PTRACE))
 		return -EPERM;
 
-	if (!(mode & PTRACE_MODE_NOACCESS_CHK))
-		return security_ptrace_access_check(task, mode);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(___ptrace_may_access);
-
-static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
-{
-	return ___ptrace_may_access(current, task, mode);
+	return security_ptrace_access_check(task, mode);
 }
 
 bool ptrace_may_access(struct task_struct *task, unsigned int mode)
