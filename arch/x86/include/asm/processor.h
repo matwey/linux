@@ -418,6 +418,7 @@ struct stack_canary {
 };
 DECLARE_PER_CPU_ALIGNED(struct stack_canary, stack_canary);
 #endif
+static inline void stuff_rsb(void) {}
 #endif	/* X86_64 */
 
 extern unsigned int xstate_size;
