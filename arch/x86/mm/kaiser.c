@@ -309,8 +309,6 @@ void __init kaiser_init(void)
 {
 	int cpu;
 
-	kaiser_check_boottime_disable();
-
 	if (!kaiser_enabled)
 		return;
 
