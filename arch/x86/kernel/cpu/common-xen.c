@@ -92,7 +92,11 @@ static const struct cpu_dev __cpuinitconst default_cpu = {
 
 static const struct cpu_dev *this_cpu __cpuinitdata = &default_cpu;
 
+#ifndef __GENKSYMS__
+DEFINE_PER_CPU_PAGE_ALIGNED_USER_MAPPED(struct gdt_page, gdt_page) = { .gdt = {
+#else
 DEFINE_PER_CPU_PAGE_ALIGNED(struct gdt_page, gdt_page) = { .gdt = {
+#endif
 #ifdef CONFIG_X86_64
 	/*
 	 * We need valid kernel segments for data and code in long mode too
@@ -294,6 +298,49 @@ static __cpuinit void setup_smep(struct cpuinfo_x86 *c)
 		} else
 			set_in_cr4(X86_CR4_SMEP);
 	}
+}
+
+static void setup_pcid(struct cpuinfo_x86 *c)
+{
+#ifndef CONFIG_XEN
+	if (cpu_has(c, X86_FEATURE_PCID)) {
+#ifdef CONFIG_X86_64
+		if (cpu_has(c, X86_FEATURE_PGE) || kaiser_enabled) {
+			/*
+			 * Regardless of whether PCID is enumerated, the
+			 * SDM says that it can't be enabled in 32-bit mode.
+			 */
+			set_in_cr4(X86_CR4_PCIDE);
+			/*
+			 * INVPCID has two "groups" of types:
+			 * 1/2: Invalidate an individual address
+			 * 3/4: Invalidate all contexts
+			 *
+			 * 1/2 take a PCID, but 3/4 do not.  So, 3/4
+			 * ignore the PCID argument in the descriptor.
+			 * But, we have to be careful not to call 1/2
+			 * with an actual non-zero PCID in them before
+			 * we do the above set_in_cr4().
+			 */
+			if (cpu_has(c, X86_FEATURE_INVPCID))
+				set_cpu_cap(c, X86_FEATURE_INVPCID_SINGLE);
+		}
+#else
+		/*
+		 * flush_tlb_all(), as currently implemented, won't
+		 * work if PCID is on but PGE is not.  Since that
+		 * combination doesn't exist on real hardware, there's
+		 * no reason to try to fully support it, but it's
+		 * polite to avoid corrupting data if we're on
+		 * an improperly configured VM.
+		 */
+		clear_cpu_cap(c, X86_FEATURE_PCID);
+#endif
+	}
+#else
+	setup_clear_cpu_cap(X86_FEATURE_PCID);
+	setup_clear_cpu_cap(X86_FEATURE_INVPCID);
+#endif
 }
 
 /*
@@ -608,6 +655,7 @@ void __cpuinit cpu_detect(struct cpuinfo_x86 *c)
 			c->x86_cache_alignment = c->x86_clflush_size;
 		}
 	}
+	kaiser_setup_pcid();
 }
 
 void __cpuinit get_cpu_cap(struct cpuinfo_x86 *c)
@@ -896,6 +944,9 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 	/* Disable the PN if appropriate */
 	squash_the_stupid_serial_number(c);
 
+	/* Set up PCID */
+	setup_pcid(c);
+
 	/*
 	 * The vendor-specific functions might have changed features.
 	 * Now we do "generic changes."
@@ -1132,7 +1183,7 @@ static const unsigned int exception_stack_sizes[N_EXCEPTION_STACKS] = {
 	  [DEBUG_STACK - 1]			= DEBUG_STKSZ
 };
 
-static DEFINE_PER_CPU_PAGE_ALIGNED(char, exception_stacks
+DEFINE_PER_CPU_PAGE_ALIGNED_USER_MAPPED(char, exception_stacks
 	[(N_EXCEPTION_STACKS - 1) * EXCEPTION_STKSZ + DEBUG_STKSZ]);
 #endif
 
@@ -1250,6 +1301,15 @@ void __cpuinit cpu_init(void)
 #endif
 	struct task_struct *me;
 	int cpu;
+
+	if (!kaiser_enabled) {
+		/*
+		 * secondary_startup_64() deferred setting PGE in cr4:
+		 * init_memory_mapping() sets it on the boot cpu,
+		 * but it needs to be set on each secondary cpu.
+		 */
+		set_in_cr4(X86_CR4_PGE);
+	}
 
 	cpu = stack_smp_processor_id();
 	/* CPU 0 is initialised in head64.c */

@@ -14,6 +14,7 @@
 #include <asm/msr.h>
 #include <asm/bugs.h>
 #include <asm/cpu.h>
+#include <asm/spec_ctrl.h>
 
 #ifdef CONFIG_X86_64
 #include <linux/topology.h>
@@ -493,6 +494,8 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 				"ENERGY_PERF_BIAS: View and update with"
 				" cpupower-set(8)\n");
 	}
+
+	x86_spec_check();
 }
 
 #ifdef CONFIG_X86_32

@@ -22,6 +22,7 @@
 #include <asm/uaccess.h>
 #include <asm/i387.h>
 #include <asm/debugreg.h>
+#include <asm/spec_ctrl.h>
 
 struct kmem_cache *task_xstate_cachep;
 EXPORT_SYMBOL_GPL(task_xstate_cachep);
@@ -432,10 +433,14 @@ void mwait_idle_with_hints(unsigned long ax, unsigned long cx)
 		if (this_cpu_has(X86_FEATURE_CLFLUSH_MONITOR))
 			clflush((void *)&current_thread_info()->flags);
 
+		x86_disable_ibrs();
+
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		smp_mb();
 		if (!need_resched())
 			__mwait(ax, cx);
+
+		x86_enable_ibrs();
 	}
 }
 
@@ -448,12 +453,17 @@ static void mwait_idle(void)
 		if (this_cpu_has(X86_FEATURE_CLFLUSH_MONITOR))
 			clflush((void *)&current_thread_info()->flags);
 
+		x86_disable_ibrs();
+
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		smp_mb();
 		if (!need_resched())
 			__sti_mwait(0, 0);
 		else
 			local_irq_enable();
+
+		x86_enable_ibrs();
+
 		trace_power_end(smp_processor_id());
 		trace_cpu_idle(PWR_EVENT_EXIT, smp_processor_id());
 	} else

@@ -283,7 +283,11 @@ struct tss_struct {
 
 } ____cacheline_aligned;
 
+#ifndef __GENKSYMS__
+DECLARE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, init_tss);
+#else
 DECLARE_PER_CPU_SHARED_ALIGNED(struct tss_struct, init_tss);
+#endif
 
 /*
  * Save the original ist values for checking stack pointers during debugging

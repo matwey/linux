@@ -10,7 +10,7 @@
 #include <asm/hypervisor.h>
 #include <asm/mmu_context.h>
 
-#define PGALLOC_GFP GFP_KERNEL | __GFP_NOTRACK | __GFP_REPEAT | __GFP_ZERO
+#define PGALLOC_GFP (GFP_KERNEL | __GFP_NOTRACK | __GFP_REPEAT | __GFP_ZERO)
 
 #ifdef CONFIG_HIGHPTE
 #define PGALLOC_USER_GFP __GFP_HIGHMEM
@@ -951,6 +951,7 @@ void xen_set_fixmap(enum fixed_addresses idx, phys_addr_t phys, pgprot_t flags)
 	extern pte_t level1_fixmap_pgt[PTRS_PER_PTE];
 
 	case VSYSCALL_LAST_PAGE ... VSYSCALL_FIRST_PAGE:
+	case VVAR_PAGE:
 		pte = pfn_pte(phys >> PAGE_SHIFT, flags);
 		set_pte_vaddr_pud(level3_user_pgt, address, pte);
 		break;

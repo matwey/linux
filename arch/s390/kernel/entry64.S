@@ -184,19 +184,6 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	stmg	%r0,%r10,SP_R0(%r15)	# store gprs %r0-%r10 to kernel stack
 	.endm
 
-	.macro	RESTORE_ALL psworg,sync
-	mvc	\psworg(16),SP_PSW(%r15) # move user PSW to lowcore
-	.if !\sync
-	ni	\psworg+1,0xfd		# clear wait state bit
-	.endif
-	lg	%r14,__LC_VDSO_PER_CPU
-	lmg	%r0,%r13,SP_R0(%r15)	# load gprs 0-13 of user
-	stpt	__LC_EXIT_TIMER
-	mvc	__VDSO_ECTG_BASE(16,%r14),__LC_EXIT_TIMER
-	lmg	%r14,%r15,SP_R14(%r15)	# load grps 14-15 of user
-	lpswe	\psworg			# back to caller
-	.endm
-
 	.macro	LAST_BREAK
 	srag	%r10,%r11,23
 	jz	0f
@@ -210,7 +197,40 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	ssm	__SF_EMPTY(%r15)
 	.endm
 
+	.macro BPOFF
+	.pushsection .altinstr_replacement, "ax"
+660:	.long	0xb2e8c000
+	.popsection
+661:	.long	0x47000000
+	.pushsection .altnobp, "a"
+        .long 661b - .
+	.long 660b - .
+	.word 82
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
+	.macro BPON
+	.pushsection .altinstr_replacement, "ax"
+662:	.long	0xb2e8d000
+	.popsection
+663:	.long	0x47000000
+	.pushsection .altnobp, "a"
+        .long 663b - .
+	.long 662b - .
+	.word 82
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
 	.section .kprobes.text, "ax"
+
+ENTRY(__bpon)
+	.globl __bpon
+	BPON
+	br	%r14
 
 /*
  * Scheduler resume function, called by switch_to
@@ -250,6 +270,7 @@ system_call:
 	stpt	__LC_SYNC_ENTER_TIMER
 sysc_saveall:
 	SAVE_ALL_SVC __LC_SVC_OLD_PSW,__LC_SAVE_AREA
+	BPOFF
 	CREATE_STACK_FRAME __LC_SAVE_AREA
 	mvc	SP_PSW(16,%r15),__LC_SVC_OLD_PSW
 	mvc	SP_ILC(4,%r15),__LC_SVC_ILC
@@ -292,7 +313,14 @@ sysc_tif:
 	tm	__TI_flags+7(%r12),_TIF_WORK_SVC
 	jnz	sysc_work	# there is work to do (signals etc.)
 sysc_restore:
-	RESTORE_ALL __LC_RETURN_PSW,1
+	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
+	lg	%r14,__LC_VDSO_PER_CPU
+	lmg	%r0,%r13,SP_R0(%r15)
+	BPON
+	stpt	__LC_EXIT_TIMER
+	mvc	__VDSO_ECTG_BASE(16,%r14),__LC_EXIT_TIMER
+	lmg	%r14,%r15,SP_R14(%r15)
+	lpswe	__LC_RETURN_PSW
 sysc_done:
 
 #
@@ -471,6 +499,7 @@ pgm_check_handler:
  * for LPSW?).
  */
 	stpt	__LC_SYNC_ENTER_TIMER
+	BPOFF
 	tm	__LC_PGM_INT_CODE+1,0x80 # check whether we got a per exception
 	jnz	pgm_per 		 # got per exception -> special case
 	SAVE_ALL_PGM __LC_PGM_OLD_PSW,__LC_SAVE_AREA
@@ -598,6 +627,7 @@ kernel_per:
 io_int_handler:
 	stck	__LC_INT_CLOCK
 	stpt	__LC_ASYNC_ENTER_TIMER
+	BPOFF
 	SAVE_ALL_ASYNC __LC_IO_OLD_PSW,__LC_SAVE_AREA+40
 	CREATE_STACK_FRAME __LC_SAVE_AREA+40
 	mvc	SP_PSW(16,%r15),0(%r12)	# move user PSW to stack
@@ -620,7 +650,18 @@ io_tif:
 	tm	__TI_flags+7(%r12),_TIF_WORK_INT
 	jnz	io_work 		# there is work to do (signals etc.)
 io_restore:
-	RESTORE_ALL __LC_RETURN_PSW,0
+	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
+	ni	__LC_RETURN_PSW+1,0xfd
+	lg	%r14,__LC_VDSO_PER_CPU
+	lmg	%r0,%r13,SP_R0(%r15)
+	tm	SP_PSW+1(%r15),0x01	# returning to user ?
+	jno	io_exit_kernel
+	BPON
+	stpt	__LC_EXIT_TIMER
+	mvc	__VDSO_ECTG_BASE(16,%r14),__LC_EXIT_TIMER
+io_exit_kernel:
+	lmg	%r14,%r15,SP_R14(%r15)
+	lpswe	__LC_RETURN_PSW
 io_done:
 
 #
@@ -733,6 +774,7 @@ io_notify_resume:
 ext_int_handler:
 	stck	__LC_INT_CLOCK
 	stpt	__LC_ASYNC_ENTER_TIMER
+	BPOFF
 	SAVE_ALL_ASYNC __LC_EXT_OLD_PSW,__LC_SAVE_AREA+40
 	CREATE_STACK_FRAME __LC_SAVE_AREA+40
 	mvc	SP_PSW(16,%r15),0(%r12)	# move user PSW to stack
@@ -763,6 +805,7 @@ __critical_end:
 	.globl mcck_int_handler
 mcck_int_handler:
 	stck	__LC_MCCK_CLOCK
+	BPOFF
 	la	%r1,4095		# revalidate r1
 	spt	__LC_CPU_TIMER_SAVE_AREA-4095(%r1)	# revalidate cpu timer
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)# revalidate gprs
@@ -838,6 +881,7 @@ mcck_return:
 	lmg	%r0,%r15,SP_R0(%r15)	# load gprs 0-15
 	tm	__LC_RETURN_MCCK_PSW+1,0x01 # returning to user ?
 	jno	0f
+	BPON
 	stpt	__LC_EXIT_TIMER
 0:	lpswe	__LC_RETURN_MCCK_PSW	# back to caller
 mcck_done:
@@ -1100,8 +1144,10 @@ sie_loop:
 	jnz	sie_exit
 	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
 	SPP	__SF_EMPTY(%r15)		# set guest id
+	BPON
 	sie	0(%r14)
 sie_done:
+	BPOFF
 	SPP	__LC_CMF_HPP			# set host id
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	.globl sie_exit

@@ -42,6 +42,7 @@
 #include <linux/module.h>
 #include <linux/etherdevice.h>
 #include <linux/random.h>
+#include <linux/system.h>
 #include <net/mac80211.h>
 #include <net/cfg80211.h>
 #include "hw.h"
@@ -1263,6 +1264,7 @@ static int carl9170_op_conf_tx(struct ieee80211_hw *hw, u16 queue,
 
 	mutex_lock(&ar->mutex);
 	if (queue < ar->hw->queues) {
+		gmb();
 		memcpy(&ar->edcf[ar9170_qmap[queue]], param, sizeof(*param));
 		ret = carl9170_set_qos(ar);
 	} else {

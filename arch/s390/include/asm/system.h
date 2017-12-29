@@ -11,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
+#include <asm/alternative.h>
 #include <asm/types.h>
 #include <asm/ptrace.h>
 #include <asm/setup.h>
@@ -175,6 +176,13 @@ extern int copy_from_user_real(void *dest, void __user *src, size_t count);
  * does a checkpoint syncronisation & makes sure that 
  * all memory ops have completed wrt other CPU's ( see 7-15 POP  DJB ).
  */
+
+static inline void gmb(void)
+{
+	asm volatile(
+		ALTERNATIVE("", ".long 0xb2e8f000", 81)
+		: : : "memory");
+}
 
 #define eieio()	asm volatile("bcr 15,0" : : : "memory")
 #define SYNC_OTHER_CORES(x)   eieio()

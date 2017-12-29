@@ -431,6 +431,9 @@ void stop_this_cpu(void *dummy);
 #define wmb()	asm volatile("sfence" ::: "memory")
 #endif
 
+/* there is no alternative_2 in 3.0, so reuse rdtsc_barrier */
+#define gmb()	rdtsc_barrier()
+
 /**
  * read_barrier_depends - Flush all pending reads that subsequents reads
  * depend on.
@@ -516,7 +519,6 @@ void stop_this_cpu(void *dummy);
  */
 static __always_inline void rdtsc_barrier(void)
 {
-	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
 	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);
 }
 
