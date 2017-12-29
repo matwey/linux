@@ -70,6 +70,9 @@
 #include <linux/init.h>
 #include <linux/crypto.h>
 #include <linux/slab.h>
+#ifndef __GENKSYMS__
+#include <linux/nsproxy.h>
+#endif
 
 #include <net/ip.h>
 #include <net/icmp.h>
@@ -4120,6 +4123,10 @@ int sctp_do_peeloff(struct sock *sk, sctp_assoc_t id, struct socket **sockp)
 	struct socket *sock;
 	struct sctp_af *af;
 	int err = 0;
+
+	/* Do not peel off from one netns to another one. */
+	if (!net_eq(current->nsproxy->net_ns, sock_net(sk)))
+		return -EINVAL;
 
 	if (!asoc)
 		return -EINVAL;

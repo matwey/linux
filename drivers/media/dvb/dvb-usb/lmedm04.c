@@ -404,18 +404,20 @@ static int lme2510_pid_filter(struct dvb_usb_adapter *adap, int index, u16 pid,
 
 static int lme2510_return_status(struct usb_device *dev)
 {
-	int ret = 0;
+	int ret;
 	u8 *data;
 
-	data = kzalloc(10, GFP_KERNEL);
+	data = kzalloc(6, GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	ret |= usb_control_msg(dev, usb_rcvctrlpipe(dev, 0),
-			0x06, 0x80, 0x0302, 0x00, data, 0x0006, 200);
-	info("Firmware Status: %x (%x)", ret , data[2]);
+	ret = usb_control_msg(dev, usb_rcvctrlpipe(dev, 0),
+				0x06, 0x80, 0x0302, 0x00,
+				data, 0x6, 200);
 
-	ret = (ret < 0) ? -ENODEV : data[2];
+	ret = (ret != 6) ? -ENODEV : data[2];
+	info("Firmware Status: %6ph", data);
+
 	kfree(data);
 	return ret;
 }
