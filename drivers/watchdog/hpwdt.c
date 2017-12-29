@@ -821,7 +821,8 @@ static int __devinit hpwdt_init_one(struct pci_dev *dev,
 	 * not run on a legacy ASM box.
 	 * So we only support the G5 ProLiant servers and higher.
 	 */
-	if (dev->subsystem_vendor != PCI_VENDOR_ID_HP) {
+	if (dev->subsystem_vendor != PCI_VENDOR_ID_HP &&
+	    dev->subsystem_vendor != PCI_VENDOR_ID_HP_3PAR) {
 		dev_warn(&dev->dev,
 			"This server does not have an iLO2+ ASIC.\n");
 		return -ENODEV;
@@ -830,7 +831,8 @@ static int __devinit hpwdt_init_one(struct pci_dev *dev,
 	/*
 	 * Ignore all auxilary iLO devices with the following PCI ID
 	 */
-	if (dev->subsystem_device == 0x1979)
+	if (dev->subsystem_vendor == PCI_VENDOR_ID_HP &&
+	    dev->subsystem_device == 0x1979)
 		return -ENODEV;
 
 	if (pci_enable_device(dev)) {
