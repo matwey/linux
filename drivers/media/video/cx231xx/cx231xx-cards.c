@@ -1088,6 +1088,11 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 	uif = udev->actconfig->interface[dev->current_pcb_config.
 		       hs_config_info[0].interface_info.video_index + 1];
 
+	if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1) {
+		retval = -ENODEV;
+		goto bail;
+	}
+
 	dev->video_mode.end_point_addr = le16_to_cpu(uif->altsetting[0].
 			endpoint[isoc_pipe].desc.bEndpointAddress);
 
@@ -1099,15 +1104,22 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 		kmalloc(32 * dev->video_mode.num_alt, GFP_KERNEL);
 
 	if (dev->video_mode.alt_max_pkt_size == NULL) {
+		retval = -ENOMEM;
 		cx231xx_errdev("out of memory!\n");
+bail:
 		cx231xx_devused &= ~(1 << nr);
 		v4l2_device_unregister(&dev->v4l2_dev);
 		kfree(dev);
 		dev = NULL;
-		return -ENOMEM;
+		return retval;
 	}
 
 	for (i = 0; i < dev->video_mode.num_alt; i++) {
+		if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1) {
+			retval = -ENODEV;
+			goto bail;
+		}
+
 		u16 tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
 				desc.wMaxPacketSize);
 		dev->video_mode.alt_max_pkt_size[i] =
@@ -1121,6 +1133,11 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 				       hs_config_info[0].interface_info.
 				       vanc_index + 1];
 
+	if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1) {
+		retval = -ENODEV;
+		goto bail;
+	}
+
 	dev->vbi_mode.end_point_addr =
 	    le16_to_cpu(uif->altsetting[0].endpoint[isoc_pipe].desc.
 			bEndpointAddress);
@@ -1133,17 +1150,23 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 	    kmalloc(32 * dev->vbi_mode.num_alt, GFP_KERNEL);
 
 	if (dev->vbi_mode.alt_max_pkt_size == NULL) {
+		retval = -ENOMEM;
 		cx231xx_errdev("out of memory!\n");
+bail2:
 		cx231xx_devused &= ~(1 << nr);
 		v4l2_device_unregister(&dev->v4l2_dev);
 		kfree(dev);
 		dev = NULL;
-		return -ENOMEM;
+		return retval;
 	}
 
 	for (i = 0; i < dev->vbi_mode.num_alt; i++) {
-		u16 tmp =
-		    le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
+		u16 tmp;
+
+		if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1)
+			return -ENODEV;
+
+		tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
 				desc.wMaxPacketSize);
 		dev->vbi_mode.alt_max_pkt_size[i] =
 		    (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
@@ -1155,6 +1178,11 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 	uif = udev->actconfig->interface[dev->current_pcb_config.
 				       hs_config_info[0].interface_info.
 				       hanc_index + 1];
+
+	if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1) {
+		retval = -ENODEV;
+		goto bail2;
+	}
 
 	dev->sliced_cc_mode.end_point_addr =
 	    le16_to_cpu(uif->altsetting[0].endpoint[isoc_pipe].desc.
@@ -1177,7 +1205,14 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 	}
 
 	for (i = 0; i < dev->sliced_cc_mode.num_alt; i++) {
-		u16 tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
+		u16 tmp;
+
+		if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1) {
+			retval = -ENODEV;
+			goto bail2;
+		}
+
+		tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
 				desc.wMaxPacketSize);
 		dev->sliced_cc_mode.alt_max_pkt_size[i] =
 		    (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
@@ -1191,6 +1226,11 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 					       hs_config_info[0].
 					       interface_info.
 					       ts1_index + 1];
+
+		if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1) {
+			retval = -ENODEV;
+			goto bail2;
+		}
 
 		dev->ts1_mode.end_point_addr =
 		    le16_to_cpu(uif->altsetting[0].endpoint[isoc_pipe].
@@ -1213,7 +1253,14 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 		}
 
 		for (i = 0; i < dev->ts1_mode.num_alt; i++) {
-			u16 tmp = le16_to_cpu(uif->altsetting[i].
+			u16 tmp;
+
+			if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1) {
+				retval = -ENODEV;
+				goto bail2;
+			}
+
+			tmp = le16_to_cpu(uif->altsetting[i].
 						endpoint[isoc_pipe].desc.
 						wMaxPacketSize);
 			dev->ts1_mode.alt_max_pkt_size[i] =
