@@ -1304,6 +1304,7 @@ static int check_stack_boundary(struct bpf_verifier_env *env, int regno,
 		tnum_strn(tn_buf, sizeof(tn_buf), regs[regno].var_off);
 		verbose("invalid variable stack read R%d var_off=%s\n",
 			regno, tn_buf);
+		return -EACCES;
 	}
 	off = regs[regno].off + regs[regno].var_off.value;
 	if (off >= 0 || off < -MAX_BPF_STACK || off + access_size > 0 ||
@@ -2152,20 +2153,22 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 			mark_reg_unknown(regs, insn->dst_reg);
 			break;
 		}
-		/* BPF_RSH is an unsigned shift, so make the appropriate casts */
-		if (dst_reg->smin_value < 0) {
-			if (umin_val) {
-				/* Sign bit will be cleared */
-				dst_reg->smin_value = 0;
-			} else {
-				/* Lost sign bit information */
-				dst_reg->smin_value = S64_MIN;
-				dst_reg->smax_value = S64_MAX;
-			}
-		} else {
-			dst_reg->smin_value =
-				(u64)(dst_reg->smin_value) >> umax_val;
-		}
+		/* BPF_RSH is an unsigned shift.  If the value in dst_reg might
+		 * be negative, then either:
+		 * 1) src_reg might be zero, so the sign bit of the result is
+		 *    unknown, so we lose our signed bounds
+		 * 2) it's known negative, thus the unsigned bounds capture the
+		 *    signed bounds
+		 * 3) the signed bounds cross zero, so they tell us nothing
+		 *    about the result
+		 * If the value in dst_reg is known nonnegative, then again the
+		 * unsigned bounts capture the signed bounds.
+		 * Thus, in all cases it suffices to blow away our signed bounds
+		 * and rely on inferring new ones from the unsigned bounds and
+		 * var_off of the result.
+		 */
+		dst_reg->smin_value = S64_MIN;
+		dst_reg->smax_value = S64_MAX;
 		if (src_known)
 			dst_reg->var_off = tnum_rshift(dst_reg->var_off,
 						       umin_val);
@@ -3302,15 +3305,14 @@ static bool regsafe(struct bpf_reg_state *rold, struct bpf_reg_state *rcur,
 			return range_within(rold, rcur) &&
 			       tnum_in(rold->var_off, rcur->var_off);
 		} else {
-			/* if we knew anything about the old value, we're not
-			 * equal, because we can't know anything about the
-			 * scalar value of the pointer in the new value.
+			/* We're trying to use a pointer in place of a scalar.
+			 * Even if the scalar was unbounded, this could lead to
+			 * pointer leaks because scalars are allowed to leak
+			 * while pointers are not. We could make this safe in
+			 * special cases if root is calling us, but it's
+			 * probably not worth the hassle.
 			 */
-			return rold->umin_value == 0 &&
-			       rold->umax_value == U64_MAX &&
-			       rold->smin_value == S64_MIN &&
-			       rold->smax_value == S64_MAX &&
-			       tnum_is_unknown(rold->var_off);
+			return false;
 		}
 	case PTR_TO_MAP_VALUE:
 		/* If the new min/max/var_off satisfy the old ones and
