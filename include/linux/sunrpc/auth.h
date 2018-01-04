@@ -127,6 +127,9 @@ struct rpc_authops {
 						struct rpcsec_gss_info *);
 	int			(*key_timeout)(struct rpc_auth *,
 						struct rpc_cred *);
+#ifndef __GENKSYMS__
+	int			(*hash_cred)(struct auth_cred *, unsigned int);
+#endif
 };
 
 struct rpc_credops {

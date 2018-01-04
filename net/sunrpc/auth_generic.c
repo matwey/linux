@@ -13,6 +13,7 @@
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/debug.h>
 #include <linux/sunrpc/sched.h>
+#include <linux/hash.h>
 
 #if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
 # define RPCDBG_FACILITY	RPCDBG_AUTH
@@ -69,6 +70,25 @@ static struct rpc_cred *generic_bind_cred(struct rpc_task *task,
 	struct auth_cred *acred = &container_of(cred, struct generic_cred, gc_base)->acred;
 
 	return auth->au_ops->lookup_cred(auth, acred, lookupflags);
+}
+
+static int
+generic_hash_cred(struct auth_cred *acred, unsigned int hashbits)
+{
+	u32 uid = from_kuid(&init_user_ns, acred->uid);
+	u32 gid;
+	int ret = hash_32(uid, 32);
+
+	if (acred->group_info) {
+		int g;
+
+		for (g = 0; g < acred->group_info->ngroups; g++) {
+			gid = from_kgid(&init_user_ns, GROUP_AT(acred->group_info, g));
+			ret = hash_32(ret ^ gid, 32);
+		}
+	}
+	gid = from_kgid(&init_user_ns, acred->gid);
+	return hash_32(ret ^ gid, hashbits);
 }
 
 /*
@@ -258,6 +278,7 @@ out_put:
 static const struct rpc_authops generic_auth_ops = {
 	.owner = THIS_MODULE,
 	.au_name = "Generic",
+	.hash_cred = generic_hash_cred,
 	.lookup_cred = generic_lookup_cred,
 	.crcreate = generic_create_cred,
 	.key_timeout = generic_key_timeout,
