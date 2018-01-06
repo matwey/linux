@@ -1573,6 +1573,16 @@ static int mlx5e_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	return mlx5_set_port_wol(mdev, mlx5_wol_mode);
 }
 
+static u32 mlx5e_get_msglevel(struct net_device *dev)
+{
+	return ((struct mlx5e_priv *)netdev_priv(dev))->msglevel;
+}
+
+static void mlx5e_set_msglevel(struct net_device *dev, u32 val)
+{
+	((struct mlx5e_priv *)netdev_priv(dev))->msglevel = val;
+}
+
 static int mlx5e_set_phys_id(struct net_device *dev,
 			     enum ethtool_phys_id_state state)
 {
@@ -1729,8 +1739,10 @@ int mlx5e_modify_rx_cqe_compression_locked(struct mlx5e_priv *priv, bool new_val
 	new_channels.params = priv->channels.params;
 	MLX5E_SET_PFLAG(&new_channels.params, MLX5E_PFLAG_RX_CQE_COMPRESS, new_val);
 
-	mlx5e_set_rq_type_params(priv->mdev, &new_channels.params,
-				 new_channels.params.rq_wq_type);
+	new_channels.params.mpwqe_log_stride_sz =
+		MLX5E_MPWQE_STRIDE_SZ(priv->mdev, new_val);
+	new_channels.params.mpwqe_log_num_strides =
+		MLX5_MPWRQ_LOG_WQE_SZ - new_channels.params.mpwqe_log_stride_sz;
 
 	if (!test_bit(MLX5E_STATE_OPENED, &priv->state)) {
 		priv->channels.params = new_channels.params;
@@ -1742,6 +1754,10 @@ int mlx5e_modify_rx_cqe_compression_locked(struct mlx5e_priv *priv, bool new_val
 		return err;
 
 	mlx5e_switch_priv_channels(priv, &new_channels, NULL);
+	mlx5e_dbg(DRV, priv, "MLX5E: RxCqeCmprss was turned %s\n",
+		  MLX5E_GET_PFLAG(&priv->channels.params,
+				  MLX5E_PFLAG_RX_CQE_COMPRESS) ? "ON" : "OFF");
+
 	return 0;
 }
 
@@ -1905,4 +1921,7 @@ const struct ethtool_ops mlx5e_ethtool_ops = {
 	.get_priv_flags    = mlx5e_get_priv_flags,
 	.set_priv_flags    = mlx5e_set_priv_flags,
 	.self_test         = mlx5e_self_test,
+	.get_msglevel      = mlx5e_get_msglevel,
+	.set_msglevel      = mlx5e_set_msglevel,
+
 };

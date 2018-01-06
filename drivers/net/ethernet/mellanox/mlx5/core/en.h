@@ -81,6 +81,9 @@
 	max_t(u32, MLX5_MPWRQ_MIN_LOG_STRIDE_SZ(mdev), req)
 #define MLX5_MPWRQ_DEF_LOG_STRIDE_SZ(mdev)       MLX5_MPWRQ_LOG_STRIDE_SZ(mdev, 6)
 #define MLX5_MPWRQ_CQE_CMPRS_LOG_STRIDE_SZ(mdev) MLX5_MPWRQ_LOG_STRIDE_SZ(mdev, 8)
+#define MLX5E_MPWQE_STRIDE_SZ(mdev, cqe_cmprs) \
+	(cqe_cmprs ? MLX5_MPWRQ_CQE_CMPRS_LOG_STRIDE_SZ(mdev) : \
+	MLX5_MPWRQ_DEF_LOG_STRIDE_SZ(mdev))
 
 #define MLX5_MPWRQ_LOG_WQE_SZ			18
 #define MLX5_MPWRQ_WQE_PAGE_ORDER  (MLX5_MPWRQ_LOG_WQE_SZ - PAGE_SHIFT > 0 ? \
@@ -125,6 +128,16 @@
 	((sizeof(struct mlx5e_tx_wqe) / MLX5_SEND_WQE_DS) + 1 /* SG DS */)
 
 #define MLX5E_NUM_MAIN_GROUPS 9
+
+#define MLX5E_MSG_LEVEL			NETIF_MSG_LINK
+
+#define mlx5e_dbg(mlevel, priv, format, ...)                    \
+do {                                                            \
+	if (NETIF_MSG_##mlevel & (priv)->msglevel)              \
+		netdev_warn(priv->netdev, format,               \
+			    ##__VA_ARGS__);                     \
+} while (0)
+
 
 static inline u16 mlx5_min_rx_wqes(int wq_type, u32 wq_size)
 {
@@ -764,6 +777,7 @@ struct mlx5e_priv {
 	int channel_tc2txq[MLX5E_MAX_NUM_CHANNELS][MLX5E_MAX_NUM_TC];
 	/* priv data path fields - end */
 
+	u32                        msglevel;
 	unsigned long              state;
 	struct mutex               state_lock; /* Protects Interface state */
 	struct mlx5e_rq            drop_rq;
@@ -930,8 +944,9 @@ int mlx5e_get_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed);
 
 void mlx5e_set_rx_cq_mode_params(struct mlx5e_params *params,
 				 u8 cq_period_mode);
-void mlx5e_set_rq_type_params(struct mlx5_core_dev *mdev,
-			      struct mlx5e_params *params, u8 rq_type);
+void mlx5e_init_rq_type_params(struct mlx5_core_dev *mdev,
+			       struct mlx5e_params *params,
+			       u8 rq_type);
 
 static inline bool mlx5e_tunnel_inner_ft_supported(struct mlx5_core_dev *mdev)
 {
