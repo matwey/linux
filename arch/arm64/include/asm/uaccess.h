@@ -18,6 +18,10 @@
 #ifndef __ASM_UACCESS_H
 #define __ASM_UACCESS_H
 
+#include <asm/alternative.h>
+#include <asm/kernel-pgtable.h>
+#include <asm/sysreg.h>
+
 /*
  * User space memory access functions
  */
@@ -25,10 +29,8 @@
 #include <linux/string.h>
 #include <linux/thread_info.h>
 
-#include <asm/alternative.h>
 #include <asm/cpufeature.h>
 #include <asm/ptrace.h>
-#include <asm/sysreg.h>
 #include <asm/errno.h>
 #include <asm/memory.h>
 #include <asm/compiler.h>
@@ -133,6 +135,112 @@ static inline void set_fs(mm_segment_t fs)
 	"	.popsection\n"
 
 /*
+ * User access enabling/disabling.
+ */
+#ifdef CONFIG_ARM64_SW_TTBR0_PAN
+static inline void __uaccess_ttbr0_disable(void)
+{
+	unsigned long ttbr;
+
+	ttbr = read_sysreg(ttbr1_el1);
+	/* reserved_ttbr0 placed at the end of swapper_pg_dir */
+	write_sysreg(ttbr + SWAPPER_DIR_SIZE, ttbr0_el1);
+	isb();
+	/* Set reserved ASID */
+	ttbr &= ~TTBR_ASID_MASK;
+	write_sysreg(ttbr, ttbr1_el1);
+	isb();
+}
+
+static inline void __uaccess_ttbr0_enable(void)
+{
+	unsigned long flags, ttbr0, ttbr1;
+
+	/*
+	 * Disable interrupts to avoid preemption between reading the 'ttbr0'
+	 * variable and the MSR. A context switch could trigger an ASID
+	 * roll-over and an update of 'ttbr0'.
+	 */
+	local_irq_save(flags);
+	ttbr0 = current_thread_info()->ttbr0;
+
+	/* Restore active ASID */
+	ttbr1 = read_sysreg(ttbr1_el1);
+	ttbr1 |= ttbr0 & TTBR_ASID_MASK;
+	write_sysreg(ttbr1, ttbr1_el1);
+	isb();
+
+	/* Restore user page table */
+	write_sysreg(ttbr0, ttbr0_el1);
+	isb();
+	local_irq_restore(flags);
+}
+
+static inline bool uaccess_ttbr0_disable(void)
+{
+	if (!system_uses_ttbr0_pan())
+		return false;
+	__uaccess_ttbr0_disable();
+	return true;
+}
+
+static inline bool uaccess_ttbr0_enable(void)
+{
+	if (!system_uses_ttbr0_pan())
+		return false;
+	__uaccess_ttbr0_enable();
+	return true;
+}
+#else
+static inline bool uaccess_ttbr0_disable(void)
+{
+	return false;
+}
+
+static inline bool uaccess_ttbr0_enable(void)
+{
+	return false;
+}
+#endif
+
+#define __uaccess_disable(alt)						\
+do {									\
+	if (!uaccess_ttbr0_disable())					\
+		asm(ALTERNATIVE("nop", SET_PSTATE_PAN(1), alt,		\
+				CONFIG_ARM64_PAN));			\
+} while (0)
+
+#define __uaccess_enable(alt)						\
+do {									\
+	if (uaccess_ttbr0_enable())					\
+		asm(ALTERNATIVE("nop", SET_PSTATE_PAN(0), alt,		\
+				CONFIG_ARM64_PAN));			\
+} while (0)
+
+static inline void uaccess_disable(void)
+{
+	__uaccess_disable(ARM64_HAS_PAN);
+}
+
+static inline void uaccess_enable(void)
+{
+	__uaccess_enable(ARM64_HAS_PAN);
+}
+
+/*
+ * These functions are no-ops when UAO is present.
+ */
+static inline void uaccess_disable_not_uao(void)
+{
+	__uaccess_disable(ARM64_ALT_PAN_NOT_UAO);
+}
+
+static inline void uaccess_enable_not_uao(void)
+{
+	__uaccess_enable(ARM64_ALT_PAN_NOT_UAO);
+}
+
+/*
  * The "__xxx" versions of the user access functions do not verify the address
  * space - it must have been done previously with a separate "access_ok()"
  * call.
@@ -159,8 +267,7 @@ static inline void set_fs(mm_segment_t fs)
 do {									\
 	unsigned long __gu_val;						\
 	__chk_user_ptr(ptr);						\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
+	uaccess_enable_not_uao();					\
 	switch (sizeof(*(ptr))) {					\
 	case 1:								\
 		__get_user_asm("ldrb", "ldtrb", "%w", __gu_val, (ptr),  \
@@ -181,9 +288,8 @@ do {									\
 	default:							\
 		BUILD_BUG();						\
 	}								\
+	uaccess_disable_not_uao();					\
 	(x) = (__force __typeof__(*(ptr)))__gu_val;			\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
 } while (0)
 
 #define __get_user(x, ptr)						\
@@ -228,8 +334,7 @@ do {									\
 do {									\
 	__typeof__(*(ptr)) __pu_val = (x);				\
 	__chk_user_ptr(ptr);						\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
+	uaccess_enable_not_uao();					\
 	switch (sizeof(*(ptr))) {					\
 	case 1:								\
 		__put_user_asm("strb", "sttrb", "%w", __pu_val, (ptr),	\
@@ -250,8 +355,7 @@ do {									\
 	default:							\
 		BUILD_BUG();						\
 	}								\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
+	uaccess_disable_not_uao();					\
 } while (0)
 
 #define __put_user(x, ptr)						\
