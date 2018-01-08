@@ -183,6 +183,7 @@ static inline void gmb(void)
 		ALTERNATIVE("", ".long 0xb2e8f000", 81)
 		: : : "memory");
 }
+#define gmb gmb
 
 #define eieio()	asm volatile("bcr 15,0" : : : "memory")
 #define SYNC_OTHER_CORES(x)   eieio()
