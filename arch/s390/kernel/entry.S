@@ -287,10 +287,10 @@ sysc_return:
 sysc_tif:
 	tm	__TI_flags+3(%r12),_TIF_WORK_SVC
 	bnz	BASED(sysc_work)  # there is work to do (signals etc.)
+	BPON
 sysc_restore:
 	mvc	__LC_RETURN_PSW(8),SP_PSW(%r15)
 	lm	%r0,%r15,SP_R0(%r15)
-	BPON
 	stpt	__LC_EXIT_TIMER
 	lpsw	__LC_RETURN_PSW
 sysc_done:
@@ -508,7 +508,10 @@ pgm_no_vtime:
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	basr	%r14,%r1		# branch to interrupt-handler
 pgm_exit:
-	b	BASED(sysc_return)
+	LOCKDEP_SYS_EXIT
+	tm	SP_PSW+1(%r15),0x01	# returning to user ?
+	bno	BASED(sysc_restore)
+	b	BASED(sysc_tif)
 
 #
 # handle per exception
@@ -556,7 +559,10 @@ pgm_no_vtime2:
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	basr	%r14,%r1		# branch to interrupt-handler
 pgm_exit2:
-	b	BASED(sysc_return)
+	LOCKDEP_SYS_EXIT
+	tm	SP_PSW+1(%r15),0x01	# returning to user ?
+	bno	BASED(sysc_restore)
+	b	BASED(sysc_tif)
 
 #
 # it was a single stepped SVC that is causing all the trouble
