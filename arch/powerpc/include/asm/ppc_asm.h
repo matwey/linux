@@ -11,9 +11,7 @@
 #include <asm/ppc-opcode.h>
 #include <asm/firmware.h>
 
-#ifndef __ASSEMBLY__
-#error __FILE__ should only be used in assembler files
-#else
+#ifdef __ASSEMBLY__
 
 #define SZL			(BITS_PER_LONG/8)
 
