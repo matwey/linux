@@ -283,4 +283,14 @@ config PPC_EARLY_DEBUG_CPM_ADDR
 	  platform probing is done, all platforms selected must
 	  share the same address.
 
+config PPC_DEBUG_RFI
+	bool "Debug RFIs (Return From Interrupt)"
+	depends on PPC_BOOK3S_64
+	help
+	  The enables extra debug code in some RFI (Return From Interrupt)
+	  sequences, to detect that we are returning to the correct context
+	  (user, kernel or guest). This adds some performance overhead.
+
+	  If unsure, say N.
+
 endmenu
