@@ -80,7 +80,6 @@ SECTIONS
 		__stop___rfi_flush_fixup = .;
 	}
 #endif
-
 	EXCEPTION_TABLE(0)
 
 	NOTES :kernel :notes

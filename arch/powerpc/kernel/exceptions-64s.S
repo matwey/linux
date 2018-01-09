@@ -224,14 +224,14 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
 	mtspr	SPRN_SRR1,r10
-	RFI_TO_KERNEL
+	RFI_TO_KERNEL ;						\
 	b	.	/* prevent speculative execution */
 
 /* Fast LE/BE switch system call */
 1:	mfspr	r12,SPRN_SRR1
 	xori	r12,r12,MSR_LE
 	mtspr	SPRN_SRR1,r12
-	RFI_TO_USER	/* return to userspace */
+	RFI_TO_USER ;	/* return to userspace */		\
 	b	.
 
 	STD_EXCEPTION_PSERIES(0xd00, 0xd00, single_step)
@@ -312,7 +312,7 @@ masked_interrupt:
 	mtspr	SPRN_SRR1,r10
 	ld	r10,PACA_EXGEN+EX_R10(r13)
 	GET_SCRATCH0(r13)
-	RFI_TO_KERNEL
+	RFI_TO_KERNEL ;						\
 	b	.
 
 masked_Hinterrupt:
@@ -358,6 +358,91 @@ machine_check_fwnmi:
 
 #endif /* CONFIG_PPC_PSERIES */
 
+	.globl rfi_flush_fallback
+rfi_flush_fallback:
+	SET_SCRATCH0(r13);
+	GET_PACA(r13);
+	std	r9,PACA_EXRFI+EX_R9(r13)
+	std	r10,PACA_EXRFI+EX_R10(r13)
+	std	r11,PACA_EXRFI+EX_R11(r13)
+	std	r12,PACA_EXRFI+EX_R12(r13)
+	std	r8,PACA_EXRFI+EX_R13(r13)
+	mfctr	r9
+	ld	r10,PACA_RFI_FLUSH_FALLBACK_AREA(r13)
+	ld	r11,PACA_L1D_FLUSH_SETS(r13)
+	ld	r12,PACA_L1D_FLUSH_CONGRUENCE(r13)
+	/*
+	 * The load adresses are at staggered offsets within cachelines,
+	 * which suits some pipelines better (on others it should not
+	 * hurt.
+	 */
+	addi	r12,r12,8
+	mtctr	r11
+	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+	/* order ld/st prior to dcbt stop all streams with flushing */
+	sync
+1:	li	r8,0
+	.rept	8 /* 8-way set associative */
+	ldx	r11,r10,r8
+	add	r8,r8,r12
+	xor	r11,r11,r11	// Ensure r11 is 0 even if fallback area is not
+	add	r8,r8,r11	// Add 0, this creates a dependency on the ldx
+	.endr
+	addi	r10,r10,128 /* 128 byte cache line */
+	bdnz	1b
+
+	mtctr	r9
+	ld	r9,PACA_EXRFI+EX_R9(r13)
+	ld	r10,PACA_EXRFI+EX_R10(r13)
+	ld	r11,PACA_EXRFI+EX_R11(r13)
+	ld	r12,PACA_EXRFI+EX_R12(r13)
+	ld	r8,PACA_EXRFI+EX_R13(r13)
+	GET_SCRATCH0(r13);
+	rfid
+
+	.globl hrfi_flush_fallback
+hrfi_flush_fallback:
+	SET_SCRATCH0(r13);
+	GET_PACA(r13);
+	std	r9,PACA_EXRFI+EX_R9(r13)
+	std	r10,PACA_EXRFI+EX_R10(r13)
+	std	r11,PACA_EXRFI+EX_R11(r13)
+	std	r12,PACA_EXRFI+EX_R12(r13)
+	std	r8,PACA_EXRFI+EX_R13(r13)
+	mfctr	r9
+	ld	r10,PACA_RFI_FLUSH_FALLBACK_AREA(r13)
+	ld	r11,PACA_L1D_FLUSH_SETS(r13)
+	ld	r12,PACA_L1D_FLUSH_CONGRUENCE(r13)
+	/*
+	 * The load adresses are at staggered offsets within cachelines,
+	 * which suits some pipelines better (on others it should not
+	 * hurt.
+	 */
+	addi	r12,r12,8
+	mtctr	r11
+	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+	/* order ld/st prior to dcbt stop all streams with flushing */
+	sync
+1:	li	r8,0
+	.rept	8 /* 8-way set associative */
+	ldx	r11,r10,r8
+	add	r8,r8,r12
+	xor	r11,r11,r11	// Ensure r11 is 0 even if fallback area is not
+	add	r8,r8,r11	// Add 0, this creates a dependency on the ldx
+	.endr
+	addi	r10,r10,128 /* 128 byte cache line */
+	bdnz	1b
+
+	mtctr	r9
+	ld	r9,PACA_EXRFI+EX_R9(r13)
+	ld	r10,PACA_EXRFI+EX_R10(r13)
+	ld	r11,PACA_EXRFI+EX_R11(r13)
+	ld	r12,PACA_EXRFI+EX_R12(r13)
+	ld	r8,PACA_EXRFI+EX_R13(r13)
+	GET_SCRATCH0(r13);
+	hrfid
+
+
 #ifdef __DISABLED__
 /*
  * This is used for when the SLB miss handler has to go virtual,
@@ -382,7 +467,7 @@ slb_miss_user_pseries:
 	mtspr	SRR0,r12
 	mfspr	r12,SRR1			/* and SRR1 */
 	mtspr	SRR1,r10
-	RFI_TO_KERNEL
+	rfid /* disabled code ignore this */
 	b	.				/* prevent spec. execution */
 #endif /* __DISABLED__ */
 
@@ -591,7 +676,7 @@ slb_miss_user_common:
 	ld	r11,PACA_EXGEN+EX_R11(r13)
 	ld	r12,PACA_EXGEN+EX_R12(r13)
 	ld	r13,PACA_EXGEN+EX_R13(r13)
-	RFI_TO_USER
+	rfid /* disabled code ignore this */
 	b	.
 
 slb_miss_fault:
@@ -649,8 +734,8 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	andi.	r10,r12,MSR_RI	/* check for unrecoverable exception */
 	beq-	2f
 
-	andi.	r10,r12,MSR_PR	/* check for userspace exception */
-	beq	1f		/* returning to kernel */
+	andi.	r10,r12,MSR_PR	 /* check for exception from userspace */
+	beq	1f 	/* returning to kernel */
 
 .machine	push
 .machine	"power4"
@@ -686,6 +771,7 @@ BEGIN_FW_FTR_SECTION
 	mtspr	SPRN_SRR1,r12
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 #endif /* CONFIG_PPC_ISERIES */
+
 	RESTORE_PPR_PACA(PACA_EXSLB, r9)
 	ld	r9,PACA_EXSLB+EX_R9(r13)
 	ld	r10,PACA_EXSLB+EX_R10(r13)
@@ -694,7 +780,6 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	ld	r13,PACA_EXSLB+EX_R13(r13)
 	RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
-
 
 2:
 #ifdef CONFIG_PPC_ISERIES
@@ -858,6 +943,29 @@ fast_exception_return:
 	beq	2f
 	ACCOUNT_CPU_USER_EXIT(r3, r4)
 	RESTORE_PPR(r3, r4)
+        ld	r3,_CCR(r1)
+	ld	r4,_LINK(r1)
+	ld	r5,_CTR(r1)
+	ld	r6,_XER(r1)
+	mtcr	r3
+	mtlr	r4
+	mtctr	r5
+	mtxer	r6
+	REST_GPR(0, r1)
+	REST_8GPRS(2, r1)
+
+	mfmsr	r10
+	rldicl	r10,r10,48,1		/* clear EE */
+	rldicr	r10,r10,16,61		/* clear RI (LE is 0 already) */
+	mtmsrd	r10,1
+
+	mtspr	SPRN_SRR1,r12
+	mtspr	SPRN_SRR0,r11
+	REST_4GPRS(10, r1)
+	ld	r1,GPR1(r1)
+	RFI_TO_USER
+	b	.	/* prevent speculative execution */
+
 2:	ld	r3,_CCR(r1)
 	ld	r4,_LINK(r1)
 	ld	r5,_CTR(r1)
@@ -876,20 +984,9 @@ fast_exception_return:
 
 	mtspr	SPRN_SRR1,r12
 	mtspr	SPRN_SRR0,r11
-	mfcr	r11
-	andi.	r12,r12,__MASK(MSR_PR_LG)
-	beq	3f
-
-	mtcr	r11
 	REST_4GPRS(10, r1)
 	ld	r1,GPR1(r1)
-	RFI_TO_USER
-	b	.	/* prevent speculative execution */
-
-3:	mtcr	r11
-	REST_4GPRS(10, r1)
-	ld	r1,GPR1(r1)
-	RFI_TO_KERNEL
+        RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
 
 unrecov_fer:
@@ -1142,7 +1239,7 @@ _GLOBAL(do_stab_bolted)
 	ld	r11,PACA_EXSLB+EX_R11(r13)
 	ld	r12,PACA_EXSLB+EX_R12(r13)
 	ld	r13,PACA_EXSLB+EX_R13(r13)
-	RFI_TO_USER
+	rfid /* ignore this old power3 code */
 	b	.	/* prevent speculative execution */
 
 #endif

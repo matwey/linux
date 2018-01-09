@@ -667,85 +667,106 @@ void __init setup_per_cpu_areas(void)
 }
 #endif
 
+#ifdef CONFIG_PPC_BOOK3S_64
+static enum l1d_flush_type enabled_flush_types;
+#define MAX_L1D_SIZE (64 * 1024)
+static char l1d_flush_fallback_area[2 * MAX_L1D_SIZE] __page_aligned_bss;
+static bool no_rfi_flush;
+bool rfi_flush;
+
+static int __init handle_no_rfi_flush(char *p)
+{
+	pr_info("rfi-flush: disabled on command line.");
+	no_rfi_flush = true;
+	return 0;
+}
+early_param("no_rfi_flush", handle_no_rfi_flush);
+
+/*
+ * The RFI flush is not KPTI, but because users will see doco that says to use
+ * nopti we hijack that option here to also disable the RFI flush.
+ */
+static int __init handle_no_pti(char *p)
+{
+	pr_info("rfi-flush: disabling due to 'nopti' on command line.\n");
+	handle_no_rfi_flush(NULL);
+	return 0;
+}
+early_param("nopti", handle_no_pti);
+
+static void do_nothing(void *unused)
+{
+	/*
+	 * We don't need to do the flush explicitly, just enter+exit kernel is
+	 * sufficient, the RFI exit handlers will do the right thing.
+	 */
+}
+
+void rfi_flush_enable(bool enable)
+{
+	if (rfi_flush == enable)
+		return;
+
+	if (enable) {
+		do_rfi_flush_fixups(enabled_flush_types);
+		on_each_cpu(do_nothing, NULL, 1);
+	} else
+		do_rfi_flush_fixups(L1D_FLUSH_NONE);
+
+	rfi_flush = enable;
+}
+
+void __init setup_rfi_flush(enum l1d_flush_type types, bool enable)
+{
+	if (types & L1D_FLUSH_FALLBACK) {
+		int cpu;
+		u64 l1d_size = ppc64_caches.dsize;
+
+		pr_info("rfi-flush: Using fallback displacement flush\n");
+
+		/*
+		 * We allocate 2x L1d size for the dummy area, to
+		 * catch possible hardware prefetch runoff.
+		 *
+		 * We can't use memblock_alloc here because bootmem has
+		 * been initialized, and the bootmem APIs don't work well
+		 * with an upper limit we need, so we allocate it statically
+		 * from BSS. The biggest L1d supported by this kernel is
+		 * 64kB (POWER8), so 128kB is reserved above.
+		 */
+		WARN_ON(l1d_size > MAX_L1D_SIZE);
+
+		for_each_possible_cpu(cpu) {
+			/*
+			 * The fallback flush is currently coded for 8-way
+			 * associativity. Different associativity is possible,
+			 * but it will be treated as 8-way and may not evict
+			 * the lines as effectively.
+			 *
+			 * 128 byte lines are mandatory.
+			 */
+			u64 c = l1d_size / 8;
+
+			paca[cpu].rfi_flush_fallback_area = l1d_flush_fallback_area;
+			paca[cpu].l1d_flush_congruence = c;
+			paca[cpu].l1d_flush_sets = c / 128;
+		}
+	}
+
+	if (types & L1D_FLUSH_ORI)
+		pr_info("rfi-flush: Using ori type flush\n");
+
+	if (types & L1D_FLUSH_MTTRIG)
+		pr_info("rfi-flush: Using mttrig type flush\n");
+
+	enabled_flush_types = types;
+	if (!no_rfi_flush)
+		rfi_flush_enable(enable);
+}
+#endif
+
 
 #ifdef CONFIG_PPC_INDIRECT_IO
 struct ppc_pci_io ppc_pci_io;
 EXPORT_SYMBOL(ppc_pci_io);
 #endif /* CONFIG_PPC_INDIRECT_IO */
-
-#ifdef CONFIG_PPC_BOOK3S_64
-enum l1d_flush_type {
-	L1D_FLUSH_NONE,
-	L1D_FLUSH_ORI,
-	L1D_FLUSH_MTTRIG,
-};
-
-enum l1d_flush_type l1d_flush_type;
-
-bool rfi_flush;
-
-static void do_rfi_flush(void *val)
-{
-	switch (l1d_flush_type) {
-	case L1D_FLUSH_ORI:
-		asm volatile("ori 30,30,0" ::: "memory");
-		break;
-	case L1D_FLUSH_MTTRIG:
-		asm volatile("mtspr 882,0" ::: "memory");
-		break;
-	default:
-		break;
-	}
-}
-
-void rfi_flush_enable(bool enable)
-{
-	unsigned int insn;
-
-	if (rfi_flush == enable)
-		return;
-
-	switch (l1d_flush_type) {
-	case L1D_FLUSH_ORI:
-		insn = 0x63de0000;
-		break;
-	case L1D_FLUSH_MTTRIG:
-		insn = 0x7c12dba6;
-		break;
-	default:
-		printk("Secure memory protection not enabled! System is vulnerable to local exploit. Update firmware.\n");
-		return;
-	}
-
-	do_rfi_flush_fixups(enable, insn);
-
-	if (enable)
-		on_each_cpu(do_rfi_flush, NULL, 1);
-
-	rfi_flush = enable;
-}
-
-/* This tries to guess the cpu characteristics based on the PVR. */
-static bool get_cpu_characteristics(void)
-{
-	if (__is_processor(PVR_POWER7) || __is_processor(PVR_POWER7p))
-		l1d_flush_type = L1D_FLUSH_NONE;
-	else if (__is_processor(PVR_POWER8E) ||
-		 __is_processor(PVR_POWER8))
-		l1d_flush_type = L1D_FLUSH_ORI;
-	else {
-		/* unknown CPU */
-		l1d_flush_type = L1D_FLUSH_NONE;
-		return false;
-	}
-
-	return true;
-}
-
-void __init setup_rfi_flush(void)
-{
-	if (get_cpu_characteristics())
-		rfi_flush_enable(true);
-}
-#endif /* CONFIG_PPC_BOOK3S_64 */
-

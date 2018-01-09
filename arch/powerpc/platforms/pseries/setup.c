@@ -372,6 +372,47 @@ static void pSeries_idle(void)
 		default_idle();
 }
 
+static void pSeries_setup_rfi_flush(void)
+{
+	unsigned long character, behaviour, rc;
+	enum l1d_flush_type types;
+	bool enable;
+
+	/* Enable by default */
+	enable = true;
+
+	rc = plpar_get_cpu_characteristics(&character, &behaviour);
+	if (rc == H_SUCCESS) {
+		types = L1D_FLUSH_NONE;
+
+		if (character & H_GET_CPU_CHAR_CHAR_MTTRIG2_L1_FLUSH)
+			types |= L1D_FLUSH_MTTRIG;
+		if (character & H_GET_CPU_CHAR_CHAR_ORI30_L1_FLUSH)
+			types |= L1D_FLUSH_ORI;
+
+		/* Use fallback if nothing set in hcall */
+		if (types == L1D_FLUSH_NONE)
+			types = L1D_FLUSH_FALLBACK;
+
+		if (!(behaviour & H_GET_CPU_CHAR_BEHAV_L1_FLUSH_LOW_PRIV))
+			enable = false;
+	} else {
+		if (__is_processor(PVR_POWER7) || __is_processor(PVR_POWER7p))
+			types = L1D_FLUSH_NONE;
+		else if (__is_processor(PVR_POWER8E) || __is_processor(PVR_POWER8NVL) ||
+				__is_processor(PVR_POWER8))
+			types = L1D_FLUSH_ORI;
+		else {
+			/* Default to fallback if case hcall is not available */
+			types = L1D_FLUSH_FALLBACK;
+		}
+	}
+
+	setup_rfi_flush(types, enable);
+}
+
+
+
 static void __init pSeries_setup_arch(void)
 {
 	/* Discover PIC type and setup ppc_md accordingly */
@@ -386,7 +427,7 @@ static void __init pSeries_setup_arch(void)
 
 	fwnmi_init();
 
-	setup_rfi_flush();
+	pSeries_setup_rfi_flush();
 
 	/* Find and initialize PCI host bridges */
 	init_pci_config_tokens();

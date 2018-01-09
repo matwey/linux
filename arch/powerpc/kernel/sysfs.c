@@ -19,9 +19,9 @@
 #include <asm/smp.h>
 #include <asm/pmc.h>
 #include <asm/system.h>
+#include <asm/ppc_asm.h>
 
 #include "cacheinfo.h"
-#include "setup.h"
 
 #ifdef CONFIG_PPC64
 #include <asm/paca.h>
@@ -197,16 +197,19 @@ static SYSDEV_ATTR(spurr, 0600, show_spurr, NULL);
 static SYSDEV_ATTR(purr, 0600, show_purr, store_purr);
 static SYSDEV_ATTR(pir, 0400, show_pir, NULL);
 
+static unsigned long dscr_default;
+
 #ifdef CONFIG_PPC_BOOK3S_64
+extern bool rfi_flush;
 static ssize_t show_rfi_flush(struct sysdev_class *class,
-		struct sysdev_class_attribute *attr, char *buf)
+			      struct sysdev_class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", rfi_flush ? 1 : 0);
 }
 
 static ssize_t __used store_rfi_flush(struct sysdev_class *class,
-		struct sysdev_class_attribute *attr, const char *buf,
-		size_t count)
+				      struct sysdev_class_attribute *attr, const char *buf,
+				      size_t count)
 {
 	int val;
 	int ret = 0;
@@ -226,7 +229,7 @@ static ssize_t __used store_rfi_flush(struct sysdev_class *class,
 }
 
 static SYSDEV_CLASS_ATTR(rfi_flush, 0600,
-		show_rfi_flush, store_rfi_flush);
+			 show_rfi_flush, store_rfi_flush);
 
 static void sysfs_create_rfi_flush(void)
 {
@@ -234,8 +237,6 @@ static void sysfs_create_rfi_flush(void)
 			  &attr_rfi_flush.attr);
 }
 #endif /* CONFIG_PPC_BOOK3S_64 */
-
-static unsigned long dscr_default;
 
 static void read_dscr(void *val)
 {
@@ -730,7 +731,9 @@ static int __init topology_init(void)
 	}
 #ifdef CONFIG_PPC64
 	sysfs_create_dscr_default();
+#ifdef CONFIG_PPC_BOOK3S
 	sysfs_create_rfi_flush();
+#endif
 #endif /* CONFIG_PPC64 */
 
 	return 0;
