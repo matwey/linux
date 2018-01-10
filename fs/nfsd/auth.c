@@ -61,8 +61,21 @@ int nfsd_setuser(struct svc_rqst *rqstp, struct svc_export *exp)
 			else
 				GROUP_AT(gi, i) = GROUP_AT(rqgi, i);
 		}
-	} else {
+	} else if (atomic_read(&rqgi->usage) == 1) {
+		/* This is only used by this thread, so no need to copy */
 		gi = get_group_info(rqgi);
+	} else {
+		/* We have to duplicate the group_info as
+		 * set_groups() will sort it which can cause
+		 * transient instability which is visible in other
+		 * threads if the same group_info is shared.
+		 */
+		gi = groups_alloc(rqgi->ngroups);
+		if (!gi)
+			goto oom;
+
+		for (i = 0; i < rqgi->ngroups; i++)
+			GROUP_AT(gi, i) = GROUP_AT(rqgi, i);
 	}
 
 	if (new->fsuid == (uid_t) -1)
