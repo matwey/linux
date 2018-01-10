@@ -1044,7 +1044,7 @@ negotiate_done:
  * i40iw_schedule_cm_timer
  * @@cm_node: connection's node
  * @sqbuf: buffer to send
- * @type: if it es send ot close
+ * @type: if it is send or close
  * @send_retrans: if rexmits to be done
  * @close_when_complete: is cm_node to be removed
  *
@@ -1068,7 +1068,8 @@ int i40iw_schedule_cm_timer(struct i40iw_cm_node *cm_node,
 
 	new_send = kzalloc(sizeof(*new_send), GFP_ATOMIC);
 	if (!new_send) {
-		i40iw_free_sqbuf(vsi, (void *)sqbuf);
+		if (type != I40IW_TIMER_TYPE_CLOSE)
+			i40iw_free_sqbuf(vsi, (void *)sqbuf);
 		return -ENOMEM;
 	}
 	new_send->retrycount = I40IW_DEFAULT_RETRYS;
@@ -1083,7 +1084,6 @@ int i40iw_schedule_cm_timer(struct i40iw_cm_node *cm_node,
 		new_send->timetosend += (HZ / 10);
 		if (cm_node->close_entry) {
 			kfree(new_send);
-			i40iw_free_sqbuf(vsi, (void *)sqbuf);
 			i40iw_pr_err("already close entry\n");
 			return -EINVAL;
 		}
@@ -1268,13 +1268,16 @@ static void i40iw_cm_timer_tick(unsigned long pass)
 			spin_lock_irqsave(&cm_node->retrans_list_lock, flags);
 			goto done;
 		}
-		cm_node->cm_core->stats_pkt_retrans++;
 		spin_unlock_irqrestore(&cm_node->retrans_list_lock, flags);
 
 		vsi = &cm_node->iwdev->vsi;
 		dev = cm_node->dev;
-		atomic_inc(&send_entry->sqbuf->refcount);
-		i40iw_puda_send_buf(vsi->ilq, send_entry->sqbuf);
+
+		if (!cm_node->ack_rcvd) {
+			atomic_inc(&send_entry->sqbuf->refcount);
+			i40iw_puda_send_buf(vsi->ilq, send_entry->sqbuf);
+			cm_node->cm_core->stats_pkt_retrans++;
+		}
 		spin_lock_irqsave(&cm_node->retrans_list_lock, flags);
 		if (send_entry->send_retrans) {
 			send_entry->retranscount--;
@@ -2170,6 +2173,7 @@ static struct i40iw_cm_node *i40iw_make_cm_node(
 	cm_node->cm_id = cm_info->cm_id;
 	ether_addr_copy(cm_node->loc_mac, netdev->dev_addr);
 	spin_lock_init(&cm_node->retrans_list_lock);
+	cm_node->ack_rcvd = false;
 
 	atomic_set(&cm_node->ref_count, 1);
 	/* associate our parent CM core */
@@ -2180,7 +2184,8 @@ static struct i40iw_cm_node *i40iw_make_cm_node(
 			I40IW_CM_DEFAULT_RCV_WND_SCALED >> I40IW_CM_DEFAULT_RCV_WND_SCALE;
 	ts = current_kernel_time();
 	cm_node->tcp_cntxt.loc_seq_num = ts.tv_nsec;
-	cm_node->tcp_cntxt.mss = iwdev->vsi.mss;
+	cm_node->tcp_cntxt.mss = (cm_node->ipv4) ? (iwdev->vsi.mtu - I40IW_MTU_TO_MSS_IPV4) :
+				 (iwdev->vsi.mtu - I40IW_MTU_TO_MSS_IPV6);
 
 	cm_node->iwdev = iwdev;
 	cm_node->dev = &iwdev->sc_dev;
@@ -2708,7 +2713,10 @@ static int i40iw_handle_ack_pkt(struct i40iw_cm_node *cm_node,
 		cm_node->tcp_cntxt.rem_ack_num = ntohl(tcph->ack_seq);
 		if (datasize) {
 			cm_node->tcp_cntxt.rcv_nxt = inc_sequence + datasize;
+			cm_node->ack_rcvd = false;
 			i40iw_handle_rcv_mpa(cm_node, rbuf);
+		} else {
+			cm_node->ack_rcvd = true;
 		}
 		break;
 	case I40IW_CM_STATE_LISTENING:
@@ -2929,8 +2937,6 @@ static struct i40iw_cm_node *i40iw_create_cm_node(
 			loopback_remotenode->tcp_cntxt.snd_wnd = cm_node->tcp_cntxt.rcv_wnd;
 			cm_node->tcp_cntxt.snd_wscale = loopback_remotenode->tcp_cntxt.rcv_wscale;
 			loopback_remotenode->tcp_cntxt.snd_wscale = cm_node->tcp_cntxt.rcv_wscale;
-			loopback_remotenode->state = I40IW_CM_STATE_MPAREQ_RCVD;
-			i40iw_create_event(loopback_remotenode, I40IW_CM_EVENT_MPA_REQ);
 		}
 		return cm_node;
 	}
@@ -3671,11 +3677,16 @@ int i40iw_accept(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 	cm_id->add_ref(cm_id);
 	i40iw_add_ref(&iwqp->ibqp);
 
-	i40iw_send_cm_event(cm_node, cm_id, IW_CM_EVENT_ESTABLISHED, 0);
-
 	attr.qp_state = IB_QPS_RTS;
 	cm_node->qhash_set = false;
 	i40iw_modify_qp(&iwqp->ibqp, &attr, IB_QP_STATE, NULL);
+
+	cm_node->accelerated = 1;
+	status =
+		i40iw_send_cm_event(cm_node, cm_id, IW_CM_EVENT_ESTABLISHED, 0);
+	if (status)
+		i40iw_debug(dev, I40IW_DEBUG_CM, "error sending cm event - ESTABLISHED\n");
+
 	if (cm_node->loopbackpartner) {
 		cm_node->loopbackpartner->pdata.size = conn_param->private_data_len;
 
@@ -3686,10 +3697,7 @@ int i40iw_accept(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 		i40iw_create_event(cm_node->loopbackpartner, I40IW_CM_EVENT_CONNECTED);
 	}
 
-	cm_node->accelerated = 1;
 	if (cm_node->accept_pend) {
-		if (!cm_node->listener)
-			i40iw_pr_err("cm_node->listener NULL for passive node\n");
 		atomic_dec(&cm_node->listener->pend_accepts_cnt);
 		cm_node->accept_pend = 0;
 	}
@@ -3853,6 +3861,12 @@ int i40iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 			i40iw_rem_ref_cm_node(cm_node);
 			goto err_out;
 		}
+	}
+
+	if (cm_node->loopbackpartner) {
+		cm_node->loopbackpartner->state = I40IW_CM_STATE_MPAREQ_RCVD;
+		i40iw_create_event(cm_node->loopbackpartner,
+				   I40IW_CM_EVENT_MPA_REQ);
 	}
 
 	i40iw_debug(cm_node->dev,
@@ -4047,9 +4061,6 @@ static void i40iw_cm_event_connected(struct i40iw_cm_event *event)
 	dev->iw_priv_qp_ops->qp_send_rtt(&iwqp->sc_qp, read0);
 	if (iwqp->page)
 		kunmap(iwqp->page);
-	status = i40iw_send_cm_event(cm_node, cm_id, IW_CM_EVENT_CONNECT_REPLY, 0);
-	if (status)
-		i40iw_pr_err("send cm event\n");
 
 	memset(&attr, 0, sizeof(attr));
 	attr.qp_state = IB_QPS_RTS;
@@ -4057,12 +4068,11 @@ static void i40iw_cm_event_connected(struct i40iw_cm_event *event)
 	i40iw_modify_qp(&iwqp->ibqp, &attr, IB_QP_STATE, NULL);
 
 	cm_node->accelerated = 1;
-	if (cm_node->accept_pend) {
-		if (!cm_node->listener)
-			i40iw_pr_err("listener is null for passive node\n");
-		atomic_dec(&cm_node->listener->pend_accepts_cnt);
-		cm_node->accept_pend = 0;
-	}
+	status = i40iw_send_cm_event(cm_node, cm_id, IW_CM_EVENT_CONNECT_REPLY,
+				     0);
+	if (status)
+		i40iw_debug(dev, I40IW_DEBUG_CM, "error sending cm event - CONNECT_REPLY\n");
+
 	return;
 
 error:

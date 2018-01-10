@@ -488,7 +488,7 @@ static void i40iw_puda_qp_setctx(struct i40iw_puda_rsrc *rsrc)
 		      LS_64(qp->hw_rq_size, I40IWQPC_RQSIZE) |
 		      LS_64(qp->hw_sq_size, I40IWQPC_SQSIZE));
 
-	set_64bit_val(qp_ctx, 48, LS_64(1514, I40IWQPC_SNDMSS));
+	set_64bit_val(qp_ctx, 48, LS_64(rsrc->buf_size, I40IW_UDA_QPC_MAXFRAMESIZE));
 	set_64bit_val(qp_ctx, 56, 0);
 	set_64bit_val(qp_ctx, 64, 1);
 
@@ -1400,7 +1400,8 @@ static void i40iw_ieq_handle_exception(struct i40iw_puda_rsrc *ieq,
 		pfpdu->rcv_nxt = fps;
 		pfpdu->fps = fps;
 		pfpdu->mode = true;
-		pfpdu->max_fpdu_data = ieq->vsi->mss;
+		pfpdu->max_fpdu_data = (buf->ipv4) ? (ieq->vsi->mtu - I40IW_MTU_TO_MSS_IPV4) :
+				       (ieq->vsi->mtu - I40IW_MTU_TO_MSS_IPV6);
 		pfpdu->pmode_count++;
 		INIT_LIST_HEAD(rxlist);
 		i40iw_ieq_check_first_buf(buf, fps);
