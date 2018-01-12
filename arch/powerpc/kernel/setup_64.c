@@ -716,41 +716,47 @@ void rfi_flush_enable(bool enable)
 	rfi_flush = enable;
 }
 
+static void init_fallback_flush(void)
+{
+	u64 l1d_size;
+	int cpu;
+
+	l1d_size = ppc64_caches.dsize;
+
+	/*
+	 * We allocate 2x L1d size for the dummy area, to
+	 * catch possible hardware prefetch runoff.
+	 *
+	 * We can't use memblock_alloc here because bootmem has
+	 * been initialized, and the bootmem APIs don't work well
+	 * with an upper limit we need, so we allocate it statically
+	 * from BSS. The biggest L1d supported by this kernel is
+	 * 64kB (POWER8), so 128kB is reserved above.
+	 */
+	WARN_ON(l1d_size > MAX_L1D_SIZE);
+
+	for_each_possible_cpu(cpu) {
+		/*
+		 * The fallback flush is currently coded for 8-way
+		 * associativity. Different associativity is possible, but it
+		 * will be treated as 8-way and may not evict the lines as
+		 * effectively.
+		 *
+		 * 128 byte lines are mandatory.
+		 */
+		u64 c = l1d_size / 8;
+
+		paca[cpu].rfi_flush_fallback_area = l1d_flush_fallback_area;
+		paca[cpu].l1d_flush_congruence = c;
+		paca[cpu].l1d_flush_sets = c / 128;
+	}
+}
+
 void __init setup_rfi_flush(enum l1d_flush_type types, bool enable)
 {
 	if (types & L1D_FLUSH_FALLBACK) {
-		int cpu;
-		u64 l1d_size = ppc64_caches.dsize;
-
 		pr_info("rfi-flush: Using fallback displacement flush\n");
-
-		/*
-		 * We allocate 2x L1d size for the dummy area, to
-		 * catch possible hardware prefetch runoff.
-		 *
-		 * We can't use memblock_alloc here because bootmem has
-		 * been initialized, and the bootmem APIs don't work well
-		 * with an upper limit we need, so we allocate it statically
-		 * from BSS. The biggest L1d supported by this kernel is
-		 * 64kB (POWER8), so 128kB is reserved above.
-		 */
-		WARN_ON(l1d_size > MAX_L1D_SIZE);
-
-		for_each_possible_cpu(cpu) {
-			/*
-			 * The fallback flush is currently coded for 8-way
-			 * associativity. Different associativity is possible,
-			 * but it will be treated as 8-way and may not evict
-			 * the lines as effectively.
-			 *
-			 * 128 byte lines are mandatory.
-			 */
-			u64 c = l1d_size / 8;
-
-			paca[cpu].rfi_flush_fallback_area = l1d_flush_fallback_area;
-			paca[cpu].l1d_flush_congruence = c;
-			paca[cpu].l1d_flush_sets = c / 128;
-		}
+		init_fallback_flush();
 	}
 
 	if (types & L1D_FLUSH_ORI)
