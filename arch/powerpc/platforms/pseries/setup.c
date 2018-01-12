@@ -372,7 +372,7 @@ static void pSeries_idle(void)
 		default_idle();
 }
 
-static void pSeries_setup_rfi_flush(void)
+void pseries_setup_rfi_flush(void)
 {
 	unsigned long character, behaviour, rc;
 	enum l1d_flush_type types;
@@ -420,7 +420,7 @@ static void __init pSeries_setup_arch(void)
 
 	fwnmi_init();
 
-	pSeries_setup_rfi_flush();
+	pseries_setup_rfi_flush();
 
 	/* Find and initialize PCI host bridges */
 	init_pci_config_tokens();
