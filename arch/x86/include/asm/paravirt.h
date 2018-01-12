@@ -15,10 +15,9 @@
 #include <linux/cpumask.h>
 #include <asm/frame.h>
 
-static inline void load_sp0(struct tss_struct *tss,
-			     struct thread_struct *thread)
+static inline void load_sp0(unsigned long sp0)
 {
-	PVOP_VCALL2(pv_cpu_ops.load_sp0, tss, thread);
+	PVOP_VCALL1(pv_cpu_ops.load_sp0, sp0);
 }
 
 /* The paravirtualized CPUID instruction. */
@@ -961,11 +960,6 @@ extern void default_banner(void);
 
 #define GET_CR2_INTO_RAX				\
 	call PARA_INDIRECT(pv_mmu_ops+PV_MMU_read_cr2)
-
-#define PARAVIRT_ADJUST_EXCEPTION_FRAME					\
-	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_adjust_exception_frame), \
-		  CLBR_NONE,						\
-		  call PARA_INDIRECT(pv_irq_ops+PV_IRQ_adjust_exception_frame))
 
 #define USERGS_SYSRET64							\
 	PARA_SITE(PARA_PATCH(pv_cpu_ops, PV_CPU_usergs_sysret64),	\

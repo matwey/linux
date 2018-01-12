@@ -135,7 +135,7 @@ struct pv_cpu_ops {
 	void (*alloc_ldt)(struct desc_struct *ldt, unsigned entries);
 	void (*free_ldt)(struct desc_struct *ldt, unsigned entries);
 
-	void (*load_sp0)(struct tss_struct *tss, struct thread_struct *t);
+	void (*load_sp0)(unsigned long sp0);
 
 	void (*set_iopl_mask)(unsigned mask);
 
@@ -195,9 +195,6 @@ struct pv_irq_ops {
 	void (*safe_halt)(void);
 	void (*halt)(void);
 
-#ifdef CONFIG_X86_64
-	void (*adjust_exception_frame)(void);
-#endif
 };
 
 struct pv_mmu_ops {

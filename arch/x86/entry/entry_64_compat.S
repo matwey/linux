@@ -294,7 +294,6 @@ ENTRY(entry_INT80_compat)
 	/*
 	 * Interrupts are off on entry.
 	 */
-	PARAVIRT_ADJUST_EXCEPTION_FRAME
 	ASM_CLAC			/* Do this early to minimize exposure */
 	SWAPGS
 
@@ -338,8 +337,7 @@ ENTRY(entry_INT80_compat)
 
 	/* Go back to user mode. */
 	TRACE_IRQS_ON
-	SWAPGS
-	jmp	restore_regs_and_iret
+	jmp	swapgs_restore_regs_and_return_to_usermode
 END(entry_INT80_compat)
 
 	ALIGN
