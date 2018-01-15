@@ -89,6 +89,8 @@
 #include <asm/perf_event.h>
 #include <asm/spec_ctrl.h>
 
+#include "cpu/cpu.h"
+
 MODULE_DESCRIPTION("Microcode Update Driver");
 MODULE_AUTHOR("Tigran Aivazian <tigran@aivazian.fsnet.co.uk>");
 MODULE_LICENSE("GPL");
@@ -325,6 +327,7 @@ static ssize_t reload_store(struct sys_device *dev,
 	if (!ret) {
 		perf_check_microcode();
 		x86_spec_check();
+		cpu_caps_sync_late();
 	}
 
 	mutex_unlock(&microcode_mutex);
