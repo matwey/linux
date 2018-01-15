@@ -647,6 +647,25 @@ static void apply_forced_caps(struct cpuinfo_x86 *c)
 	}
 }
 
+/*
+ * This late synchronization of CPU caps has no effect on alternatives patching
+ * but updates the visible feature bits per CPU.
+ *
+ * Callers need to disable CPU hotplug around it.
+ */
+void cpu_caps_sync_late(void)
+{
+	int cpu;
+
+
+	for_each_online_cpu(cpu) {
+		struct cpuinfo_x86 *c = &cpu_data(cpu);
+
+		apply_forced_caps(c);
+	}
+}
+EXPORT_SYMBOL_GPL(cpu_caps_sync_late);
+
 void __cpuinit get_cpu_cap(struct cpuinfo_x86 *c)
 {
 	u32 tfms, xlvl;
