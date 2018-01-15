@@ -36,6 +36,7 @@
  */
 #include <asm/bug.h>
 
+/* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
 #define EX_R10		8
 #define EX_R11		16
@@ -54,8 +55,10 @@
 #define EX_SIZE		13	/* size in u64 units */
 
 /*
+ * Macros for annotating the expected destination of (h)rfid
+ *
  * The nop instructions allow us to insert one or more instructions to flush the
- * L1-D cache when return to userspace or a guest.
+ * L1-D cache when returning to userspace or a guest.
  */
 #define RFI_FLUSH_SLOT							\
 	RFI_FLUSH_FIXUP_SECTION;					\
@@ -115,7 +118,7 @@
 	hrfid;								\
 	b	hrfi_flush_fallback
 
-#define HRFI_TO_UNKNOWN						\
+#define HRFI_TO_UNKNOWN							\
 	RFI_FLUSH_SLOT;							\
 	hrfid;								\
 	b	hrfi_flush_fallback

@@ -727,6 +727,7 @@ system_reset_fwnmi:
 rfi_flush_fallback:
 	SET_SCRATCH0(r13);
 	GET_PACA(r13);
+	ld	r13,PACA_AUX_PTR(r13) /* r13 now = paca_aux pointer */
 	std	r9,PACA_EXRFI+EX_R9(r13)
 	std	r10,PACA_EXRFI+EX_R10(r13)
 	std	r11,PACA_EXRFI+EX_R11(r13)
@@ -739,13 +740,14 @@ rfi_flush_fallback:
 	/*
 	 * The load adresses are at staggered offsets within cachelines,
 	 * which suits some pipelines better (on others it should not
-	 * hurt.
+	 * hurt).
 	 */
 	addi	r12,r12,8
 	mtctr	r11
 	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+
 	/* order ld/st prior to dcbt stop all streams with flushing */
-	hwsync
+	sync
 1:	li	r8,0
 	.rept	8 /* 8-way set associative */
 	ldx	r11,r10,r8
@@ -769,6 +771,7 @@ rfi_flush_fallback:
 hrfi_flush_fallback:
 	SET_SCRATCH0(r13);
 	GET_PACA(r13);
+	ld	r13,PACA_AUX_PTR(r13) /* r13 now = paca_aux pointer */
 	std	r9,PACA_EXRFI+EX_R9(r13)
 	std	r10,PACA_EXRFI+EX_R10(r13)
 	std	r11,PACA_EXRFI+EX_R11(r13)
@@ -781,14 +784,14 @@ hrfi_flush_fallback:
 	/*
 	 * The load adresses are at staggered offsets within cachelines,
 	 * which suits some pipelines better (on others it should not
-	 * hurt.
+	 * hurt).
 	 */
 	addi	r12,r12,8
 	mtctr	r11
 	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
 
 	/* order ld/st prior to dcbt stop all streams with flushing */
-	hwsync
+	sync
 1:	li	r8,0
 	.rept	8 /* 8-way set associative */
 	ldx	r11,r10,r8
@@ -807,7 +810,6 @@ hrfi_flush_fallback:
 	ld	r8,PACA_EXRFI+EX_R13(r13)
 	GET_SCRATCH0(r13);
 	hrfid
-
 
 #ifdef __DISABLED__
 /*
@@ -1590,8 +1592,8 @@ slb_miss_realmode:
 	andi.	r10,r12,MSR_RI	/* check for unrecoverable exception */
 	beq-	2f
 
-	andi.	r10,r12,MSR_PR	 /* check for exception from userspace */
-	beq	1f 	/* returning to kernel */
+	andi.	r10,r12,MSR_PR	/* check for exception from userspace */
+	beq	1f	/* returning to kernel */
 
 .machine	push
 .machine	"power4"
