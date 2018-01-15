@@ -16,7 +16,6 @@
 .endm
 
 .macro ENABLE_IBRS_CLOBBER
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_SPEC_CTRL
 	call x86_ibrs_enabled
 	test %eax, %eax
 	jz .Llfence_\@
@@ -31,7 +30,6 @@
 
 
 .macro ENABLE_IBRS
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_SPEC_CTRL
 
 	pushq %rax
 
@@ -58,7 +56,6 @@
 
 
 .macro DISABLE_IBRS
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_SPEC_CTRL
 
 	pushq %rax
 
