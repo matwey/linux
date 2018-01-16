@@ -282,8 +282,9 @@
 #include <linux/fcntl.h>
 #include <linux/blkdev.h>
 #include <linux/times.h>
-
+#include <linux/delay.h>
 #include <asm/uaccess.h>
+#include <linux/sched.h>
 
 /* used to tell the module to turn on full debugging messages */
 static int debug;
@@ -1023,6 +1024,18 @@ err:
 	return ret;
 }
 
+static int tray_close(struct cdrom_device_info *cdi)
+{
+	int ret;
+
+	ret = cdi->ops->tray_move(cdi, 0);
+	if (ret)
+		return ret;
+
+	return poll_event_interruptible(CDS_TRAY_OPEN !=
+			cdi->ops->drive_status(cdi, CDSL_CURRENT), 500);
+}
+
 static
 int open_for_common(struct cdrom_device_info *cdi, tracktype *tracks)
 {
@@ -1041,7 +1054,9 @@ int open_for_common(struct cdrom_device_info *cdi, tracktype *tracks)
 			if (CDROM_CAN(CDC_CLOSE_TRAY) &&
 			    cdi->options & CDO_AUTO_CLOSE) {
 				cdinfo(CD_OPEN, "trying to close the tray.\n"); 
-				ret = cdo->tray_move(cdi, 0);
+				ret = tray_close(cdi);
+				if (ret == -ERESTARTSYS)
+					return ret;
 				if (ret) {
 					cdinfo(CD_OPEN, "bummer. tried to close the tray but failed.\n"); 
 					/* Ignore the error from the low
