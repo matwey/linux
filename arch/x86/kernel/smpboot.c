@@ -227,10 +227,12 @@ static int enable_start_cpu0;
 static void notrace start_secondary(void *unused)
 {
 	/*
-	 * Don't put *anything* before cpu_init(), SMP booting is too
-	 * fragile that we want to limit the things done here to the
-	 * most necessary things.
+	 * Don't put *anything* except direct CPU state initialization
+	 * before cpu_init(), SMP booting is too fragile that we want to
+	 * limit the things done here to the most necessary things.
 	 */
+	if (boot_cpu_has(X86_FEATURE_PCID))
+		__write_cr4(__read_cr4() | X86_CR4_PCIDE);
 	cpu_init();
 	x86_cpuinit.early_percpu_clock_init();
 	preempt_disable();
@@ -1589,7 +1591,6 @@ void native_cpu_die(unsigned int cpu)
 void play_dead_common(void)
 {
 	idle_task_exit();
-	reset_lazy_tlbstate();
 
 	/* Ack it */
 	(void)cpu_report_death();
