@@ -56,11 +56,17 @@ struct ldt_struct {
 /*
  * Used for LDT copy/destruction.
  */
-int init_new_context_ldt(struct task_struct *tsk, struct mm_struct *mm);
+static inline void init_new_context_ldt(struct mm_struct *mm)
+{
+	mm->context.ldt = NULL;
+	init_rwsem(&mm->context.ldt_usr_sem);
+}
+int ldt_dup_context(struct mm_struct *oldmm, struct mm_struct *mm);
 void destroy_context_ldt(struct mm_struct *mm);
 #else	/* CONFIG_MODIFY_LDT_SYSCALL */
-static inline int init_new_context_ldt(struct task_struct *tsk,
-				       struct mm_struct *mm)
+static inline void init_new_context_ldt(struct mm_struct *mm) { }
+static inline int ldt_dup_context(struct mm_struct *oldmm,
+				  struct mm_struct *mm)
 {
 	return 0;
 }
@@ -131,18 +137,21 @@ void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk);
 static inline int init_new_context(struct task_struct *tsk,
 				   struct mm_struct *mm)
 {
+	mutex_init(&mm->context.lock);
+
 	mm->context.ctx_id = atomic64_inc_return(&last_mm_ctx_id);
 	atomic64_set(&mm->context.tlb_gen, 0);
 
-	#ifdef CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS
+#ifdef CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS
 	if (cpu_feature_enabled(X86_FEATURE_OSPKE)) {
 		/* pkey 0 is the default and always allocated */
 		mm->context.pkey_allocation_map = 0x1;
 		/* -1 means unallocated or invalid */
 		mm->context.execute_only_pkey = -1;
 	}
-	#endif
-	return init_new_context_ldt(tsk, mm);
+#endif
+	init_new_context_ldt(mm);
+	return 0;
 }
 static inline void destroy_context(struct mm_struct *mm)
 {
@@ -175,10 +184,10 @@ do {						\
 } while (0)
 #endif
 
-static inline void arch_dup_mmap(struct mm_struct *oldmm,
-				 struct mm_struct *mm)
+static inline int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
 {
 	paravirt_arch_dup_mmap(oldmm, mm);
+	return ldt_dup_context(oldmm, mm);
 }
 
 static inline void arch_exit_mmap(struct mm_struct *mm)
@@ -292,16 +301,6 @@ static inline bool arch_vma_access_permitted(struct vm_area_struct *vma,
 	return __pkru_allows_pkey(vma_pkey(vma), write);
 }
 
-static inline unsigned long build_cr3(struct mm_struct *mm, u16 asid)
-{
-	return __sme_pa(mm->pgd) | asid;
-}
-
-static inline unsigned long build_cr3_noflush(struct mm_struct *mm, u16 asid)
-{
-	return __sme_pa(mm->pgd) | asid | CR3_NOFLUSH;
-}
-
 /*
  * This can be used from process context to figure out what the value of
  * CR3 is without needing to do a (slow) read_cr3().
@@ -311,7 +310,7 @@ static inline unsigned long build_cr3_noflush(struct mm_struct *mm, u16 asid)
  */
 static inline unsigned long __get_current_cr3_fast(void)
 {
-	unsigned long cr3 = build_cr3(this_cpu_read(cpu_tlbstate.loaded_mm),
+	unsigned long cr3 = build_cr3(this_cpu_read(cpu_tlbstate.loaded_mm)->pgd,
 		this_cpu_read(cpu_tlbstate.loaded_mm_asid));
 
 	/* For now, be very restrictive about when this can be called. */
