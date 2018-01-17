@@ -362,6 +362,7 @@ machine_check_fwnmi:
 rfi_flush_fallback:
 	SET_SCRATCH0(r13);
 	GET_PACA(r13);
+	ld	r13,PACA_AUX_PTR(r13) /* r13 now = paca_aux pointer */
 	std	r9,PACA_EXRFI+EX_R9(r13)
 	std	r10,PACA_EXRFI+EX_R10(r13)
 	std	r11,PACA_EXRFI+EX_R11(r13)
@@ -404,6 +405,7 @@ rfi_flush_fallback:
 hrfi_flush_fallback:
 	SET_SCRATCH0(r13);
 	GET_PACA(r13);
+	ld	r13,PACA_AUX_PTR(r13) /* r13 now = paca_aux pointer */
 	std	r9,PACA_EXRFI+EX_R9(r13)
 	std	r10,PACA_EXRFI+EX_R10(r13)
 	std	r11,PACA_EXRFI+EX_R11(r13)
