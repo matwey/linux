@@ -29,6 +29,7 @@
 #include "xfs_error.h"
 #include "xfs_trace.h"
 #include "xfs_log.h"
+#include "xfs_inode.h"
 
 
 kmem_zone_t	*xfs_buf_item_zone;
@@ -1050,35 +1051,52 @@ xfs_buf_do_callbacks(
 	}
 }
 
+#ifndef __GENKSYMS__
 /*
- * This is the iodone() function for buffers which have had callbacks
- * attached to them by xfs_buf_attach_iodone().  It should remove each
- * log item from the buffer's list and call the callback of each in turn.
- * When done, the buffer's fsprivate field is set to NULL and the buffer
- * is unlocked with a call to iodone().
+ * Invoke the error state callback for each log item affected by the failed I/O.
+ *
+ * If a metadata buffer write fails with a non-permanent error, the buffer is
+ * eventually resubmitted and so the completion callbacks are not run. The error
+ * state may need to be propagated to the log items attached to the buffer,
+ * however, so the next AIL push of the item knows hot to handle it correctly.
  */
-void
-xfs_buf_iodone_callbacks(
+STATIC void
+xfs_buf_do_callbacks_fail(
+	struct xfs_buf		*bp)
+{
+	struct xfs_log_item	*next;
+	struct xfs_log_item	*lip = bp->b_fspriv;
+	struct xfs_ail		*ailp = lip->li_ailp;
+
+	spin_lock(&ailp->xa_lock);
+	for (; lip; lip = next) {
+		next = lip->li_bio_list;
+		if (lip->li_ops->iop_error)
+			lip->li_ops->iop_error(lip, bp);
+	}
+	spin_unlock(&ailp->xa_lock);
+}
+#endif
+
+static bool
+xfs_buf_iodone_callback_error(
 	struct xfs_buf		*bp)
 {
 	struct xfs_log_item	*lip = bp->b_fspriv;
 	struct xfs_mount	*mp = lip->li_mountp;
 	static ulong		lasttime;
 	static xfs_buftarg_t	*lasttarg;
-
-	if (likely(!bp->b_error))
-		goto do_callbacks;
+#ifndef __GENKSYMS__
+	struct xfs_error_cfg	*cfg;
+#endif
+	bool			last_error_match = false;
 
 	/*
 	 * If we've already decided to shutdown the filesystem because of
 	 * I/O errors, there's no point in giving this a retry.
 	 */
-	if (XFS_FORCED_SHUTDOWN(mp)) {
-		xfs_buf_stale(bp);
-		XFS_BUF_DONE(bp);
-		trace_xfs_buf_item_iodone(bp, _RET_IP_);
-		goto do_callbacks;
-	}
+	if (XFS_FORCED_SHUTDOWN(mp))
+		goto out_stale;
 
 	if (bp->b_target != lasttarg ||
 	    time_after(jiffies, (lasttime + 5*HZ))) {
@@ -1087,45 +1105,110 @@ xfs_buf_iodone_callbacks(
 	}
 	lasttarg = bp->b_target;
 
+	/* synchronous writes will have callers process the error */
+	if (!(bp->b_flags & XBF_ASYNC))
+		goto out_stale;
+
+	trace_xfs_buf_item_iodone_async(bp, _RET_IP_);
+	ASSERT(bp->b_iodone != NULL);
+
+#ifndef __GENKSYMS__
+	if (bp->b_last_error != bp->b_error)
+		last_error_match = true;
+#endif
 	/*
 	 * If the write was asynchronous then no one will be looking for the
-	 * error.  Clear the error state and write the buffer out again.
-	 *
-	 * XXX: This helps against transient write errors, but we need to find
-	 * a way to shut the filesystem down if the writes keep failing.
-	 *
-	 * In practice we'll shut the filesystem down soon as non-transient
-	 * errors tend to affect the whole device and a failing log write
-	 * will make us give up.  But we really ought to do better here.
+	 * error.  If this is the first failure of this type, clear the error
+	 * state and write the buffer out again. This means we always retry an
+	 * async write failure at least once, but we also need to set the buffer
+	 * up to behave correctly now for repeated failures.
 	 */
-	if (XFS_BUF_ISASYNC(bp)) {
-		ASSERT(bp->b_iodone != NULL);
+	if (!(bp->b_flags & (XBF_STALE|XBF_WRITE_FAIL)) ||
+	     last_error_match) {
+		bp->b_flags |= (XBF_WRITE | XBF_ASYNC |
+			        XBF_DONE | XBF_WRITE_FAIL);
+#ifndef __GENKSYMS__
+		bp->b_last_error = bp->b_error;
+		bp->b_retries = 0;
+		bp->b_first_retry_time = jiffies;
+#endif
 
-		trace_xfs_buf_item_iodone_async(bp, _RET_IP_);
-
-		xfs_buf_ioerror(bp, 0); /* errno of 0 unsets the flag */
-
-		if (!(bp->b_flags & (XBF_STALE|XBF_WRITE_FAIL))) {
-			bp->b_flags |= XBF_WRITE | XBF_ASYNC |
-				       XBF_DONE | XBF_WRITE_FAIL;
-			xfs_buf_submit(bp);
-		} else {
-			xfs_buf_relse(bp);
-		}
-
-		return;
+		xfs_buf_ioerror(bp, 0);
+		xfs_buf_submit(bp);
+		return true;
 	}
 
+#ifndef __GENKSYMS__
 	/*
-	 * If the write of the buffer was synchronous, we want to make
-	 * sure to return the error to the caller of xfs_bwrite().
+	 * Repeated failure on an async write. Take action according to the
+	 * error configuration we have been set up to use.
 	 */
+	cfg = xfs_error_get_cfg(mp, XFS_ERR_METADATA, bp->b_error);
+
+	if (cfg->max_retries != XFS_ERR_RETRY_FOREVER &&
+	    ++bp->b_retries > cfg->max_retries)
+			goto permanent_error;
+	if (cfg->retry_timeout &&
+	    time_after(jiffies, cfg->retry_timeout + bp->b_first_retry_time))
+			goto permanent_error;
+
+	/* At unmount we may treat errors differently */
+	if ((mp->m_flags & XFS_MOUNT_UNMOUNTING) && mp->m_fail_unmount)
+		goto permanent_error;
+
+	/*
+	 * Still a transient error, run IO completion failure callbacks and let
+	 * the higher layers retry the buffer.
+	 */
+	xfs_buf_do_callbacks_fail(bp);
+#endif
+	xfs_buf_ioerror(bp, 0);
+	xfs_buf_relse(bp);
+	return true;
+
+#ifndef __GENKSYMS__
+	/*
+	 * Permanent error - we need to trigger a shutdown if we haven't already
+	 * to indicate that inconsistency will result from this action.
+	 */
+permanent_error:
+	xfs_force_shutdown(mp, SHUTDOWN_META_IO_ERROR);
+#endif
+out_stale:
 	xfs_buf_stale(bp);
 	XFS_BUF_DONE(bp);
 
 	trace_xfs_buf_error_relse(bp, _RET_IP_);
+	return false;
+}
 
-do_callbacks:
+/*
+ * This is the iodone() function for buffers which have had callbacks attached
+ * to them by xfs_buf_attach_iodone(). We need to iterate the items on the
+ * callback list, mark the buffer as having no more callbacks and then push the
+ * buffer through IO completion processing.
+ */
+void
+xfs_buf_iodone_callbacks(
+	struct xfs_buf		*bp)
+{
+	/*
+	 * If there is an error, process it. Some errors require us
+	 * to run callbacks after failure processing is done so we
+	 * detect that and take appropriate action.
+	 */
+	if (bp->b_error && xfs_buf_iodone_callback_error(bp))
+		return;
+
+#ifndef __GENKSYMS__
+	/*
+	 * Successful IO or permanent error. Either way, we can clear the
+	 * retry state here in preparation for the next error that may occur.
+	 */
+	bp->b_last_error = 0;
+	bp->b_retries = 0;
+#endif
+
 	xfs_buf_do_callbacks(bp);
 	bp->b_fspriv = NULL;
 	bp->b_iodone = NULL;
@@ -1163,3 +1246,33 @@ xfs_buf_iodone(
 	xfs_trans_ail_delete(ailp, lip, SHUTDOWN_CORRUPT_INCORE);
 	xfs_buf_item_free(BUF_ITEM(lip));
 }
+
+#ifndef __GENKSYMS__
+/*
+ * Requeue a failed buffer for writeback
+ *
+ * Return true if the buffer has been re-queued properly, false otherwise
+ */
+bool
+xfs_buf_resubmit_failed_buffers(
+	struct xfs_buf		*bp,
+	struct xfs_log_item	*lip,
+	struct list_head	*buffer_list)
+{
+	struct xfs_log_item	*next;
+
+	/*
+	 * Clear XFS_LI_FAILED flag from all items before resubmit
+	 *
+	 * XFS_LI_FAILED set/clear is protected by xa_lock, caller  this
+	 * function already have it acquired
+	 */
+	for (; lip; lip = next) {
+		next = lip->li_bio_list;
+		xfs_clear_li_failed(lip);
+	}
+
+	/* Add this buffer back to the delayed write list */
+	return xfs_buf_delwri_queue(bp, buffer_list);
+}
+#endif
