@@ -93,10 +93,10 @@
 #else /* __ASSEMBLY__ */
 void x86_enable_ibrs(void);
 void x86_disable_ibrs(void);
-void stuff_RSB(void);
 unsigned int x86_ibrs_enabled(void);
 unsigned int x86_ibpb_enabled(void);
 void x86_spec_check(void);
+int nospec(char *str);
 
 static inline void x86_ibp_barrier(void)
 {

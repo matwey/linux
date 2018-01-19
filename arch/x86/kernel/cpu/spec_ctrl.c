@@ -4,7 +4,6 @@
  */
 
 #include <asm/msr.h>
-#include <asm/proto.h>
 #include <asm/processor.h>
 #include <asm/spec_ctrl.h>
 
@@ -47,16 +46,6 @@ void x86_enable_ibrs(void)
 EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 
 /*
- * Do this indirection as otherwise we'd need to backport the
- * EXPORT_SYMBOL_GPL() for asm stuff.
- */
-void stuff_RSB(void)
-{
-	stuff_rsb();
-}
-EXPORT_SYMBOL_GPL(stuff_RSB);
-
-/*
  * Called after upgrading microcode, check CPUID directly.
  */
 void x86_spec_check(void)
@@ -96,7 +85,7 @@ void x86_spec_check(void)
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
 
-static int __init nospec(char *str)
+int __init nospec(char *str)
 {
 	setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
 	ibrs_state = 0;

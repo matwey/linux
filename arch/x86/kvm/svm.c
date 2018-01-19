@@ -43,6 +43,7 @@
 #include <asm/desc.h>
 #include <asm/debugreg.h>
 #include <asm/kvm_para.h>
+#include <asm/nospec-branch.h>
 #include <asm/irq_remapping.h>
 #include <asm/spec_ctrl.h>
 
@@ -4906,7 +4907,10 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 		"mov %%r14, %c[r14](%[svm]) \n\t"
 		"mov %%r15, %c[r15](%[svm]) \n\t"
 #endif
-		/* Clear host registers (marked as clobbered so it's safe) */
+		/*
+		* Clear host registers marked as clobbered to prevent
+		* speculative use.
+		*/
 		"xor %%" _ASM_BX ", %%" _ASM_BX " \n\t"
 		"xor %%" _ASM_CX ", %%" _ASM_CX " \n\t"
 		"xor %%" _ASM_DX ", %%" _ASM_DX " \n\t"
@@ -4957,7 +4961,8 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 			wrmsrl(MSR_IA32_SPEC_CTRL, FEATURE_ENABLE_IBRS);
 	}
 
-	stuff_RSB();
+	/* Eliminate branch target predictions from guest mode */
+	vmexit_fill_RSB();
 
 #ifdef CONFIG_X86_64
 	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
