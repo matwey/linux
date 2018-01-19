@@ -175,6 +175,9 @@ static int kaiser_add_user_map(const void *__start_addr, unsigned long size,
 	unsigned long end_addr = PAGE_ALIGN(start_addr + size);
 	unsigned long target_address;
 
+	if (!(__supported_pte_mask & _PAGE_NX))
+		flags &= ~_PAGE_NX;
+
 	/*
 	 * It is convenient for callers to pass in __PAGE_KERNEL etc,
 	 * and there is no actual harm from setting _PAGE_GLOBAL, so
