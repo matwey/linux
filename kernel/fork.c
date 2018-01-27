@@ -126,7 +126,7 @@ static struct kmem_cache *task_struct_cachep;
 static struct thread_info *alloc_thread_info_node(struct task_struct *tsk,
 						  int node)
 {
-#ifdef CONFIG_DEBUG_STACK_USAGE
+#if defined(CONFIG_DEBUG_STACK_USAGE) || defined(CONFIG_KAISER)
 	gfp_t mask = GFP_KERNEL | __GFP_ZERO;
 #else
 	gfp_t mask = GFP_KERNEL;
