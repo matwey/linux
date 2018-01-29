@@ -945,7 +945,7 @@ fast_exception_return:
 	beq	2f
 	ACCOUNT_CPU_USER_EXIT(r3, r4)
 	RESTORE_PPR(r3, r4)
-        ld	r3,_CCR(r1)
+	ld	r3,_CCR(r1)
 	ld	r4,_LINK(r1)
 	ld	r5,_CTR(r1)
 	ld	r6,_XER(r1)
