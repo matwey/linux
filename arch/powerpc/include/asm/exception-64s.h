@@ -34,7 +34,6 @@
  * exception handlers (including pSeries LPAR) and iSeries LPAR
  * implementations as possible.
  */
-
 #include <asm/bug.h>
 
 /* PACA save area offsets (exgen, exmc, etc) */
