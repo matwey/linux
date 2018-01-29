@@ -76,6 +76,7 @@
 #define CHECK_TARGET_MSR_PR(srr_reg, expected_pr)
 #endif
 
+/* Macros for annotating the expected destination of (h)rfid */
 #define RFI_TO_KERNEL							\
 	CHECK_TARGET_MSR_PR(SPRN_SRR1, 0);				\
 	rfid
