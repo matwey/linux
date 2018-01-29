@@ -150,7 +150,6 @@ ENTRY(ia32_sysenter_target)
 	cld
 
 	ENABLE_IBRS
-	STUFF_RSB
 
 	SAVE_ARGS 0,0,1
  	/* no need to do an access_ok check here because rbp has been
@@ -318,7 +317,6 @@ ENTRY(ia32_cstar_target)
 	CFI_REL_OFFSET rsp,RSP-ARGOFFSET
 
 	ENABLE_IBRS
-	STUFF_RSB
 
 	/* no need to do an access_ok check here because r8 has been
 	   32bit zero extended */ 
@@ -478,7 +476,6 @@ ENTRY(ia32_syscall)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
 
 	ENABLE_IBRS
-	STUFF_RSB
 
 	jnz ia32_tracesys
 	cmpq $(IA32_NR_syscalls-1),%rax

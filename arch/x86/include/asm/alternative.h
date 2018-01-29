@@ -1,6 +1,8 @@
 #ifndef _ASM_X86_ALTERNATIVE_H
 #define _ASM_X86_ALTERNATIVE_H
 
+#ifndef __ASSEMBLY__
+
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/stringify.h>
@@ -95,7 +97,7 @@ static inline int alternatives_text_reserved(void *start, void *end)
       ".previous\n"							\
       ".section .altinstr_replacement, \"ax\"\n"			\
       "663:\n\t" newinstr "\n664:\n"		/* replacement     */	\
-      ".previous"
+      ".previous\n"
 
 /*
  * This must be included *after* the definition of ALTERNATIVE due to
@@ -149,6 +151,12 @@ static inline int alternatives_text_reserved(void *start, void *end)
  */
 #define ASM_OUTPUT2(a...) a
 
+/*
+ * use this macro if you need clobbers but no inputs in
+ * alternative_{input,io,call}()
+ */
+#define ASM_NO_INPUT_CLOBBER(clbr...) "i" (0) : clbr
+
 struct paravirt_patch_site;
 #ifdef CONFIG_PARAVIRT
 void apply_paravirt(struct paravirt_patch_site *start,
@@ -189,5 +197,7 @@ struct text_poke_param {
 extern void *text_poke(void *addr, const void *opcode, size_t len);
 extern void *text_poke_smp(void *addr, const void *opcode, size_t len);
 extern void text_poke_smp_batch(struct text_poke_param *params, int n);
+
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_X86_ALTERNATIVE_H */
