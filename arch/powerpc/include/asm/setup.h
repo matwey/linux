@@ -4,6 +4,7 @@
 #include <asm-generic/setup.h>
 
 #ifndef __ASSEMBLY__
+
 void rfi_flush_enable(bool enable);
 
 /* These are bit flags */
@@ -18,4 +19,5 @@ void setup_rfi_flush(enum l1d_flush_type, bool enable);
 void do_rfi_flush_fixups(enum l1d_flush_type types);
 
 #endif /* !__ASSEMBLY__ */
+
 #endif	/* _ASM_POWERPC_SETUP_H */

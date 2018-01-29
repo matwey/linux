@@ -127,12 +127,15 @@ struct paca_struct *paca;
 EXPORT_SYMBOL(paca);
 
 struct paca_struct boot_paca;
+
+#ifdef CONFIG_PPC_STD_MMU_64
 /*
  * Auxiliary structure that can be used to basically add fields to the
  * paca without changing its size (for kABI purposes). Upstream code should
  * have these fields directly in the paca.
  */
 static struct paca_aux_struct * __initdata paca_aux;
+#endif /* CONFIG_PPC_STD_MMU_64 */
 
 void __init initialise_paca(struct paca_struct *new_paca, int cpu)
 {
@@ -156,10 +159,8 @@ void __init initialise_paca(struct paca_struct *new_paca, int cpu)
 	new_paca->__current = &init_task;
 #ifdef CONFIG_PPC_STD_MMU_64
 	new_paca->slb_shadow_ptr = &slb_shadow[cpu];
-#endif /* CONFIG_PPC_STD_MMU_64 */
-#ifdef CONFIG_PPC_BOOK3S_64
 	new_paca->aux_ptr = &paca_aux[cpu];
-#endif
+#endif /* CONFIG_PPC_STD_MMU_64 */
 }
 
 /* Put the paca pointer into r13 and SPRG_PACA */
@@ -205,10 +206,12 @@ void __init allocate_pacas(void)
 	paca = __va(memblock_alloc_base(paca_size, PAGE_SIZE, limit));
 	memset(paca, 0, paca_size);
 
+#ifdef CONFIG_PPC_STD_MMU_64
 	paca_aux_size = PAGE_ALIGN(sizeof(struct paca_aux_struct) * nr_cpu_ids);
 
 	paca_aux = __va(memblock_alloc_base(paca_aux_size, PAGE_SIZE, limit));
 	memset(paca_aux, 0, paca_aux_size);
+#endif /* CONFIG_PPC_STD_MMU_64 */
 
 	printk(KERN_DEBUG "Allocated %u bytes for %u pacas at %p\n",
 		paca_size + paca_aux_size, nr_cpu_ids, paca);
@@ -232,7 +235,9 @@ void __init free_unused_pacas(void)
 		return;
 
 	memblock_free(__pa(paca) + new_size, paca_size - new_size);
+#ifdef CONFIG_PPC_STD_MMU_64
 	memblock_free(__pa(paca_aux) + new_aux_size, paca_aux_size - new_aux_size);
+#endif /* CONFIG_PPC_STD_MMU_64 */
 
 	printk(KERN_DEBUG "Freed %u bytes for unused pacas\n",
 		paca_size - new_size + paca_aux_size - new_aux_size);

@@ -200,15 +200,14 @@ int main(void)
 	DEFINE(LPPACADECRINT, offsetof(struct lppaca, int_dword.fields.decr_int));
 	DEFINE(LPPACA_DTLIDX, offsetof(struct lppaca, dtl_idx));
 	DEFINE(PACA_DTL_RIDX, offsetof(struct paca_struct, dtl_ridx));
-#endif /* CONFIG_PPC_STD_MMU_64 */
-	DEFINE(PACAEMERGSP, offsetof(struct paca_struct, emergency_sp));
-
 	/* paca_aux_struct stuff: */
 	OFFSET(PACA_AUX_PTR, paca_struct, aux_ptr);
 	OFFSET(PACA_RFI_FLUSH_FALLBACK_AREA, paca_aux_struct, rfi_flush_fallback_area);
 	OFFSET(PACA_EXRFI, paca_aux_struct, exrfi);
 	OFFSET(PACA_L1D_FLUSH_CONGRUENCE, paca_aux_struct, l1d_flush_congruence);
 	OFFSET(PACA_L1D_FLUSH_SETS, paca_aux_struct, l1d_flush_sets);
+#endif /* CONFIG_PPC_STD_MMU_64 */
+	DEFINE(PACAEMERGSP, offsetof(struct paca_struct, emergency_sp));
 
 	DEFINE(PACAHWCPUID, offsetof(struct paca_struct, hw_cpu_id));
 	DEFINE(PACAKEXECSTATE, offsetof(struct paca_struct, kexec_state));

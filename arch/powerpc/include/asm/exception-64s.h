@@ -58,7 +58,7 @@
  * Macros for annotating the expected destination of (h)rfid
  *
  * The nop instructions allow us to insert one or more instructions to flush the
- * L1-D cache when return to userspace or a guest.
+ * L1-D cache when returning to userspace or a guest.
  */
 #define RFI_FLUSH_SLOT							\
 	RFI_FLUSH_FIXUP_SECTION;					\

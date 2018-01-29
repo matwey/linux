@@ -22,6 +22,7 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 
+
 struct fixup_entry {
 	unsigned long	mask;
 	unsigned long	value;
