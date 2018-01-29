@@ -988,7 +988,7 @@ fast_exception_return:
 	mtspr	SPRN_SRR0,r11
 	REST_4GPRS(10, r1)
 	ld	r1,GPR1(r1)
-        RFI_TO_KERNEL
+	RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
 
 unrecov_fer:

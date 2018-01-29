@@ -55,6 +55,8 @@
 #define EX_SIZE		12	/* size in u64 units */
 
 /*
+ * Macros for annotating the expected destination of (h)rfid
+ *
  * The nop instructions allow us to insert one or more instructions to flush the
  * L1-D cache when return to userspace or a guest.
  */
@@ -76,7 +78,6 @@
 #define CHECK_TARGET_MSR_PR(srr_reg, expected_pr)
 #endif
 
-/* Macros for annotating the expected destination of (h)rfid */
 #define RFI_TO_KERNEL							\
 	CHECK_TARGET_MSR_PR(SPRN_SRR1, 0);				\
 	rfid
@@ -195,7 +196,7 @@ END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,CPU_FTR_HAS_PPR,943)
 	mtspr	SPRN_##h##SRR0,r12;					\
 	mfspr	r12,SPRN_##h##SRR1;	/* and SRR1 */			\
 	mtspr	SPRN_##h##SRR1,r10;					\
-	h##rfid; /* should be h##RFI_TO_KERNEL but run out of space */	\
+	h##rfid; /* h##RFI_TO_KERNEL runs out of space */		\
 	b	.	/* prevent speculative execution */
 #define EXCEPTION_PROLOG_PSERIES_1(label, h) \
 	__EXCEPTION_PROLOG_PSERIES_1(label, h)
