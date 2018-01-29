@@ -37,6 +37,7 @@
 
 #include <asm/bug.h>
 
+/* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
 #define EX_R10		8
 #define EX_R11		16
@@ -50,11 +51,8 @@
 #define EX_LR		72
 #define EX_CFAR		80
 #define EX_PPR		88	/* SMT thread status register (priority) */
-#if defined(CONFIG_RELOCATABLE)
-#define EX_SIZE		10	/* size in u64 units */
-#else
-#define EX_SIZE		9	/* size in u64 units */
-#endif
+
+#define EX_SIZE		12	/* size in u64 units */
 
 /*
  * The nop instructions allow us to insert one or more instructions to flush the
