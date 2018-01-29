@@ -27,6 +27,8 @@
 #include <asm/cputime.h>
 #include <asm/irq.h>
 
+asm(".include \"asm/nobp.h\"\n");
+
 static DEFINE_PER_CPU(struct vtimer_queue, virt_cpu_timer);
 
 DEFINE_PER_CPU(struct s390_idle_data, s390_idle);
@@ -203,6 +205,7 @@ void __kprobes vtime_stop_cpu(void)
 			"	larl	1,1f\n"
 			"	stg	1,8(%2)\n"
 #endif /* CONFIG_64BIT */
+			"	BPON	     \n"
 			"	stpt	0(%4)\n"
 			"	spt	0(%5)\n"
 			"	stck	0(%3)\n"
@@ -236,6 +239,7 @@ void __kprobes vtime_stop_cpu(void)
 			"	larl	1,1f\n"
 			"	stg	1,8(%2)\n"
 #endif /* CONFIG_64BIT */
+			"	BPON	     \n"
 			"	stpt	0(%4)\n"
 			"	stck	0(%3)\n"
 #ifndef CONFIG_64BIT
