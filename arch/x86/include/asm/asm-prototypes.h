@@ -35,7 +35,6 @@ INDIRECT_THUNK(dx)
 INDIRECT_THUNK(si)
 INDIRECT_THUNK(di)
 INDIRECT_THUNK(bp)
-INDIRECT_THUNK(sp)
 asmlinkage void __fill_rsb(void);
 asmlinkage void __clear_rsb(void);
 
