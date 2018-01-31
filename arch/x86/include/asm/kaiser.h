@@ -63,11 +63,38 @@ popq %rax
 .Lend_\@:
 .endm
 
+.macro SWITCH_USER_CR3_NO_STACK
+ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
+movq %rax, PER_CPU_VAR(unsafe_stack_register_backup)
+_SWITCH_TO_USER_CR3 %rax %al
+movq PER_CPU_VAR(unsafe_stack_register_backup), %rax
+.Lend_\@:
+.endm
+
 .macro SWITCH_KERNEL_CR3_NO_STACK
 ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
 movq %rax, PER_CPU_VAR(unsafe_stack_register_backup)
 _SWITCH_TO_KERNEL_CR3 %rax
 movq PER_CPU_VAR(unsafe_stack_register_backup), %rax
+.Lend_\@:
+.endm
+
+/* Needed for preserving CR3 state throughout nested NMI */
+.macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
+movq	%cr3, \save_reg
+ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
+movq	\save_reg, \scratch_reg
+_SWITCH_TO_KERNEL_CR3 \scratch_reg
+.Lend_\@:
+.endm
+
+.macro RESTORE_CR3 scratch_reg:req save_reg:req
+ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KAISER
+movq	%cr3, \scratch_reg
+testq \save_reg, \scratch_reg
+je .Lend_\@
+ALTERNATIVE ASM_NOP5, "bts $63, \save_reg", X86_FEATURE_PCID
+movq	\save_reg, %cr3
 .Lend_\@:
 .endm
 
@@ -78,6 +105,10 @@ movq PER_CPU_VAR(unsafe_stack_register_backup), %rax
 .macro SWITCH_USER_CR3
 .endm
 .macro SWITCH_KERNEL_CR3_NO_STACK
+.endm
+.macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
+.endm
+.macro RESTORE_CR3 save_reg:req
 .endm
 
 #endif /* CONFIG_KAISER */

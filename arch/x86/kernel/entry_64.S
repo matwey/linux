@@ -332,6 +332,27 @@ ENTRY(save_args)
 	je 1f
 	SWAPGS
 	SWITCH_KERNEL_CR3
+
+1:
+	/* Switch to proper stack if we are on trampoline stack */
+	movq PER_CPU_VAR(init_tss + TSS_sp0), %rcx
+	cmpq %rcx, %rsp
+	ja 1f
+	leaq -TSS_stack_size(%rcx), %rax
+	cmpq %rsp, %rax
+	ja 1f
+	pushq %rdi
+	subq %rsp, %rcx
+	movq PER_CPU_VAR(kernel_stack), %rdi
+	addq $KERNEL_STACK_OFFSET, %rdi
+	subq %rcx, %rdi
+	movq %rdi, %rax
+	movq %rsp, %rsi
+	rep movsb
+	movq %rax, %rsp
+	popq %rdi
+	leaq 8(%rsp), %rbp      /* Update rbp to the new value */
+
 	ENABLE_IBRS
 	STUFF_RSB
 	/*
@@ -372,34 +393,24 @@ END(save_rest)
 
 /* save complete stack frame */
 	.pushsection .kprobes.text, "ax"
-/*
- * Return: ebx=0: needs swapgs but not SWITCH_USER_CR3 in paranoid_exit
- *         ebx=1: needs neither swapgs nor SWITCH_USER_CR3 in paranoid_exit
- *         ebx=2: needs both swapgs and SWITCH_USER_CR3 in paranoid_exit
- *         ebx=3: needs SWITCH_USER_CR3 but not swapgs in paranoid_exit
- */
 ENTRY(save_paranoid)
-	XCPT_FRAME offset=ORIG_RAX-R15+8
+	XCPT_FRAME 1 RDI+8
 	cld
-	movq %rdi, RDI+8(%rsp)
-	movq %rsi, RSI+8(%rsp)
+	movq_cfi rdi, RDI+8
+	movq_cfi rsi, RSI+8
 	movq_cfi rdx, RDX+8
 	movq_cfi rcx, RCX+8
 	movq_cfi rax, RAX+8
-	movq %r8, R8+8(%rsp)
-	movq %r9, R9+8(%rsp)
-	movq %r10, R10+8(%rsp)
-	movq %r11, R11+8(%rsp)
+	movq_cfi r8, R8+8
+	movq_cfi r9, R9+8
+	movq_cfi r10, R10+8
+	movq_cfi r11, R11+8
 	movq_cfi rbx, RBX+8
-	movq %rbp, RBP+8(%rsp)
-	movq %r12, R12+8(%rsp)
-	movq %r13, R13+8(%rsp)
-	movq %r14, R14+8(%rsp)
-	movq %r15, R15+8(%rsp)
-
-	/* Do the stuffing unconditionally from user/kernel to be safe */
-	STUFF_RSB
-
+	movq_cfi rbp, RBP+8
+	movq_cfi r12, R12+8
+	movq_cfi r13, R13+8
+	movq_cfi r14, R14+8
+	movq_cfi r15, R15+8
 	movl $1,%ebx
 	movl $MSR_GS_BASE,%ecx
 	rdmsr
@@ -408,27 +419,9 @@ ENTRY(save_paranoid)
 	SWAPGS
 	xorl %ebx,%ebx
 1:
-#ifdef CONFIG_KAISER
-	/*
-	 * We might have come in between a swapgs and a SWITCH_KERNEL_CR3
-	 * on entry, or between a SWITCH_USER_CR3 and a swapgs on exit.
-	 * Do a conditional SWITCH_KERNEL_CR3: this could safely be done
-	 * unconditionally, but we need to find out whether the reverse
-	 * should be done on return (conveyed to paranoid_exit in %ebx).
-	 */
-	ALTERNATIVE "jmp 2f", "", X86_FEATURE_KAISER
-	movq %cr3, %rax
-	testl	$KAISER_SHADOW_PGD_OFFSET, %eax
-	jz	2f
-	orl	$2, %ebx
-	andq	$(~(X86_CR3_PCID_ASID_MASK | KAISER_SHADOW_PGD_OFFSET)), %rax
-	/* If PCID enabled, set X86_CR3_PCID_NOFLUSH_BIT */
-	ALTERNATIVE ASM_NOP5, "bts $63, %rax", X86_FEATURE_PCID
-	movq	%rax, %cr3
-2:
-#endif
-
+	SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg=%rax save_reg=%r14
 	ENABLE_IBRS
+	STUFF_RSB
 	ret
 	CFI_ENDPROC
 END(save_paranoid)
@@ -571,8 +564,8 @@ sysret_check:
 	 * switch CR3 in NMIs.  Normal interrupts are OK because
 	 * they are off here.
 	 */
-	SWITCH_USER_CR3
 	movq	PER_CPU_VAR(old_rsp), %rsp
+	SWITCH_USER_CR3_NO_STACK
 	USERGS_SYSRET64
 
 	CFI_RESTORE_STATE
@@ -919,11 +912,31 @@ retint_swapgs:		/* return to user-space */
 	 * they are off here.
 	 */
 
+swapgs_restore_regs_and_return_to_usermode:
 	DISABLE_IBRS
-
-	SWITCH_USER_CR3
+	/*
+	 * Returning from an interrupt/NMI/exception to user space, currently
+	 * on the kernel task stack, which is not user-mapped.  Copy the iret
+	 * frame to the trampoline stack and switch to it before returning.
+	 */
+	RESTORE_ARGS 1,8,1
+	pushq %rax
+	movq %rsp, %rax
+	movq PER_CPU_VAR(init_tss + TSS_sp0), %rsp
+	pushq SS-ORIG_RAX(%rax)
+	pushq RSP-ORIG_RAX(%rax)
+	pushq EFLAGS-ORIG_RAX(%rax)
+	pushq CS-ORIG_RAX(%rax)
+	pushq RIP-ORIG_RAX(%rax)
+	movq (%rax), %rax
+	SWITCH_USER_CR3_NO_STACK
 	SWAPGS
-	jmp restore_args
+	jmp irq_return
+
+paranoid_userspace_restore_all:
+	TRACE_IRQS_IRETQ
+	RESTORE_REST
+	jmp swapgs_restore_regs_and_return_to_usermode
 
 retint_restore_args:	/* return to kernel space */
 	DISABLE_INTERRUPTS(CLBR_ANY)
@@ -931,7 +944,6 @@ retint_restore_args:	/* return to kernel space */
 	 * The iretq could re-enable interrupts:
 	 */
 	TRACE_IRQS_IRETQ
-restore_args:
 	RESTORE_ARGS 1,8,1
 
 irq_return:
@@ -1520,44 +1532,30 @@ paranoidzeroentry machine_check *machine_check_vector(%rip)
 	 * is fundamentally NMI-unsafe. (we cannot change the soft and
 	 * hard flags at once, atomically)
 	 */
-/*
- * On entry: ebx=0: needs swapgs but not SWITCH_USER_CR3
- *           ebx=1: needs neither swapgs nor SWITCH_USER_CR3
- *           ebx=2: needs both swapgs and SWITCH_USER_CR3
- *           ebx=3: needs SWITCH_USER_CR3 but not swapgs
- */
 ENTRY(paranoid_exit)
 	DEFAULT_FRAME
 	DISABLE_INTERRUPTS(CLBR_NONE)
 	TRACE_IRQS_OFF
-	movq	%rbx, %r12		/* paranoid_userspace uses %ebx */
-	testl	$3, CS(%rsp)
-	jnz	paranoid_userspace
-paranoid_kernel:
-	movq	%r12, %rbx		/* restore after paranoid_userspace */
-	TRACE_IRQS_IRETQ 0
-
-	DISABLE_IBRS
-
-#ifdef CONFIG_KAISER
-	/* No ALTERNATIVE for X86_FEATURE_KAISER: save_paranoid sets %ebx */
-	testl	$2, %ebx		/* SWITCH_USER_CR3 needed? */
-	jz	paranoid_exit_no_switch
-	SWITCH_USER_CR3
-paranoid_exit_no_switch:
-#endif
-	testl	$1, %ebx		/* swapgs needed? */
-	jnz	paranoid_exit_no_swapgs
-	SWAPGS_UNSAFE_STACK
-paranoid_exit_no_swapgs:
+	testl %ebx,%ebx				/* swapgs needed? */
+	jnz paranoid_noswapgs_restore
+	testl $3,CS(%rsp)
+	jnz   paranoid_userspace
+paranoid_swapgs_restore:
+	/* return to kernel with swapgs */
+	RESTORE_CR3 scratch_reg=%rax save_reg=%r14
 	RESTORE_ALL 8
-	jmp	irq_return
-
+	SWAPGS
+	jmp irq_return
+paranoid_noswapgs_restore:
+	/* return to kernel */
+	RESTORE_CR3 scratch_reg=%rax save_reg=%r14
+	RESTORE_ALL 8
+	jmp irq_return
 paranoid_userspace:
 	GET_THREAD_INFO(%rcx)
 	movl TI_flags(%rcx),%ebx
 	andl $_TIF_WORK_MASK,%ebx
-	jz paranoid_kernel
+	jz paranoid_userspace_restore_all
 	movq %rsp,%rdi			/* &pt_regs */
 	call sync_regs
 	movq %rax,%rsp			/* switch stack for scheduling */
@@ -1606,24 +1604,39 @@ ENTRY(error_entry)
 	movq %r14, R14+8(%rsp)
 	movq %r15, R15+8(%rsp)
 
-	STUFF_RSB
-
 	/*
 	 * error_entry() always returns with a kernel gsbase and
 	 * CR3.  We must also have a kernel CR3/gsbase before
 	 * calling TRACE_IRQS_*.  Just unconditionally switch to
 	 * the kernel CR3 here.
 	 */
-	SWITCH_KERNEL_CR3
-
-	ENABLE_IBRS
-
 	xorl %ebx,%ebx
 	testl $3,CS+8(%rsp)
 	je error_kernelspace
 error_swapgs:
 	SWAPGS
+	SWITCH_KERNEL_CR3
+	movq %rsp, %rsi
+	movq PER_CPU_VAR(kernel_stack), %rsp
+	STUFF_RSB
+	ENABLE_IBRS
+	movq %rsi, %rsp
 error_sti:
+	movq PER_CPU_VAR(init_tss + TSS_sp0), %rcx
+	cmpq %rcx, %rsp
+	ja 1f
+	leaq -TSS_stack_size(%rcx), %rax
+	cmpq %rsp, %rax
+	ja 1f
+	subq %rsp, %rcx
+	movq PER_CPU_VAR(kernel_stack), %rdi
+	addq $KERNEL_STACK_OFFSET, %rdi
+	subq %rcx, %rdi
+	movq %rdi, %rax
+	movq %rsp, %rsi
+	rep movsb
+	movq %rax, %rsp
+1:
 	TRACE_IRQS_OFF
 	ret
 
@@ -1793,6 +1806,7 @@ ENTRY(nmi)
 	pushq	%r15		/* pt_regs->r15 */
 
 	ENABLE_IBRS
+	STUFF_RSB
 
 	/*
 	 * At this point we no longer need to worry about stack damage
@@ -1811,26 +1825,8 @@ ENTRY(nmi)
 	 * work, because we don't want to enable interrupts.  Fortunately,
 	 * do_nmi doesn't modify pt_regs.
 	 */
-	SWITCH_USER_CR3
-	SWAPGS
-
-	/*
-	 * Open-code the entire return process for compatibility with varying
-	 * register layouts across different kernel versions.
-	 */
-
-	addq	$6*8, %rsp	/* skip bx, bp, and r12-r15 */
-	popq	%r11		/* pt_regs->r11 */
-	popq	%r10		/* pt_regs->r10 */
-	popq	%r9		/* pt_regs->r9 */
-	popq	%r8		/* pt_regs->r8 */
-	popq	%rax		/* pt_regs->ax */
-	popq	%rcx		/* pt_regs->cx */
-	popq	%rdx		/* pt_regs->dx */
-	popq	%rsi		/* pt_regs->si */
-	popq	%rdi		/* pt_regs->di */
-	addq	$8, %rsp	/* skip orig_ax */
-	INTERRUPT_RETURN
+        addq    $6*8, %rsp      /* skip bx, bp, and r12-r15 */
+        jmp     swapgs_restore_regs_and_return_to_usermode
 
 .Lnmi_from_kernel:
 	/*
@@ -1964,29 +1960,33 @@ restart_nmi:
 	movq $-1,%rsi
 	call do_nmi
 
+	DISABLE_IBRS
+	RESTORE_CR3 scratch_reg=%rax save_reg=%r14
+
 	/* Did the NMI take a page fault? Restore cr2 if it did */
 	movq %cr2, %rcx
 	cmpq %rcx, %r12
 	je 1f
 	movq %r12, %cr2
 1:
-
-#ifdef CONFIG_KAISER
-	/* No ALTERNATIVE for X86_FEATURE_KAISER: save_paranoid sets %ebx */
-	testl	$2, %ebx		/* SWITCH_USER_CR3 needed? */
-	jz	nmi_swapgs
-	SWITCH_USER_CR3
-nmi_swapgs:
-#endif
-	testl $1,%ebx				/* swapgs needed? */
+	testl %ebx,%ebx                         /* swapgs needed? */
 	jnz nmi_restore
+nmi_swapgs:
 	SWAPGS_UNSAFE_STACK
 nmi_restore:
-	RESTORE_ALL 8
-	/* Clear the NMI executing stack variable */
-	movq $0, 10*8(%rsp)
-	jmp irq_return
+	/* Skip the additional iret frame */
+	RESTORE_ALL 6*8
+
+	movq    $0, 5*8(%rsp)           /* clear "NMI executing" */
+
+	/*
+	 * INTERRUPT_RETURN reads the "iret" frame and exits the NMI
+	 * stack in a single instruction.  We are returning to kernel
+	 * mode, so this cannot result in a fault.
+	 */
+	INTERRUPT_RETURN
 	CFI_ENDPROC
+
 END(nmi)
 
 	/*

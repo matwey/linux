@@ -11,6 +11,7 @@
 #include <linux/kgdb.h>
 #include <linux/smp.h>
 #include <linux/io.h>
+#include <linux/stddef.h>
 
 #include <asm/stackprotector.h>
 #include <asm/perf_event.h>
@@ -1334,7 +1335,12 @@ void __cpuinit cpu_init(void)
 	BUG_ON(me->mm);
 	enter_lazy_tlb(&init_mm, me);
 
+#ifdef CONFIG_X86_64
+	percpu_write(init_tss.x86_tss.sp0,
+			(unsigned long) t + offsetofend(struct tss_struct, stack));
+#else
 	load_sp0(t, &current->thread);
+#endif
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 	load_mm_ldt(&init_mm);

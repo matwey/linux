@@ -381,10 +381,10 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	fpu_switch_t fpu;
 
 	fpu = switch_fpu_prepare(prev_p, next_p);
-
+#ifdef CONFIG_X86_32
 	/* Reload esp0 and ss1. */
 	load_sp0(tss, next);
-
+#endif
 	/* We must save %fs and %gs before load_TLS() because
 	 * %fs and %gs may be cleared by load_TLS().
 	 *
