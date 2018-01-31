@@ -17,6 +17,11 @@ vobjs-y := vdso-note.o vclock_gettime.o vgetcpu.o
 obj-$(VDSO64-y)			+= vma.o vdso.o
 obj-$(VDSO32-y)			+= vdso32.o vdso32-setup.o
 
+
+ifdef CONFIG_RETPOLINE
+	KBUILD_CFLAGS := $(filter-out $(RETPOLINE_CFLAGS),$(KBUILD_CFLAGS))
+endif
+
 vobjs := $(foreach F,$(vobjs-y),$(obj)/$F)
 
 $(obj)/vdso.o: $(obj)/vdso.so
