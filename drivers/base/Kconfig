@@ -158,6 +158,9 @@ config DEBUG_DRIVER
 
 	  If you are unsure about this, say N here.
 
+config GENERIC_CPU_VULNERABILITIES
+	bool
+
 config DEBUG_DEVRES
 	bool "Managed device resources verbose debug messages"
 	depends on DEBUG_KERNEL
