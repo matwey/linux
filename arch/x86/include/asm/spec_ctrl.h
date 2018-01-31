@@ -91,6 +91,7 @@ unsigned int x86_ibrs_enabled(void);
 unsigned int x86_ibpb_enabled(void);
 void x86_spec_check(void);
 int nospec(char *str);
+void stuff_RSB(void);
 
 static inline void x86_ibp_barrier(void)
 {

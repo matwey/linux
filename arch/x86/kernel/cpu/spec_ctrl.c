@@ -50,6 +50,14 @@ void x86_enable_ibrs(void)
 }
 EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 
+void stuff_RSB(void)
+{
+	/*
+	 * Do nothing: this is to avoid kABI breakage.
+	 */
+}
+EXPORT_SYMBOL_GPL(stuff_RSB);
+
 /*
  * Called after upgrading microcode, check CPUID directly.
  */
