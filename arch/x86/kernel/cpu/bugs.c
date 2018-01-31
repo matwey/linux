@@ -435,7 +435,7 @@ ssize_t cpu_show_spectre_v1(struct device *dev,
 {
 	if (!x86_bug_spectre_v1)
 		return sprintf(buf, "Not affected\n");
-	return sprintf(buf, "Vulnerable\n");
+	return sprintf(buf, "Mitigation: Barriers\n");
 }
 
 ssize_t cpu_show_spectre_v2(struct device *dev,
