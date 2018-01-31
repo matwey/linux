@@ -9,6 +9,7 @@
  */
 #include <linux/init.h>
 #include <linux/utsname.h>
+#include <linux/device.h>
 
 #include <asm/nospec-branch.h>
 #include <asm/cmdline.h>
@@ -239,12 +240,17 @@ static const char *spectre_v2_strings[] = {
 
 static enum spectre_v2_mitigation spectre_v2_enabled = SPECTRE_V2_NONE;
 
-static bool x86_bug_spectre_v1, x86_bug_spectre_v2;
+static bool x86_bug_spectre_v1, x86_bug_spectre_v2, x86_bug_meltdown;
 
 void setup_force_cpu_bugs(unsigned long __unused)
 {
 	x86_bug_spectre_v1 = true;
 	x86_bug_spectre_v2 = true;
+
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD)
+		x86_bug_meltdown = false;
+	else
+		x86_bug_meltdown = true;
 }
 
 static void __init spec2_print_if_insecure(const char *reason)
@@ -413,3 +419,30 @@ retpoline_auto:
 
 #undef pr_fmt
 
+#ifdef CONFIG_SYSFS
+ssize_t cpu_show_meltdown(struct device *dev,
+			  struct device_attribute *attr, char *buf)
+{
+	if (!x86_bug_meltdown)
+		return sprintf(buf, "Not affected\n");
+	if (boot_cpu_has(X86_FEATURE_KAISER))
+		return sprintf(buf, "Mitigation: PTI\n");
+	return sprintf(buf, "Vulnerable\n");
+}
+
+ssize_t cpu_show_spectre_v1(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	if (!x86_bug_spectre_v1)
+		return sprintf(buf, "Not affected\n");
+	return sprintf(buf, "Vulnerable\n");
+}
+
+ssize_t cpu_show_spectre_v2(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	if (!x86_bug_spectre_v2)
+		return sprintf(buf, "Not affected\n");
+	return sprintf(buf, "Vulnerable\n");
+}
+#endif
