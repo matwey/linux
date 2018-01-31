@@ -417,6 +417,11 @@ retpoline_auto:
 		setup_force_cpu_cap(X86_FEATURE_RSB_CTXSW);
 		pr_info("Filling RSB on context switch\n");
 	}
+
+	if (!is_skylake_era() && x86_ibrs_enabled()) {
+		pr_info("Retpolines enabled, force-disabling IBRS due to !SKL-era core\n");
+		ibrs_state = 0;
+	}
 }
 
 #undef pr_fmt
@@ -446,9 +451,13 @@ ssize_t cpu_show_spectre_v2(struct device *dev,
 	if (!x86_bug_spectre_v2)
 		return sprintf(buf, "Not affected\n");
 
-	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL) && x86_ibrs_enabled()) {
 		return sprintf(buf, "Mitigation: IBRS+IBPB\n");
+	}
 
-	return sprintf(buf, "Vulnerable\n");
+	if (x86_ibpb_enabled())
+		return sprintf(buf, "%s + IBPB\n", spectre_v2_strings[spectre_v2_enabled]);
+	else
+		return sprintf(buf, "%s\n", spectre_v2_strings[spectre_v2_enabled]);
 }
 #endif
