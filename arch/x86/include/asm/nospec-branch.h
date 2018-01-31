@@ -87,7 +87,7 @@
  */
 # define CALL_NOSPEC						\
 	ALTERNATIVE(						\
-	"call *%[thunk_target]\n",				\
+	"call *%[thunk_target]; " ASM_NOP3 "\n",		\
 	"call __x86_indirect_thunk_%V[thunk_target]\n",		\
 	X86_FEATURE_RETPOLINE)
 # define THUNK_TARGET(addr) [thunk_target] "r" (addr)
