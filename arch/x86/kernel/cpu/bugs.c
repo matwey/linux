@@ -445,6 +445,10 @@ ssize_t cpu_show_spectre_v2(struct device *dev,
 {
 	if (!x86_bug_spectre_v2)
 		return sprintf(buf, "Not affected\n");
+
+	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+		return sprintf(buf, "Mitigation: IBRS+IBPB\n");
+
 	return sprintf(buf, "Vulnerable\n");
 }
 #endif
