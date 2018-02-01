@@ -18,7 +18,9 @@
 #include <linux/node.h>
 #include <linux/compiler.h>
 #include <linux/cpumask.h>
+#ifndef __GENKSYMS__
 #include <linux/device.h>
+#endif
 
 struct cpu {
 	int node_id;		/* The node which contains the CPU */
