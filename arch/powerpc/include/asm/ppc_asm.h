@@ -56,6 +56,8 @@ BEGIN_FW_FTR_SECTION;							\
 	cmpd	cr1,r11,r10;						\
 	beq+	cr1,33f;						\
 	bl	.accumulate_stolen_time;				\
+	ld	r12,_MSR(r1);						\
+	andi.	r10,r12,MSR_PR;		/* Restore cr0 (coming from user) */ \
 33:									\
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
 
@@ -420,12 +422,11 @@ END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,CPU_FTR_HAS_PPR,946)
  * dcbt are different so we use machine "power4" here explicitly.
  */
 #define DCBT_STOP_ALL_STREAM_IDS(scratch)	\
-	.machine push ;				\
-	.machine "power4" ;			\
-	lis     scratch,0x60000000@h;		\
-	dcbt    0,scratch,0b01010;		\
-	.machine pop
-
+.machine push ;					\
+.machine "power4" ;				\
+       lis     scratch,0x60000000@h;		\
+       dcbt    r0,scratch,0b01010;		\
+.machine pop
 
 /*
  * toreal/fromreal/tophys/tovirt macros. 32-bit BookE makes them

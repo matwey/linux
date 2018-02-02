@@ -375,11 +375,12 @@ rfi_flush_fallback:
 	/*
 	 * The load adresses are at staggered offsets within cachelines,
 	 * which suits some pipelines better (on others it should not
-	 * hurt.
+	 * hurt).
 	 */
 	addi	r12,r12,8
 	mtctr	r11
 	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+
 	/* order ld/st prior to dcbt stop all streams with flushing */
 	sync
 1:	li	r8,0
@@ -418,11 +419,12 @@ hrfi_flush_fallback:
 	/*
 	 * The load adresses are at staggered offsets within cachelines,
 	 * which suits some pipelines better (on others it should not
-	 * hurt.
+	 * hurt).
 	 */
 	addi	r12,r12,8
 	mtctr	r11
 	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+
 	/* order ld/st prior to dcbt stop all streams with flushing */
 	sync
 1:	li	r8,0
@@ -443,7 +445,6 @@ hrfi_flush_fallback:
 	ld	r8,PACA_EXRFI+EX_R13(r13)
 	GET_SCRATCH0(r13);
 	hrfid
-
 
 #ifdef __DISABLED__
 /*
@@ -736,8 +737,8 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	andi.	r10,r12,MSR_RI	/* check for unrecoverable exception */
 	beq-	2f
 
-	andi.	r10,r12,MSR_PR	 /* check for exception from userspace */
-	beq	1f 	/* returning to kernel */
+	andi.	r10,r12,MSR_PR	/* check for exception from userspace */
+	beq	1f	/* returning to kernel */
 
 .machine	push
 .machine	"power4"
@@ -945,7 +946,7 @@ fast_exception_return:
 	beq	2f
 	ACCOUNT_CPU_USER_EXIT(r3, r4)
 	RESTORE_PPR(r3, r4)
-        ld	r3,_CCR(r1)
+	ld	r3,_CCR(r1)
 	ld	r4,_LINK(r1)
 	ld	r5,_CTR(r1)
 	ld	r6,_XER(r1)
@@ -988,7 +989,7 @@ fast_exception_return:
 	mtspr	SPRN_SRR0,r11
 	REST_4GPRS(10, r1)
 	ld	r1,GPR1(r1)
-        RFI_TO_KERNEL
+	RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
 
 unrecov_fer:

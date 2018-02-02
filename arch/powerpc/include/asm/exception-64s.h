@@ -34,9 +34,9 @@
  * exception handlers (including pSeries LPAR) and iSeries LPAR
  * implementations as possible.
  */
-
 #include <asm/bug.h>
 
+/* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
 #define EX_R10		8
 #define EX_R11		16
@@ -50,15 +50,14 @@
 #define EX_LR		72
 #define EX_CFAR		80
 #define EX_PPR		88	/* SMT thread status register (priority) */
-#if defined(CONFIG_RELOCATABLE)
-#define EX_SIZE		10	/* size in u64 units */
-#else
-#define EX_SIZE		9	/* size in u64 units */
-#endif
+
+#define EX_SIZE		12	/* size in u64 units */
 
 /*
+ * Macros for annotating the expected destination of (h)rfid
+ *
  * The nop instructions allow us to insert one or more instructions to flush the
- * L1-D cache when return to userspace or a guest.
+ * L1-D cache when returning to userspace or a guest.
  */
 #define RFI_FLUSH_SLOT							\
 	RFI_FLUSH_FIXUP_SECTION;					\
@@ -196,7 +195,7 @@ END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,CPU_FTR_HAS_PPR,943)
 	mtspr	SPRN_##h##SRR0,r12;					\
 	mfspr	r12,SPRN_##h##SRR1;	/* and SRR1 */			\
 	mtspr	SPRN_##h##SRR1,r10;					\
-	h##rfid; /* should be h##RFI_TO_KERNEL but run out of space */	\
+	h##rfid; /* h##RFI_TO_KERNEL runs out of space */		\
 	b	.	/* prevent speculative execution */
 #define EXCEPTION_PROLOG_PSERIES_1(label, h) \
 	__EXCEPTION_PROLOG_PSERIES_1(label, h)

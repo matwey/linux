@@ -19,7 +19,6 @@
 #include <asm/smp.h>
 #include <asm/pmc.h>
 #include <asm/system.h>
-#include <asm/ppc_asm.h>
 
 #include "cacheinfo.h"
 
@@ -198,50 +197,6 @@ static SYSDEV_ATTR(purr, 0600, show_purr, store_purr);
 static SYSDEV_ATTR(pir, 0400, show_pir, NULL);
 
 static unsigned long dscr_default;
-
-#ifdef CONFIG_PPC_BOOK3S_64
-extern bool rfi_flush;
-static ssize_t show_rfi_flush(struct sysdev_class *class,
-			      struct sysdev_class_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d\n", rfi_flush ? 1 : 0);
-}
-
-static ssize_t __used store_rfi_flush(struct sysdev_class *class,
-				      struct sysdev_class_attribute *attr, const char *buf,
-				      size_t count)
-{
-	bool enable;
-	int val;
-	int ret = 0;
-
-	ret = sscanf(buf, "%d", &val);
-	if (ret != 1)
-		return -EINVAL;
-
-	if (val == 1)
-		enable = true;
-	else if (val == 0)
-		enable = false;
-	else
-		return -EINVAL;
-
-	/* Only do anything if we're changing state */
-	if (enable != rfi_flush)
-		rfi_flush_enable(enable);
-
-	return count;
-}
-
-static SYSDEV_CLASS_ATTR(rfi_flush, 0600,
-			 show_rfi_flush, store_rfi_flush);
-
-static void sysfs_create_rfi_flush(void)
-{
-	sysfs_create_file(&cpu_sysdev_class.kset.kobj,
-			  &attr_rfi_flush.attr);
-}
-#endif /* CONFIG_PPC_BOOK3S_64 */
 
 static void read_dscr(void *val)
 {
@@ -736,9 +691,6 @@ static int __init topology_init(void)
 	}
 #ifdef CONFIG_PPC64
 	sysfs_create_dscr_default();
-#ifdef CONFIG_PPC_BOOK3S
-	sysfs_create_rfi_flush();
-#endif
 #endif /* CONFIG_PPC64 */
 
 	return 0;
