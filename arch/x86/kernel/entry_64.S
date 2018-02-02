@@ -58,6 +58,7 @@
 #include <asm/cpufeature.h>
 #include <asm/kaiser.h>
 #include <asm/spec_ctrl.h>
+#include <asm/nospec-branch.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
@@ -124,7 +125,8 @@ trace:
 	movq 8(%rbp), %rsi
 	subq $MCOUNT_INSN_SIZE, %rdi
 
-	call   *ftrace_trace_function
+	movq ftrace_trace_function, %r8
+	CALL_NOSPEC %r8
 
 	MCOUNT_RESTORE_FRAME
 
@@ -166,7 +168,7 @@ GLOBAL(return_to_handler)
 	movq 8(%rsp), %rdx
 	movq (%rsp), %rax
 	addq $24, %rsp
-	jmp *%rdi
+	JMP_NOSPEC %rdi
 #endif
 
 
@@ -354,7 +356,6 @@ ENTRY(save_args)
 	leaq 8(%rsp), %rbp      /* Update rbp to the new value */
 
 	ENABLE_IBRS
-	STUFF_RSB
 	/*
 	 * irq_count is used to check if a CPU is already on an interrupt stack
 	 * or not. While this is essentially redundant with preempt_count it is
@@ -421,7 +422,6 @@ ENTRY(save_paranoid)
 1:
 	SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg=%rax save_reg=%r14
 	ENABLE_IBRS
-	STUFF_RSB
 	ret
 	CFI_ENDPROC
 END(save_paranoid)
@@ -521,7 +521,6 @@ ENTRY(system_call_after_swapgs)
 	GET_THREAD_INFO(%rcx)
 
 	ENABLE_IBRS
-	STUFF_RSB
 
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
@@ -529,7 +528,12 @@ system_call_fastpath:
 	cmpq $__NR_syscall_max,%rax
 	ja badsys
 	movq %r10,%rcx
+#ifdef CONFIG_RETPOLINE
+	movq    sys_call_table(, %rax, 8), %rax
+	call    __x86_indirect_thunk_rax
+#else
 	call *sys_call_table(,%rax,8)  # XXX:	 rip relative
+#endif
 	movq %rax,RAX-ARGOFFSET(%rsp)
 /*
  * Syscall return path ending with SYSRET (fast path)
@@ -655,7 +659,12 @@ tracesys:
 	cmpq $__NR_syscall_max,%rax
 	ja   int_ret_from_sys_call	/* RAX(%rsp) set to -ENOSYS above */
 	movq %r10,%rcx	/* fixup for C */
+#ifdef CONFIG_RETPOLINE
+	movq    sys_call_table(, %rax, 8), %rax
+	call    __x86_indirect_thunk_rax
+#else
 	call *sys_call_table(,%rax,8)
+#endif
 	movq %rax,RAX-ARGOFFSET(%rsp)
 	/* Use IRET because user could have changed frame */
 
@@ -977,7 +986,6 @@ native_irq_return_ldt:
 	SWITCH_KERNEL_CR3
 
 	ENABLE_IBRS
-	STUFF_RSB
 
 	movq PER_CPU_VAR(espfix_waddr),%rdi
 	movq %rax,(0*8)(%rdi)	/* RAX */
@@ -1271,7 +1279,7 @@ ENTRY(kernel_thread_helper)
 	 * Here we are in the child and the registers are set as they were
 	 * at kernel_thread() invocation in the parent.
 	 */
-	call *%rsi
+	CALL_NOSPEC %rsi
 	# exit
 	mov %eax, %edi
 	call do_exit
@@ -1603,7 +1611,6 @@ ENTRY(error_entry)
 	movq %r13, R13+8(%rsp)
 	movq %r14, R14+8(%rsp)
 	movq %r15, R15+8(%rsp)
-
 	/*
 	 * error_entry() always returns with a kernel gsbase and
 	 * CR3.  We must also have a kernel CR3/gsbase before
@@ -1618,7 +1625,6 @@ error_swapgs:
 	SWITCH_KERNEL_CR3
 	movq %rsp, %rsi
 	movq PER_CPU_VAR(kernel_stack), %rsp
-	STUFF_RSB
 	ENABLE_IBRS
 	movq %rsi, %rsp
 error_sti:
@@ -1806,7 +1812,6 @@ ENTRY(nmi)
 	pushq	%r15		/* pt_regs->r15 */
 
 	ENABLE_IBRS
-	STUFF_RSB
 
 	/*
 	 * At this point we no longer need to worry about stack damage
@@ -2015,76 +2020,6 @@ ENTRY(ignore_sysret)
 	sysret
 	CFI_ENDPROC
 END(ignore_sysret)
-
-ENTRY(stuff_rsb)
-	call	1f
-	pause
-1:	call	2f
-	pause
-2:	call	3f;
-	pause
-3:	call	4f
-	pause
-4:	call	5f
-	pause
-5:	call	6f
-	pause
-6:	call	7f
-	pause
-7:	call	8f
-	pause
-8:	call	9f
-	pause
-9:	call	10f
-	pause
-10:	call	11f
-	pause
-11:	call	12f
-	pause
-12:	call	13f
-	pause
-13:	call	14f
-	pause
-14:	call	15f
-	pause
-15:	call	16f
-	pause
-16:	call	17f
-	pause
-17:	call	18f
-	pause
-18:	call	19f
-	pause
-19:	call	20f
-	pause
-20:	call	21f
-	pause
-21:	call	22f
-	pause
-22:	call	23f
-	pause
-23:	call	24f
-	pause
-24:	call	25f
-	pause
-25:	call	26f
-	pause
-26:	call	27f
-	pause
-27:	call	28f
-	pause
-28:	call	29f
-	pause
-29:	call	30f
-	pause
-30:	call	31f
-	pause
-31:	call	32f
-	pause
-32:
-	add $(32*8), %rsp
-	ret
-END(stuff_rsb)
 
 /*
  * End of kprobes section

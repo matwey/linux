@@ -5,7 +5,6 @@
 #include <linux/module.h>
 
 #include <asm/msr.h>
-#include <asm/proto.h>
 #include <asm/processor.h>
 #include <asm/spec_ctrl.h>
 
@@ -14,8 +13,11 @@
  *
  * -1 means "not touched by nospec() earlyparam"
  *
+ *
+ * If IBRS is set, IBPB is always set. IBPB can be set independently
+ * on IBRS state (SKL).
  */
-static int ibrs_state = -1;
+int ibrs_state = -1;
 static int ibpb_state = -1;
 
 unsigned int notrace x86_ibrs_enabled(void)
@@ -48,15 +50,11 @@ void x86_enable_ibrs(void)
 }
 EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 
-/*
- * Do this indirection as otherwise we'd need to backport the
- * EXPORT_SYMBOL_GPL() for asm stuff.
- */
 void stuff_RSB(void)
 {
-#ifndef CONFIG_XEN
-	stuff_rsb();
-#endif
+	/*
+	 * Do nothing: this is to avoid kABI breakage.
+	 */
 }
 EXPORT_SYMBOL_GPL(stuff_RSB);
 
@@ -66,18 +64,21 @@ EXPORT_SYMBOL_GPL(stuff_RSB);
 void x86_spec_check(void)
 {
 
-	if (ibrs_state == 0 || ibpb_state == 0) {
+	if (ibpb_state == 0) {
 		printk_once(KERN_INFO "IBRS/IBPB: disabled\n");
 		return;
 	}
 
 	if (cpuid_edx(7) & BIT(26)) {
-		ibrs_state = 1;
+		if (ibrs_state == -1) {
+			/* noone force-disabled IBRS */
+			ibrs_state = 1;
+			printk_once(KERN_INFO "IBRS: initialized\n");
+		}
+		printk_once(KERN_INFO "IBPB: initialized\n");
 		ibpb_state = 1;
 
 		setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
-
-		printk_once(KERN_INFO "IBRS/IBPB: Initialized\n");
 	}
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
@@ -104,7 +105,7 @@ void x86_spec_check(void)
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
 
-static int __init nospec(char *str)
+int __init nospec(char *str)
 {
 	setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
 	ibrs_state = 0;

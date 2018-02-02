@@ -67,6 +67,21 @@ __setup("noreplace-paravirt", setup_noreplace_paravirt);
 #define DPRINTK(fmt, args...) if (debug_alternative) \
 	printk(KERN_DEBUG fmt, args)
 
+#define DUMP_BYTES(buf, len, fmt, args...)                              \
+do {                                                                    \
+        if (unlikely(debug_alternative)) {                              \
+                int j;                                                  \
+                                                                        \
+                if (!(len))                                             \
+                        break;                                          \
+                                                                        \
+                printk(KERN_DEBUG fmt, ##args);                         \
+                for (j = 0; j < (len) - 1; j++)                         \
+                        printk(KERN_CONT "%02hhx ", buf[j]);            \
+                printk(KERN_CONT "%02hhx\n", buf[j]);                   \
+        }                                                               \
+} while (0)
+
 /*
  * Each GENERIC_NOPX is of X bytes, and defined as an array of bytes
  * that correspond to that nop. Getting from one nop to the next, we
@@ -290,11 +305,24 @@ void __init_or_module apply_alternatives(struct alt_instr *start,
 				__func__, a->instr, instr);
 		}
 #endif
+
+		DPRINTK("feat: %d*32+%d, old: (%p, len: %d), repl: (%p, len: %d)",
+			a->cpuid >> 5,
+			a->cpuid & 0x1f,
+			instr, a->instrlen,
+			a->replacement, a->replacementlen);
+
+                DUMP_BYTES(instr, a->instrlen, "%p: old_insn: ", instr);
+                DUMP_BYTES(a->replacement, a->replacementlen, "%p: rpl_insn: ", a->replacement);
+
 		memcpy(insnbuf, a->replacement, a->replacementlen);
 		if (*insnbuf == 0xe8 && a->replacementlen == 5)
 		    *(s32 *)(insnbuf + 1) += a->replacement - a->instr;
 		add_nops(insnbuf + a->replacementlen,
 			 a->instrlen - a->replacementlen);
+
+		DUMP_BYTES(insnbuf, a->replacementlen, "%p: final_insn: ", instr);
+
 		text_poke_early(instr, insnbuf, a->instrlen);
 	}
 }

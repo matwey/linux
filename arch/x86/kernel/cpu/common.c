@@ -30,6 +30,7 @@
 #include <asm/desc.h>
 #include <asm/i387.h>
 #include <asm/mtrr.h>
+#include <asm/bugs.h>
 #include <linux/numa.h>
 #include <asm/asm.h>
 #include <asm/cpu.h>
@@ -792,6 +793,8 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 
 	if (this_cpu->c_bsp_init)
 		this_cpu->c_bsp_init(c);
+
+	setup_force_cpu_bugs(0);
 }
 
 void __init early_cpu_init(void)

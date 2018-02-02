@@ -41,7 +41,7 @@
 #include <asm/xcr.h>
 #include <asm/msr-index.h>
 #include <asm/spec_ctrl.h>
-#include <asm/proto.h>
+#include <asm/nospec-branch.h>
 
 #include "trace.h"
 
@@ -6843,7 +6843,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 	      );
 
-	stuff_RSB();
+	/* Eliminate branch target predictions from guest mode */
+	vmexit_fill_RSB();
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)

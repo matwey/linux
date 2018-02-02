@@ -9,4 +9,5 @@ int ppro_with_ram_bug(void);
 static inline int ppro_with_ram_bug(void) { return 0; }
 #endif
 
+void setup_force_cpu_bugs(unsigned long __unused);
 #endif /* _ASM_X86_BUGS_H */

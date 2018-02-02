@@ -122,6 +122,17 @@
 #define ASM_NOP6 _ASM_MK_NOP(K8_NOP6)
 #define ASM_NOP7 _ASM_MK_NOP(K8_NOP7)
 #define ASM_NOP8 _ASM_MK_NOP(K8_NOP8)
+
+/* naked NOPs for use in __stringify() etc */
+#define _ASM_NOP1 .byte K8_NOP1
+#define _ASM_NOP2 .byte K8_NOP2
+#define _ASM_NOP3 .byte K8_NOP3
+#define _ASM_NOP4 .byte K8_NOP4
+#define _ASM_NOP5 .byte K8_NOP5
+#define _ASM_NOP6 .byte K8_NOP6
+#define _ASM_NOP7 .byte K8_NOP7
+#define _ASM_NOP8 .byte K8_NOP8
+
 #define ASM_NOP5_ATOMIC _ASM_MK_NOP(K8_NOP5_ATOMIC)
 #else
 #define ASM_NOP1 _ASM_MK_NOP(GENERIC_NOP1)
@@ -132,6 +143,16 @@
 #define ASM_NOP6 _ASM_MK_NOP(GENERIC_NOP6)
 #define ASM_NOP7 _ASM_MK_NOP(GENERIC_NOP7)
 #define ASM_NOP8 _ASM_MK_NOP(GENERIC_NOP8)
+
+#define _ASM_NOP1 .byte GENERIC_NOP1
+#define _ASM_NOP2 .byte GENERIC_NOP2
+#define _ASM_NOP3 .byte GENERIC_NOP3
+#define _ASM_NOP4 .byte GENERIC_NOP4
+#define _ASM_NOP5 .byte GENERIC_NOP5
+#define _ASM_NOP6 .byte GENERIC_NOP6
+#define _ASM_NOP7 .byte GENERIC_NOP7
+#define _ASM_NOP8 .byte GENERIC_NOP8
+
 #define ASM_NOP5_ATOMIC _ASM_MK_NOP(GENERIC_NOP5_ATOMIC)
 #endif
 

@@ -232,6 +232,8 @@ static inline struct thread_info *current_thread_info(void)
 	return ti;
 }
 
+register unsigned long current_stack_pointer asm("rsp") __used;
+
 #else /* !__ASSEMBLY__ */
 
 /* how to get the thread information struct from ASM */
@@ -242,6 +244,8 @@ static inline struct thread_info *current_thread_info(void)
 #endif
 
 #endif /* !X86_32 */
+
+#define ASM_CALL_CONSTRAINT "+r" (current_stack_pointer)
 
 /*
  * Thread-synchronous status.
