@@ -140,6 +140,9 @@ struct extended_sigtable {
 
 #define exttable_size(et) ((et)->count * EXT_SIGNATURE_SIZE + EXT_HEADER_SIZE)
 
+/* last level cache size per core */
+static int llc_size_per_core;
+
 static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
@@ -413,18 +416,22 @@ static int get_ucode_fw(void *to, const void *from, size_t n)
 
 static bool is_blacklisted(unsigned int cpu)
 {
+	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
+	unsigned int rev = uci->cpu_sig.rev;
 
 	/*
 	 * Late loading on model 79 with microcode revision less than 0x0b000021
-	 * may result in a system hang. This behavior is documented in item
-	 * BDF90, #334165 (Intel Xeon Processor E7-8800/4800 v4 Product Family).
+	 * and LLC size per core bigger than 2.5MB may result in a system hang.
+	 * This behavior is documented in item BDF90, #334165 (Intel Xeon
+	 * Processor E7-8800/4800 v4 Product Family).
 	 */
 	if (c->x86 == 6 &&
 	    c->x86_model == 79 &&
 	    c->x86_mask == 0x01 &&
-	    c->microcode < 0x0b000021) {
-		pr_err_once("Erratum BDF90: late loading with revision < 0x0b000021 (0x%x) disabled.\n", c->microcode);
+	    llc_size_per_core > 2621440 &&
+	    rev < 0x0b000021) {
+		pr_err_once("Erratum BDF90: late loading with revision < 0x0b000021 (0x%x) disabled.\n", rev);
 		pr_err_once("Please consider either early loading through initrd/built-in or a potential BIOS update.\n");
 		return true;
 	}
@@ -488,8 +495,20 @@ static struct microcode_ops microcode_intel_ops = {
 	.microcode_fini_cpu               = microcode_fini_cpu,
 };
 
+static int __init calc_llc_size_per_core(void)
+{
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+	u64 llc_size = c->x86_cache_size * 1024;
+
+	do_div(llc_size, c->x86_max_cores);
+
+	return (int)llc_size;
+}
+
 struct microcode_ops * __init init_intel_microcode(void)
 {
+	llc_size_per_core = calc_llc_size_per_core();
+
 	return &microcode_intel_ops;
 }
 
