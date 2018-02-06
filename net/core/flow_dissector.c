@@ -6,6 +6,7 @@
 #include <linux/if_vlan.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
+#include <net/tipc.h>
 #include <linux/igmp.h>
 #include <linux/icmp.h>
 #include <linux/sctp.h>
@@ -303,11 +304,10 @@ ipv6:
 		}
 	}
 	case htons(ETH_P_TIPC): {
-		struct {
-			__be32 pre[3];
-			__be32 srcnode;
-		} *hdr, _hdr;
-		hdr = __skb_header_pointer(skb, nhoff, sizeof(_hdr), data, hlen, &_hdr);
+		struct tipc_basic_hdr *hdr, _hdr;
+
+		hdr = __skb_header_pointer(skb, nhoff, sizeof(_hdr),
+					   data, hlen, &_hdr);
 		if (!hdr)
 			goto out_bad;
 
@@ -316,7 +316,7 @@ ipv6:
 			key_addrs = skb_flow_dissector_target(flow_dissector,
 							      FLOW_DISSECTOR_KEY_TIPC_ADDRS,
 							      target_container);
-			key_addrs->tipcaddrs.srcnode = hdr->srcnode;
+			key_addrs->tipcaddrs.srcnode = tipc_hdr_rps_key(hdr);
 			key_control->addr_type = FLOW_DISSECTOR_KEY_TIPC_ADDRS;
 		}
 		goto out_good;
@@ -502,8 +502,8 @@ ip_proto_again:
 out_good:
 	ret = true;
 
-	key_control->thoff = (u16)nhoff;
 out:
+	key_control->thoff = min_t(u16, nhoff, skb ? skb->len : hlen);
 	key_basic->n_proto = proto;
 	key_basic->ip_proto = ip_proto;
 
@@ -511,7 +511,6 @@ out:
 
 out_bad:
 	ret = false;
-	key_control->thoff = min_t(u16, nhoff, skb ? skb->len : hlen);
 	goto out;
 }
 EXPORT_SYMBOL(__skb_flow_dissect);

@@ -69,7 +69,7 @@ struct flow_dissector_key_ipv6_addrs {
 
 /**
  * struct flow_dissector_key_tipc_addrs:
- * @srcnode: source node address
+ * @srcnode: source node address combined with selector
  */
 struct flow_dissector_key_tipc_addrs {
 	__be32 srcnode;
