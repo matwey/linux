@@ -446,7 +446,13 @@ void btrfs_free_qgroup_config(struct btrfs_fs_info *fs_info)
 
 		__del_qgroup_rb(qgroup);
 	}
+	/*
+	 * we call btrfs_free_qgroup_config() when umounting
+	 * filesystem and disabling quota, so we set qgroup_ulit
+	 * to be null here to avoid double free.
+	 */
 	ulist_free(fs_info->qgroup_ulist);
+	fs_info->qgroup_ulist = NULL;
 }
 
 static int add_qgroup_relation_item(struct btrfs_trans_handle *trans,
