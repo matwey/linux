@@ -1562,9 +1562,6 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans,
 	put_transaction(cur_trans);
 	put_transaction(cur_trans);
 
-	if (trans->type < TRANS_JOIN_NOLOCK)
-		sb_end_intwrite(root->fs_info->sb);
-
 	trace_btrfs_transaction_commit(root);
 
 	if (current->journal_info == trans)
@@ -1934,6 +1931,9 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	put_transaction(cur_trans);
 	put_transaction(cur_trans);
+
+	if (trans->type < TRANS_JOIN_NOLOCK)
+		sb_end_intwrite(root->fs_info->sb);
 
 	trace_btrfs_transaction_commit(root);
 
