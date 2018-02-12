@@ -277,15 +277,13 @@ static int flakey_map(struct dm_target *ti, struct bio *bio,
 		map_context->ll = 1;
 
 		/*
-		 * Map reads as normal only if corrupt_bio_byte set.
+		 * Error reads if neither corrupt_bio_byte or drop_writes are set.
+		 * Otherwise, flakey_end_io() will decide if the reads should be modified.
 		 */
 		if (bio_data_dir(bio) == READ) {
-			/* If flags were specified, only corrupt those that match. */
-			if (fc->corrupt_bio_byte && (fc->corrupt_bio_rw == READ) &&
-			    all_corrupt_bio_flags_match(bio, fc))
-				goto map_bio;
-			else
+			if (!fc->corrupt_bio_byte && !test_bit(DROP_WRITES, &fc->flags))
 				return -EIO;
+			goto map_bio;
 		}
 
 		/*
@@ -323,14 +321,21 @@ static int flakey_end_io(struct dm_target *ti, struct bio *bio,
 	struct flakey_c *fc = ti->private;
 	unsigned bio_submitted_while_down = map_context->ll;
 
-	/*
-	 * Corrupt successful READs while in down state.
-	 */
 	if (!error && bio_submitted_while_down && (bio_data_dir(bio) == READ)) {
-		if (fc->corrupt_bio_byte)
+		if (fc->corrupt_bio_byte && (fc->corrupt_bio_rw == READ) &&
+		    all_corrupt_bio_flags_match(bio, fc)) {
+			/*
+			 * Corrupt successful matching READs while in down state.
+			 */
 			corrupt_bio_data(bio, fc);
-		else
+
+		} else if (!test_bit(DROP_WRITES, &fc->flags)) {
+			/*
+			 * Error read during the down_interval if drop_writes
+			 * wasn't configured.
+			 */
 			return -EIO;
+		}
 	}
 
 	return error;
