@@ -4031,7 +4031,7 @@ static int btrfs_cleanup_transaction(struct btrfs_root *root)
 
 	spin_lock(&root->fs_info->trans_lock);
 	list_splice_init(&root->fs_info->trans_list, &list);
-	root->fs_info->trans_no_join = 1;
+	root->fs_info->running_transaction = NULL;
 	spin_unlock(&root->fs_info->trans_lock);
 
 	while (!list_empty(&list)) {
@@ -4067,10 +4067,6 @@ static int btrfs_cleanup_transaction(struct btrfs_root *root)
 
 		btrfs_destroy_delalloc_inodes(root);
 
-		spin_lock(&root->fs_info->trans_lock);
-		root->fs_info->running_transaction = NULL;
-		spin_unlock(&root->fs_info->trans_lock);
-
 		btrfs_destroy_marked_extents(root, &t->dirty_pages,
 					     EXTENT_DIRTY);
 
@@ -4083,9 +4079,6 @@ static int btrfs_cleanup_transaction(struct btrfs_root *root)
 		kmem_cache_free(btrfs_transaction_cachep, t);
 	}
 
-	spin_lock(&root->fs_info->trans_lock);
-	root->fs_info->trans_no_join = 0;
-	spin_unlock(&root->fs_info->trans_lock);
 	mutex_unlock(&root->fs_info->transaction_kthread_mutex);
 
 	return 0;
