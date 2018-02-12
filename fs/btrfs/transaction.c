@@ -58,7 +58,7 @@ static unsigned int btrfs_blocked_trans_types[TRANS_STATE_MAX] = {
 					   __TRANS_JOIN_NOLOCK),
 };
 
-static void put_transaction(struct btrfs_transaction *transaction)
+void btrfs_put_transaction(struct btrfs_transaction *transaction)
 {
 	WARN_ON(atomic_read(&transaction->use_count) == 0);
 	if (atomic_dec_and_test(&transaction->use_count)) {
@@ -353,7 +353,7 @@ static void wait_current_trans(struct btrfs_root *root)
 		wait_event(root->fs_info->transaction_wait,
 			   cur_trans->state >= TRANS_STATE_UNBLOCKED ||
 			   cur_trans->aborted);
-		put_transaction(cur_trans);
+		btrfs_put_transaction(cur_trans);
 	} else {
 		spin_unlock(&root->fs_info->trans_lock);
 	}
@@ -637,7 +637,7 @@ int btrfs_wait_for_commit(struct btrfs_root *root, u64 transid)
 	}
 
 	wait_for_commit(root, cur_trans);
-	put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
 out:
 	return ret;
 }
@@ -754,7 +754,7 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	smp_mb();
 	if (waitqueue_active(&cur_trans->writer_wait))
 		wake_up(&cur_trans->writer_wait);
-	put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
 
 	if (current->journal_info == trans)
 		current->journal_info = NULL;
@@ -1577,7 +1577,7 @@ int btrfs_commit_transaction_async(struct btrfs_trans_handle *trans,
 	if (current->journal_info == trans)
 		current->journal_info = NULL;
 
-	put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
 	return 0;
 }
 
@@ -1620,8 +1620,8 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans,
 
 	if (trans->type & __TRANS_FREEZABLE)
 		sb_end_intwrite(root->fs_info->sb);
-	put_transaction(cur_trans);
-	put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
 
 	trace_btrfs_transaction_commit(root);
 
@@ -1743,7 +1743,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 		wait_for_commit(root, cur_trans);
 
-		put_transaction(cur_trans);
+		btrfs_put_transaction(cur_trans);
 
 		return ret;
 	}
@@ -1761,7 +1761,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 			wait_for_commit(root, prev_trans);
 			ret = prev_trans->aborted;
 
-			put_transaction(prev_trans);
+			btrfs_put_transaction(prev_trans);
 			if (ret)
 				goto cleanup_transaction;
 		} else {
@@ -1977,8 +1977,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	list_del_init(&cur_trans->list);
 	spin_unlock(&root->fs_info->trans_lock);
 
-	put_transaction(cur_trans);
-	put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
+	btrfs_put_transaction(cur_trans);
 
 	if (trans->type & __TRANS_FREEZABLE)
 		sb_end_intwrite(root->fs_info->sb);
