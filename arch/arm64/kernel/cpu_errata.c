@@ -254,6 +254,27 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 		MIDR_RANGE(MIDR_THUNDERX_81XX, 0x00, 0x00),
 	},
 #endif
+#ifdef CONFIG_CAVIUM_ERRATUM_30115
+	{
+	/* Cavium ThunderX, T88 pass 1.x - 2.2 */
+		.desc = "Cavium erratum 30115",
+		.capability = ARM64_WORKAROUND_CAVIUM_30115,
+		MIDR_RANGE(MIDR_THUNDERX, 0x00,
+			   (1 << MIDR_VARIANT_SHIFT) | 2),
+	},
+	{
+	/* Cavium ThunderX, T81 pass 1.0 - 1.2 */
+		.desc = "Cavium erratum 30115",
+		.capability = ARM64_WORKAROUND_CAVIUM_30115,
+		MIDR_RANGE(MIDR_THUNDERX_81XX, 0x00, 0x02),
+	},
+	{
+	/* Cavium ThunderX, T83 pass 1.0 */
+		.desc = "Cavium erratum 30115",
+		.capability = ARM64_WORKAROUND_CAVIUM_30115,
+		MIDR_RANGE(MIDR_THUNDERX_83XX, 0x00, 0x00),
+	},
+#endif
 	{
 		.desc = "Mismatched cache line size",
 		.capability = ARM64_MISMATCHED_CACHE_LINE_SIZE,
@@ -316,6 +337,16 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 	{
 		.capability = ARM64_HARDEN_BP_POST_GUEST_EXIT,
 		MIDR_ALL_VERSIONS(MIDR_QCOM_FALKOR_V1),
+	},
+	{
+		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
+		MIDR_ALL_VERSIONS(MIDR_BRCM_VULCAN),
+		.enable = enable_psci_bp_hardening,
+	},
+	{
+		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
+		MIDR_ALL_VERSIONS(MIDR_CAVIUM_THUNDERX2),
+		.enable = enable_psci_bp_hardening,
 	},
 #endif
 	{

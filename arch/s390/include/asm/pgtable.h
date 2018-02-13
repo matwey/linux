@@ -296,8 +296,6 @@ static inline int is_module_addr(void *addr)
 #define _REGION3_ENTRY_EMPTY	(_REGION_ENTRY_TYPE_R3 | _REGION_ENTRY_INVALID)
 
 #define _REGION3_ENTRY_ORIGIN_LARGE ~0x7fffffffUL /* large page address	     */
-#define _REGION3_ENTRY_ORIGIN  ~0x7ffUL/* region third table origin	     */
-
 #define _REGION3_ENTRY_DIRTY	0x2000	/* SW region dirty bit */
 #define _REGION3_ENTRY_YOUNG	0x1000	/* SW region young bit */
 #define _REGION3_ENTRY_LARGE	0x0400	/* RTTE-format control, large page  */
@@ -615,7 +613,7 @@ static inline unsigned long pud_pfn(pud_t pud)
 {
 	unsigned long origin_mask;
 
-	origin_mask = _REGION3_ENTRY_ORIGIN;
+	origin_mask = _REGION_ENTRY_ORIGIN;
 	if (pud_large(pud))
 		origin_mask = _REGION3_ENTRY_ORIGIN_LARGE;
 	return (pud_val(pud) & origin_mask) >> PAGE_SHIFT;
@@ -1441,7 +1439,9 @@ static inline pmd_t pmdp_huge_clear_flush(struct vm_area_struct *vma,
 static inline void pmdp_invalidate(struct vm_area_struct *vma,
 				   unsigned long addr, pmd_t *pmdp)
 {
-	pmdp_xchg_direct(vma->vm_mm, addr, pmdp, __pmd(_SEGMENT_ENTRY_EMPTY));
+	pmd_t pmd = __pmd(pmd_val(*pmdp) | _SEGMENT_ENTRY_INVALID);
+
+	pmdp_xchg_direct(vma->vm_mm, addr, pmdp, pmd);
 }
 
 #define __HAVE_ARCH_PMDP_SET_WRPROTECT
