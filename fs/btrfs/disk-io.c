@@ -3483,6 +3483,9 @@ int close_ctree(struct btrfs_root *root)
 	fs_info->closing = 1;
 	smp_mb();
 
+	/* wait for the qgroup rescan worker to stop */
+	btrfs_qgroup_wait_for_completion(fs_info);
+
 	/* pause restriper - we want to resume on mount */
 	btrfs_pause_balance(fs_info);
 
