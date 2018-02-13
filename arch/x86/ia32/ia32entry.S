@@ -461,6 +461,8 @@ ENTRY(ia32_syscall)
 	movq %r8, %rax
 	movq %r9, %rcx
 
+	ENABLE_IBRS
+
 	/*
 	 * No need to follow this irqs on/off section: the syscall
 	 * disabled irqs and here we enable it straight after entry:
@@ -474,9 +476,6 @@ ENTRY(ia32_syscall)
 	GET_THREAD_INFO(%r10)
 	orl   $TS_COMPAT,TI_status(%r10)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
-
-	ENABLE_IBRS
-
 	jnz ia32_tracesys
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja ia32_badsys
