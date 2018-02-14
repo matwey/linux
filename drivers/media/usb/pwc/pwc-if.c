@@ -57,6 +57,9 @@
    - Pham Thanh Nam: webcam snapshot button as an event input device
 */
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/pwc.h>
+
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/mm.h>
@@ -260,6 +263,8 @@ static void pwc_isoc_handler(struct urb *urb)
 	int i, fst, flen;
 	unsigned char *iso_buf = NULL;
 
+	trace_pwc_handler_enter(urb);
+
 	if (urb->status == -ENOENT || urb->status == -ECONNRESET ||
 	    urb->status == -ESHUTDOWN) {
 		PWC_DEBUG_OPEN("URB (%p) unlinked %ssynchronously.\n",
@@ -346,6 +351,8 @@ static void pwc_isoc_handler(struct urb *urb)
 		}
 		pdev->vlast_packet_size = flen;
 	}
+
+	trace_pwc_handler_exit(urb);
 
 handler_end:
 	i = usb_submit_urb(urb, GFP_ATOMIC);
