@@ -57,6 +57,9 @@
    - Pham Thanh Nam: webcam snapshot button as an event input device
 */
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/pwc.h>
+
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/mm.h>
@@ -257,7 +260,10 @@ static void pwc_isoc_handler(struct urb *urb)
 {
 	struct pwc_device *pdev = (struct pwc_device *)urb->context;
 	int i, fst, flen;
+	int tlen;
 	unsigned char *iso_buf = NULL;
+
+	trace_pwc_handler_enter(urb);
 
 	if (urb->status == -ENOENT || urb->status == -ECONNRESET ||
 	    urb->status == -ESHUTDOWN) {
@@ -304,7 +310,7 @@ static void pwc_isoc_handler(struct urb *urb)
 		  2 = synched
 	 */
 	/* Compact data */
-	for (i = 0; i < urb->number_of_packets; i++) {
+	for (i = 0, tlen = 0; i < urb->number_of_packets; i++, tlen += flen) {
 		fst  = urb->iso_frame_desc[i].status;
 		flen = urb->iso_frame_desc[i].actual_length;
 		iso_buf = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
@@ -344,6 +350,8 @@ static void pwc_isoc_handler(struct urb *urb)
 		}
 		pdev->vlast_packet_size = flen;
 	}
+
+	trace_pwc_handler_exit(urb, tlen);
 
 handler_end:
 	i = usb_submit_urb(urb, GFP_ATOMIC);
