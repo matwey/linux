@@ -86,6 +86,8 @@ struct extent_page_data {
 	unsigned int sync_io:1;
 };
 
+static noinline void flush_write_bio(void *data);
+
 static inline struct btrfs_fs_info *
 tree_fs_info(struct extent_io_tree *tree)
 {
@@ -93,8 +95,6 @@ tree_fs_info(struct extent_io_tree *tree)
 		return NULL;
 	return btrfs_sb(tree->mapping->host->i_sb);
 }
-
-static noinline void flush_write_bio(void *data);
 
 int __init extent_io_init(void)
 {

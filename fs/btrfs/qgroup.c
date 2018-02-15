@@ -446,7 +446,13 @@ void btrfs_free_qgroup_config(struct btrfs_fs_info *fs_info)
 
 		__del_qgroup_rb(qgroup);
 	}
+	/*
+	 * we call btrfs_free_qgroup_config() when umounting
+	 * filesystem and disabling quota, so we set qgroup_ulit
+	 * to be null here to avoid double free.
+	 */
 	ulist_free(fs_info->qgroup_ulist);
+	fs_info->qgroup_ulist = NULL;
 }
 
 static int add_qgroup_relation_item(struct btrfs_trans_handle *trans,
@@ -1848,7 +1854,7 @@ void assert_qgroups_uptodate(struct btrfs_trans_handle *trans)
 
 /*
  * returns < 0 on error, 0 when more leafs are to be scanned.
- * returns 1 when done, 2 when done and FLAG_INCONSISTENT was cleared.
+ * returns 1 when done.
  */
 static int
 qgroup_rescan_leaf(struct btrfs_fs_info *fs_info, struct btrfs_path *path,
@@ -2010,7 +2016,7 @@ static void btrfs_qgroup_rescan_worker(struct btrfs_work *work)
 		goto out;
 
 	err = 0;
-	while (!err) {
+	while (!err && !btrfs_fs_closing(fs_info)) {
 		trans = btrfs_start_transaction(fs_info->fs_root, 0);
 		if (IS_ERR(trans)) {
 			err = PTR_ERR(trans);
@@ -2034,9 +2040,10 @@ out:
 	btrfs_free_path(path);
 
 	mutex_lock(&fs_info->qgroup_rescan_lock);
-	fs_info->qgroup_flags &= ~BTRFS_QGROUP_STATUS_FLAG_RESCAN;
+	if (!btrfs_fs_closing(fs_info))
+		fs_info->qgroup_flags &= ~BTRFS_QGROUP_STATUS_FLAG_RESCAN;
 
-	if (err == 2 &&
+	if (err > 0 &&
 	    fs_info->qgroup_flags & BTRFS_QGROUP_STATUS_FLAG_INCONSISTENT) {
 		fs_info->qgroup_flags &= ~BTRFS_QGROUP_STATUS_FLAG_INCONSISTENT;
 	} else if (err < 0) {
@@ -2044,9 +2051,11 @@ out:
 	}
 	mutex_unlock(&fs_info->qgroup_rescan_lock);
 
-	if (err >= 0) {
+	if (btrfs_fs_closing(fs_info)) {
+		pr_info("btrfs: qgroup scan paused\n");
+	} else if (err >= 0) {
 		pr_info("btrfs: qgroup scan completed%s\n",
-			err == 2 ? " (inconsistency flag cleared)" : "");
+			err > 0 ? " (inconsistency flag cleared)" : "");
 	} else {
 		pr_err("btrfs: qgroup scan failed with %d\n", err);
 	}

@@ -62,7 +62,6 @@ static void btrfs_destroy_ordered_operations(struct btrfs_transaction *t,
 static void btrfs_destroy_ordered_extents(struct btrfs_root *root);
 static int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 				      struct btrfs_root *root);
-static void btrfs_evict_pending_snapshots(struct btrfs_transaction *t);
 static void btrfs_destroy_delalloc_inodes(struct btrfs_root *root);
 static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 					struct extent_io_tree *dirty_pages,
@@ -1725,7 +1724,7 @@ static int transaction_kthread(void *arg)
 		}
 
 		now = get_seconds();
-		if (!cur->blocked &&
+		if (cur->state < TRANS_STATE_BLOCKED &&
 		    (now < cur->start_time || now - cur->start_time < 30)) {
 			spin_unlock(&root->fs_info->trans_lock);
 			delay = HZ * 5;
@@ -2172,7 +2171,6 @@ int open_ctree(struct super_block *sb,
 	fs_info->max_inline = 8192 * 1024;
 	fs_info->metadata_ratio = 0;
 	fs_info->defrag_inodes = RB_ROOT;
-	fs_info->trans_no_join = 0;
 	fs_info->free_chunk_space = 0;
 	fs_info->tree_mod_log = RB_ROOT;
 
@@ -2577,6 +2575,8 @@ int open_ctree(struct super_block *sb,
 		       "found on %s\n", (unsigned long)sectorsize, sb->s_id);
 		goto fail_sb_buffer;
 	}
+
+	memcpy(&sb->s_uuid, fs_info->fsid, BTRFS_FSID_SIZE);
 
 	mutex_lock(&fs_info->chunk_mutex);
 	ret = btrfs_read_sys_array(tree_root);
@@ -3485,6 +3485,9 @@ int close_ctree(struct btrfs_root *root)
 	fs_info->closing = 1;
 	smp_mb();
 
+	/* wait for the qgroup rescan worker to stop */
+	btrfs_qgroup_wait_for_completion(fs_info);
+
 	/* pause restriper - we want to resume on mount */
 	btrfs_pause_balance(fs_info);
 
@@ -3875,24 +3878,6 @@ int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 	return ret;
 }
 
-static void btrfs_evict_pending_snapshots(struct btrfs_transaction *t)
-{
-	struct btrfs_pending_snapshot *snapshot;
-	struct list_head splice;
-
-	INIT_LIST_HEAD(&splice);
-
-	list_splice_init(&t->pending_snapshots, &splice);
-
-	while (!list_empty(&splice)) {
-		snapshot = list_entry(splice.next,
-				      struct btrfs_pending_snapshot,
-				      list);
-		snapshot->error = -ECANCELED;
-		list_del_init(&snapshot->list);
-	}
-}
-
 static void btrfs_destroy_delalloc_inodes(struct btrfs_root *root)
 {
 	struct btrfs_inode *btrfs_inode;
@@ -3991,22 +3976,17 @@ again:
 void btrfs_cleanup_one_transaction(struct btrfs_transaction *cur_trans,
 				   struct btrfs_root *root)
 {
+	btrfs_destroy_ordered_operations(cur_trans, root);
+
 	btrfs_destroy_delayed_refs(cur_trans, root);
 	btrfs_block_rsv_release(root, &root->fs_info->trans_block_rsv,
 				cur_trans->dirty_pages.dirty_bytes);
 
-	/* FIXME: cleanup wait for commit */
-	cur_trans->in_commit = 1;
-	cur_trans->blocked = 1;
+	cur_trans->state = TRANS_STATE_COMMIT_START;
 	wake_up(&root->fs_info->transaction_blocked_wait);
 
-	btrfs_evict_pending_snapshots(cur_trans);
-
-	cur_trans->blocked = 0;
+	cur_trans->state = TRANS_STATE_UNBLOCKED;
 	wake_up(&root->fs_info->transaction_wait);
-
-	cur_trans->commit_done = 1;
-	wake_up(&cur_trans->commit_wait);
 
 	btrfs_destroy_delayed_inodes(root);
 	btrfs_assert_delayed_root_empty(root);
@@ -4015,6 +3995,9 @@ void btrfs_cleanup_one_transaction(struct btrfs_transaction *cur_trans,
 				     EXTENT_DIRTY);
 	btrfs_destroy_pinned_extent(root,
 				    root->fs_info->pinned_extents);
+
+	cur_trans->state =TRANS_STATE_COMPLETED;
+	wake_up(&cur_trans->commit_wait);
 
 	/*
 	memset(cur_trans, 0, sizeof(*cur_trans));
@@ -4025,67 +4008,51 @@ void btrfs_cleanup_one_transaction(struct btrfs_transaction *cur_trans,
 static int btrfs_cleanup_transaction(struct btrfs_root *root)
 {
 	struct btrfs_transaction *t;
-	LIST_HEAD(list);
 
 	mutex_lock(&root->fs_info->transaction_kthread_mutex);
 
 	spin_lock(&root->fs_info->trans_lock);
-	list_splice_init(&root->fs_info->trans_list, &list);
-	root->fs_info->trans_no_join = 1;
-	spin_unlock(&root->fs_info->trans_lock);
-
-	while (!list_empty(&list)) {
-		t = list_entry(list.next, struct btrfs_transaction, list);
-
-		btrfs_destroy_ordered_operations(t, root);
-
-		btrfs_destroy_ordered_extents(root);
-
-		btrfs_destroy_delayed_refs(t, root);
-
-		/* FIXME: cleanup wait for commit */
-		t->in_commit = 1;
-		t->blocked = 1;
-		smp_mb();
-		if (waitqueue_active(&root->fs_info->transaction_blocked_wait))
-			wake_up(&root->fs_info->transaction_blocked_wait);
-
-		btrfs_evict_pending_snapshots(t);
-
-		t->blocked = 0;
-		smp_mb();
-		if (waitqueue_active(&root->fs_info->transaction_wait))
-			wake_up(&root->fs_info->transaction_wait);
-
-		t->commit_done = 1;
-		smp_mb();
-		if (waitqueue_active(&t->commit_wait))
-			wake_up(&t->commit_wait);
-
-		btrfs_destroy_delayed_inodes(root);
-		btrfs_assert_delayed_root_empty(root);
-
-		btrfs_destroy_delalloc_inodes(root);
+	while (!list_empty(&root->fs_info->trans_list)) {
+		t = list_first_entry(&root->fs_info->trans_list,
+				     struct btrfs_transaction, list);
+		if (t->state >= TRANS_STATE_COMMIT_START) {
+			atomic_inc(&t->use_count);
+			spin_unlock(&root->fs_info->trans_lock);
+			btrfs_wait_for_commit(root, t->transid);
+			btrfs_put_transaction(t);
+			spin_lock(&root->fs_info->trans_lock);
+			continue;
+		}
+		if (t == root->fs_info->running_transaction) {
+			t->state = TRANS_STATE_COMMIT_DOING;
+			spin_unlock(&root->fs_info->trans_lock);
+			/*
+			 * We wait for 0 num_writers since we don't hold a trans
+			 * handle open currently for this transaction.
+			 */
+			wait_event(t->writer_wait,
+				   atomic_read(&t->num_writers) == 0);
+		} else {
+			spin_unlock(&root->fs_info->trans_lock);
+		}
+		btrfs_cleanup_one_transaction(t, root);
 
 		spin_lock(&root->fs_info->trans_lock);
-		root->fs_info->running_transaction = NULL;
+		if (t == root->fs_info->running_transaction)
+			root->fs_info->running_transaction = NULL;
+		list_del_init(&t->list);
 		spin_unlock(&root->fs_info->trans_lock);
 
-		btrfs_destroy_marked_extents(root, &t->dirty_pages,
-					     EXTENT_DIRTY);
-
-		btrfs_destroy_pinned_extent(root,
-					    root->fs_info->pinned_extents);
-
-		atomic_set(&t->use_count, 0);
-		list_del_init(&t->list);
-		memset(t, 0, sizeof(*t));
-		kmem_cache_free(btrfs_transaction_cachep, t);
+		btrfs_put_transaction(t);
+		trace_btrfs_transaction_commit(root);
+		spin_lock(&root->fs_info->trans_lock);
 	}
-
-	spin_lock(&root->fs_info->trans_lock);
-	root->fs_info->trans_no_join = 0;
 	spin_unlock(&root->fs_info->trans_lock);
+	btrfs_destroy_ordered_extents(root);
+	btrfs_destroy_delayed_inodes(root);
+	btrfs_assert_delayed_root_empty(root);
+	btrfs_destroy_pinned_extent(root, root->fs_info->pinned_extents);
+	btrfs_destroy_delalloc_inodes(root);
 	mutex_unlock(&root->fs_info->transaction_kthread_mutex);
 
 	return 0;

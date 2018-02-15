@@ -251,8 +251,12 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 	 */
 	if (!test_and_set_bit(BTRFS_FS_STATE_TRANS_ABORTED,
 				&root->fs_info->fs_state)) {
-		WARN(1, KERN_DEBUG "btrfs: Transaction aborted (error %d)\n",
-				errno);
+		if (errno != -EIO)
+			WARN(1, KERN_DEBUG "btrfs: Transaction aborted (error %d)\n",
+					errno);
+		else
+			pr_debug("btrfs: Transaction aborted (error %d)\n",
+				 errno);
 	}
 	trans->aborted = errno;
 	/* Nothing used. The other threads that have joined this
@@ -267,6 +271,9 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 		return;
 	}
 	ACCESS_ONCE(trans->transaction->aborted) = errno;
+	/* Wake up anybody who may be waiting on this transaction */
+	wake_up(&root->fs_info->transaction_wait);
+	wake_up(&root->fs_info->transaction_blocked_wait);
 	__btrfs_std_error(root->fs_info, function, line, errno, NULL);
 }
 /*

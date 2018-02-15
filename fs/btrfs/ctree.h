@@ -1456,7 +1456,6 @@ struct btrfs_fs_info {
 	int do_barriers;
 	int closing;
 	int log_root_recovering;
-	int trans_no_join;
 
 	u64 total_pinned;
 
