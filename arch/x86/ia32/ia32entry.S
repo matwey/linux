@@ -435,7 +435,7 @@ ENTRY(ia32_syscall)
 	/*
 	 * Check whether we are on a trampoline stack; if we are,
 	 * copy the frame to proper stack and switch to it
-	 *
+	 */
 	cld
 	movq %rax, %r8
 	movq %rcx, %r9
