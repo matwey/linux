@@ -2576,6 +2576,8 @@ int open_ctree(struct super_block *sb,
 		goto fail_sb_buffer;
 	}
 
+	memcpy(&sb->s_uuid, fs_info->fsid, BTRFS_FSID_SIZE);
+
 	mutex_lock(&fs_info->chunk_mutex);
 	ret = btrfs_read_sys_array(tree_root);
 	mutex_unlock(&fs_info->chunk_mutex);
