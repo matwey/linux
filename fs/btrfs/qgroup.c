@@ -1854,7 +1854,7 @@ void assert_qgroups_uptodate(struct btrfs_trans_handle *trans)
 
 /*
  * returns < 0 on error, 0 when more leafs are to be scanned.
- * returns 1 when done, 2 when done and FLAG_INCONSISTENT was cleared.
+ * returns 1 when done.
  */
 static int
 qgroup_rescan_leaf(struct btrfs_fs_info *fs_info, struct btrfs_path *path,
@@ -2042,7 +2042,7 @@ out:
 	mutex_lock(&fs_info->qgroup_rescan_lock);
 	fs_info->qgroup_flags &= ~BTRFS_QGROUP_STATUS_FLAG_RESCAN;
 
-	if (err == 2 &&
+	if (err > 0 &&
 	    fs_info->qgroup_flags & BTRFS_QGROUP_STATUS_FLAG_INCONSISTENT) {
 		fs_info->qgroup_flags &= ~BTRFS_QGROUP_STATUS_FLAG_INCONSISTENT;
 	} else if (err < 0) {
@@ -2052,7 +2052,7 @@ out:
 
 	if (err >= 0) {
 		pr_info("btrfs: qgroup scan completed%s\n",
-			err == 2 ? " (inconsistency flag cleared)" : "");
+			err > 0 ? " (inconsistency flag cleared)" : "");
 	} else {
 		pr_err("btrfs: qgroup scan failed with %d\n", err);
 	}
