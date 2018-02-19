@@ -48,11 +48,9 @@ extern void show_regs_common(void);
  * with userspace addresses. On CPUs where those concerns
  * exist, overwrite the RSB with entries which capture
  * speculative execution to prevent attack.
- *
- * Clobbers %ebx
  */
 #ifdef CONFIG_RETPOLINE
-#define __switch_fill_rsb FILL_RETURN_BUFFER(X86_FEATURE_RSB_CTXSW)
+#define __switch_fill_rsb __stringify(__FILL_RETURN_BUFFER(%%ebx, RSB_CLEAR_LOOPS, %%esp))
 #else
 #define __switch_fill_rsb
 #endif
@@ -79,7 +77,7 @@ do {									\
 		     "movl $1f,%[prev_ip]\n\t"	/* save    EIP   */	\
 		     "pushl %[next_ip]\n\t"	/* restore EIP   */	\
 		     __switch_canary					\
-		     __switch_fill_rsb					\
+		     __switch_fill_rsb "\n\t"				\
 		     "jmp __switch_to\n"	/* regparm call  */	\
 		     "1:\t"						\
 		     "popl %%ebp\n\t"		/* restore EBP   */	\
@@ -149,11 +147,9 @@ do {									\
  * with userspace addresses. On CPUs where those concerns
  * exist, overwrite the RSB with entries which capture
  * speculative execution to prevent attack.
- *
- * Clobbers %rbx.
  */
 #ifdef CONFIG_RETPOLINE
-#define __switch_fill_rsb FILL_RETURN_BUFFER(X86_FEATURE_RSB_CTXSW)
+#define __switch_fill_rsb __stringify(__FILL_RETURN_BUFFER(%%rbx, RSB_CLEAR_LOOPS, %%rsp))
 #else
 #define __switch_fill_rsb
 #endif
@@ -163,7 +159,7 @@ do {									\
 	asm volatile(SAVE_CONTEXT					  \
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
-	     __switch_fill_rsb						  \
+	     __switch_fill_rsb "\n\t"					  \
 	     "call __switch_to\n\t"					  \
 	     THREAD_RETURN_SYM						  \
 	     "movq "__percpu_arg([current_task])",%%rsi\n\t"		  \
