@@ -36,7 +36,6 @@
  */
 #include <asm/bug.h>
 
-/* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
 #define EX_R10		8
 #define EX_R11		16
@@ -51,8 +50,6 @@
 #define EX_CFAR		80
 #define EX_PPR		88	/* SMT thread status register (priority) */
 #define EX_CTR		96
-
-#define EX_SIZE		13	/* size in u64 units */
 
 /*
  * Macros for annotating the expected destination of (h)rfid
