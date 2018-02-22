@@ -2953,7 +2953,7 @@ static inline int qeth_l3_tso_elements(struct sk_buff *skb)
 	unsigned long tcpd = (unsigned long)tcp_hdr(skb) +
 		tcp_hdr(skb)->doff * 4;
 	int tcpd_len = skb->len - (tcpd - (unsigned long)skb->data);
-	int elements = PFN_UP(tcpd + tcpd_len - 1) - PFN_DOWN(tcpd);
+	int elements = PFN_UP(tcpd + tcpd_len) - PFN_DOWN(tcpd);
 	elements += skb_shinfo(skb)->nr_frags;
 	return elements;
 }
