@@ -1083,7 +1083,7 @@ ENTRY(arch_unwind_init_running)
 	movl	%ebx, PT_EFLAGS(%edx)
 	movl	PT_EBX(%edx), %ebx
 	movl	$__KERNEL_DS, PT_OLDSS(%edx)
-	jmpl	*%eax
+	JMP_NOSPEC %eax
 	CFI_ENDPROC
 ENDPROC(arch_unwind_init_running)
 #endif
