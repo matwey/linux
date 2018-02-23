@@ -722,8 +722,9 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 			wrmsrl_safe(MSR_AMD64_MCx_MASK(4), mask);
 		}
 	}
-	x86_spec_check();
 #endif
+
+	x86_spec_check();
 }
 
 #ifdef CONFIG_X86_32

@@ -57,9 +57,10 @@
 #include <asm/ftrace.h>
 #include <asm/percpu.h>
 #include <asm/pgtable_types.h>
-#include <asm/alternative-asm.h>
 #include <asm/cpufeature.h>
 #include <asm/kaiser.h>
+#include <asm/spec_ctrl.h>
+#include <asm/nospec-branch.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/features.h>
 
@@ -128,7 +129,8 @@ trace:
 	movq 8(%rbp), %rsi
 	subq $MCOUNT_INSN_SIZE, %rdi
 
-	call   *ftrace_trace_function
+	movq ftrace_trace_function, %r8
+	CALL_NOSPEC %r8
 
 	MCOUNT_RESTORE_FRAME
 
@@ -170,7 +172,7 @@ GLOBAL(return_to_handler)
 	movq 8(%rsp), %rdx
 	movq (%rsp), %rax
 	addq $24, %rsp
-	jmp *%rdi
+	JMP_NOSPEC %rdi
 #endif
 
 
@@ -312,7 +314,7 @@ NMI_MASK = 0x80000000
 	testb $3,1*8(%rsp)
 	jnz   2f
 	testl $NMI_MASK,2*8(%rsp)
-	jnz   2f
+	jnz   3f
 
 	cmpb  $0,(xen_features+XENFEAT_supervisor_mode_kernel)(%rip)
 	jne   1f
@@ -324,7 +326,8 @@ NMI_MASK = 0x80000000
 	.endif
 
 2:	/* Slow iret via hypervisor. */
-	andl  $~NMI_MASK, 2*8(%rsp)
+	DISABLE_IBRS
+3:	andl  $~NMI_MASK, 2*8(%rsp)
 	pushq $\flag & VGCF_in_syscall
 	jmp  hypercall_page + (__HYPERVISOR_iret * 32)
 	.endm
@@ -358,6 +361,7 @@ ENTRY(save_args)
 	je 1f
 	SWAPGS
 	SWITCH_KERNEL_CR3
+	ENABLE_IBRS
 	/*
 	 * irq_count is used to check if a CPU is already on an interrupt stack
 	 * or not. While this is essentially redundant with preempt_count it is
@@ -449,6 +453,8 @@ ENTRY(save_paranoid)
 	movq	%rax, %cr3
 2:
 #endif
+
+	ENABLE_IBRS
 	ret
 	CFI_ENDPROC
 END(save_paranoid)
@@ -525,13 +531,21 @@ ENTRY(system_call)
 	SAVE_ARGS -8,1
 	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
 	GET_THREAD_INFO(%rcx)
+
+	ENABLE_IBRS
+
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
 system_call_fastpath:
 	cmpq $__NR_syscall_max,%rax
 	ja badsys
 	movq %r10,%rcx
+#ifdef CONFIG_RETPOLINE
+	movq    sys_call_table(, %rax, 8), %rax
+	call    __x86_indirect_thunk_rax
+#else
 	call *sys_call_table(,%rax,8)  # XXX:	 rip relative
+#endif
 	movq %rax,RAX-ARGOFFSET(%rsp)
 /*
  * Syscall return path ending with SYSRET (fast path)
@@ -554,6 +568,8 @@ sysret_check:
 	 */
 	TRACE_IRQS_ON
 	RESTORE_ARGS 1,8,0,0
+
+	DISABLE_IBRS
 	xor %ecx,%ecx
 	xor %r11,%r11
         HYPERVISOR_IRET VGCF_IN_SYSCALL
@@ -645,7 +661,12 @@ tracesys:
 	cmpq $__NR_syscall_max,%rax
 	ja   int_ret_from_sys_call	/* RAX(%rsp) set to -ENOSYS above */
 	movq %r10,%rcx	/* fixup for C */
+#ifdef CONFIG_RETPOLINE
+	movq    sys_call_table(, %rax, 8), %rax
+	call    __x86_indirect_thunk_rax
+#else
 	call *sys_call_table(,%rax,8)
+#endif
 	movq %rax,RAX-ARGOFFSET(%rsp)
 	/* Use IRET because user could have changed frame */
 
@@ -1057,7 +1078,7 @@ ENTRY(kernel_thread_helper)
 	 * Here we are in the child and the registers are set as they were
 	 * at kernel_thread() invocation in the parent.
 	 */
-	call *%rsi
+	CALL_NOSPEC %rsi
 	# exit
 	mov %eax, %edi
 	call do_exit
@@ -1146,7 +1167,7 @@ ENTRY(arch_unwind_init_running)
 	movq	%rax, EFLAGS(%rdi)
 	movq	%r9, RSP(%rdi)
 	movq	$__KERNEL_DS, SS(%rdi)
-	jmpq	*%rcx
+	JMP_NOSPEC %rcx
 	CFI_ENDPROC
 END(arch_unwind_init_running)
 #endif
@@ -1198,6 +1219,9 @@ ENTRY(paranoid_exit)
 paranoid_kernel:
 	movq	%r12, %rbx		/* restore after paranoid_userspace */
 	TRACE_IRQS_IRETQ 0
+
+	DISABLE_IBRS
+
 #ifdef CONFIG_KAISER
 	/* No ALTERNATIVE for X86_FEATURE_KAISER: save_paranoid sets %ebx */
 	testl	$2, %ebx		/* SWITCH_USER_CR3 needed? */
@@ -1273,6 +1297,9 @@ ENTRY(error_entry)
 	 * the kernel CR3 here.
 	 */
 	SWITCH_KERNEL_CR3
+
+	ENABLE_IBRS
+
 	xorl %ebx,%ebx
 	testl $3,CS+8(%rsp)
 	je error_kernelspace
