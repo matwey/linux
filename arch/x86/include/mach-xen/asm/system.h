@@ -37,6 +37,9 @@
 #define wmb()	asm volatile("sfence" ::: "memory")
 #endif
 
+/* there is no alternative_2 in 3.0, so reuse rdtsc_barrier */
+#define gmb()	rdtsc_barrier()
+
 struct task_struct; /* one of the stranger aspects of C forward declarations */
 struct task_struct *__switch_to(struct task_struct *prev,
 				struct task_struct *next);
