@@ -439,6 +439,7 @@ ENTRY(save_paranoid)
 	 * should be done on return (conveyed to paranoid_exit in %ebx).
 	 */
 	ALTERNATIVE "jmp 2f", "movq %cr3, %rax", X86_FEATURE_KAISER
+	movq %cr3, %rax
 	testl	$KAISER_SHADOW_PGD_OFFSET, %eax
 	jz	2f
 	orl	$2, %ebx

@@ -1302,6 +1302,7 @@ void __cpuinit cpu_init(void)
 	struct task_struct *me;
 	int cpu;
 
+#ifndef CONFIG_XEN
 	if (!kaiser_enabled) {
 		/*
 		 * secondary_startup_64() deferred setting PGE in cr4:
@@ -1310,6 +1311,7 @@ void __cpuinit cpu_init(void)
 		 */
 		set_in_cr4(X86_CR4_PGE);
 	}
+#endif
 
 	cpu = stack_smp_processor_id();
 	/* CPU 0 is initialised in head64.c */
