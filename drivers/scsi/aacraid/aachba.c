@@ -699,13 +699,13 @@ static void _aac_probe_container1(void * context, struct fib * fibptr)
 	int status;
 
 	dresp = (struct aac_mount *) fib_data(fibptr);
-	if (!(fibptr->dev->supplement_adapter_info.supported_options2 &
-	    AAC_OPTION_VARIABLE_BLOCK_SIZE))
+	if (!aac_supports_2T(fibptr->dev)) {
 		dresp->mnt[0].capacityhigh = 0;
-	if ((le32_to_cpu(dresp->status) != ST_OK) ||
-	    (le32_to_cpu(dresp->mnt[0].vol) != CT_NONE)) {
-		_aac_probe_container2(context, fibptr);
-		return;
+		if ((le32_to_cpu(dresp->status) == ST_OK) &&
+			(le32_to_cpu(dresp->mnt[0].vol) != CT_NONE)) {
+			_aac_probe_container2(context, fibptr);
+			return;
+		}
 	}
 	scsicmd = (struct scsi_cmnd *) context;
 
@@ -911,7 +911,6 @@ static void setinqstr(struct aac_dev *dev, void *data, int tindex)
 	sup_adap_info = &dev->supplement_adapter_info;
 	str = (struct scsi_inq *)(data); /* cast data to scsi inq block */
 	memset(str, ' ', sizeof(*str));
-
 	if (sup_adap_info->adapter_type_text[0]) {
 		char *cp = sup_adap_info->adapter_type_text;
 		int c;

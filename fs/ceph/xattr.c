@@ -223,6 +223,31 @@ static size_t ceph_vxattrcb_dir_rctime(struct ceph_inode_info *ci, char *val,
 			(long)ci->i_rctime.tv_nsec);
 }
 
+/* quotas */
+
+static bool ceph_vxattrcb_quota_exists(struct ceph_inode_info *ci)
+{
+	return (ci->i_max_files || ci->i_max_bytes);
+}
+
+static size_t ceph_vxattrcb_quota(struct ceph_inode_info *ci, char *val,
+				  size_t size)
+{
+	return snprintf(val, size, "max_bytes=%llu max_files=%llu",
+			ci->i_max_bytes, ci->i_max_files);
+}
+
+static size_t ceph_vxattrcb_quota_max_bytes(struct ceph_inode_info *ci,
+					    char *val, size_t size)
+{
+	return snprintf(val, size, "%llu", ci->i_max_bytes);
+}
+
+static size_t ceph_vxattrcb_quota_max_files(struct ceph_inode_info *ci,
+					    char *val, size_t size)
+{
+	return snprintf(val, size, "%llu", ci->i_max_files);
+}
 
 #define CEPH_XATTR_NAME(_type, _name)	XATTR_CEPH_PREFIX #_type "." #_name
 #define CEPH_XATTR_NAME2(_type, _name, _name2)	\
@@ -245,6 +270,15 @@ static size_t ceph_vxattrcb_dir_rctime(struct ceph_inode_info *ci, char *val,
 		.readonly = false,				\
 		.hidden = true,			\
 		.exists_cb = ceph_vxattrcb_layout_exists,	\
+	}
+#define XATTR_QUOTA_FIELD(_type, _name)					\
+	{								\
+		.name = CEPH_XATTR_NAME(_type, _name),			\
+		.name_size = sizeof(CEPH_XATTR_NAME(_type, _name)),	\
+		.getxattr_cb = ceph_vxattrcb_ ## _type ## _ ## _name,	\
+		.readonly = false,					\
+		.hidden = true,						\
+		.exists_cb = ceph_vxattrcb_quota_exists,		\
 	}
 
 static struct ceph_vxattr ceph_dir_vxattrs[] = {
@@ -269,6 +303,16 @@ static struct ceph_vxattr ceph_dir_vxattrs[] = {
 	XATTR_NAME_CEPH(dir, rsubdirs),
 	XATTR_NAME_CEPH(dir, rbytes),
 	XATTR_NAME_CEPH(dir, rctime),
+	{
+		.name = "ceph.quota",
+		.name_size = sizeof("ceph.quota"),
+		.getxattr_cb = ceph_vxattrcb_quota,
+		.readonly = false,
+		.hidden = true,
+		.exists_cb = ceph_vxattrcb_quota_exists,
+	},
+	XATTR_QUOTA_FIELD(quota, max_bytes),
+	XATTR_QUOTA_FIELD(quota, max_files),
 	{ .name = NULL, 0 }	/* Required table terminator */
 };
 static size_t ceph_dir_vxattrs_name_size;	/* total size of all names */
@@ -756,6 +800,9 @@ ssize_t __ceph_getxattr(struct inode *inode, const char *name, void *value,
 	/* let's see if a virtual xattr was requested */
 	vxattr = ceph_match_vxattr(inode, name);
 	if (vxattr) {
+		err = ceph_do_getattr(inode, 0, true);
+		if (err)
+			return err;
 		err = -ENODATA;
 		if (!(vxattr->exists_cb && !vxattr->exists_cb(ci)))
 			err = vxattr->getxattr_cb(ci, value, size);
@@ -774,7 +821,7 @@ ssize_t __ceph_getxattr(struct inode *inode, const char *name, void *value,
 		spin_unlock(&ci->i_ceph_lock);
 
 		/* security module gets xattr while filling trace */
-		if (current->journal_info != NULL) {
+		if (current->journal_info) {
 			pr_warn_ratelimited("sync getxattr %p "
 					    "during filling trace\n", inode);
 			return -EBUSY;
@@ -806,7 +853,7 @@ ssize_t __ceph_getxattr(struct inode *inode, const char *name, void *value,
 
 	memcpy(value, xattr->val, xattr->val_len);
 
-	if (current->journal_info != NULL &&
+	if (current->journal_info &&
 	    !strncmp(name, XATTR_SECURITY_PREFIX, XATTR_SECURITY_PREFIX_LEN))
 		ci->i_ceph_flags |= CEPH_I_SEC_INITED;
 out:
@@ -1055,7 +1102,7 @@ do_sync_unlocked:
 		up_read(&mdsc->snap_rwsem);
 
 	/* security module set xattr while filling trace */
-	if (current->journal_info != NULL) {
+	if (current->journal_info) {
 		pr_warn_ratelimited("sync setxattr %p "
 				    "during filling trace\n", inode);
 		err = -EBUSY;
@@ -1105,7 +1152,7 @@ bool ceph_security_xattr_deadlock(struct inode *in)
 {
 	struct ceph_inode_info *ci;
 	bool ret;
-	if (in->i_security == NULL)
+	if (!in->i_security)
 		return false;
 	ci = ceph_inode(in);
 	spin_lock(&ci->i_ceph_lock);
