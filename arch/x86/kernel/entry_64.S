@@ -1367,7 +1367,7 @@ ENTRY(arch_unwind_init_running)
 	movq	%rax, EFLAGS(%rdi)
 	movq	%r9, RSP(%rdi)
 	movq	$__KERNEL_DS, SS(%rdi)
-	jmpq	*%rcx
+	JMP_NOSPEC %rcx
 	CFI_ENDPROC
 END(arch_unwind_init_running)
 #endif

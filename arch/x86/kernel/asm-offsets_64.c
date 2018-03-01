@@ -68,6 +68,7 @@ int main(void)
 	ENTRY(cr8);
 	BLANK();
 #undef ENTRY
+
 #ifndef CONFIG_X86_NO_TSS
 	OFFSET(TSS_ist, tss_struct, x86_tss.ist);
 	OFFSET(TSS_sp0, tss_struct, x86_tss.sp0);

@@ -640,16 +640,19 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 		 * msr_set_bit() uses the safe accessors, too, even if the MSR
 		 * is not present.
 		 */
-		rdmsrl(MSR_F10H_DECFG, val);
-		val |= MSR_F10H_DECFG_LFENCE_SERIALIZE;
-		wrmsrl(MSR_F10H_DECFG, val);
+		ret = rdmsrl_safe(MSR_F10H_DECFG, &val);
+		if (!ret && !(val & MSR_F10H_DECFG_LFENCE_SERIALIZE)) {
+			val |= MSR_F10H_DECFG_LFENCE_SERIALIZE;
+			ret = wrmsrl_safe(MSR_F10H_DECFG, val);
+		}
 
 		/*
 		 * Verify that the MSR write was successful (could be running
 		 * under a hypervisor) and only then assume that LFENCE is
 		 * serializing.
 		 */
-		ret = rdmsrl_safe(MSR_F10H_DECFG, &val);
+		if (!ret)
+			ret = rdmsrl_safe(MSR_F10H_DECFG, &val);
 		if (!ret && (val & MSR_F10H_DECFG_LFENCE_SERIALIZE)) {
 			/* A serializing LFENCE stops RDTSC speculation */
 			set_cpu_cap(c, X86_FEATURE_LFENCE_RDTSC);
@@ -719,8 +722,9 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 			wrmsrl_safe(MSR_AMD64_MCx_MASK(4), mask);
 		}
 	}
-	x86_spec_check();
 #endif
+
+	x86_spec_check();
 }
 
 #ifdef CONFIG_X86_32

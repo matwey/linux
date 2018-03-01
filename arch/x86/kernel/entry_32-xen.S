@@ -54,6 +54,7 @@
 #include <asm/ftrace.h>
 #include <asm/irq_vectors.h>
 #include <asm/cpufeature.h>
+#include <asm/nospec-branch.h>
 #include <xen/interface/xen.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
@@ -431,7 +432,12 @@ sysenter_past_esp:
 sysenter_do_call:
 	cmpl $(nr_syscalls), %eax
 	jae sysenter_badsys
-	call *sys_call_table(,%eax,4)
+#ifdef CONFIG_RETPOLINE
+        mov sys_call_table(,%eax,4), %eax
+        call    __x86_indirect_thunk_eax
+#else
+        call *sys_call_table(,%eax,4)
+#endif
 sysenter_after_call:
 	movl %eax,PT_EAX(%esp)
 	LOCKDEP_SYS_EXIT
@@ -542,7 +548,12 @@ ENTRY(system_call)
 	cmpl $(nr_syscalls), %eax
 	jae syscall_badsys
 syscall_call:
+#ifdef CONFIG_RETPOLINE
+	mov sys_call_table(,%eax,4), %eax
+	call    __x86_indirect_thunk_eax
+#else
 	call *sys_call_table(,%eax,4)
+#endif
 syscall_after_call:
 	movl %eax,PT_EAX(%esp)		# store the return value
 syscall_exit:
@@ -1293,7 +1304,7 @@ ENTRY(arch_unwind_init_running)
 	movl	%ebx, PT_EFLAGS(%edx)
 	movl	PT_EBX(%edx), %ebx
 	movl	$__KERNEL_DS, PT_OLDSS(%edx)
-	jmpl	*%eax
+	JMP_NOSPEC %eax
 	CFI_ENDPROC
 ENDPROC(arch_unwind_init_running)
 #endif
@@ -1302,7 +1313,7 @@ ENTRY(kernel_thread_helper)
 	pushl $0		# fake return address for unwinder
 	CFI_STARTPROC
 	movl %edi,%eax
-	call *%esi
+	CALL_NOSPEC %esi
 	call do_exit
 	ud2			# padding for call trace
 	CFI_ENDPROC
@@ -1372,7 +1383,8 @@ trace:
 	movl 0x4(%ebp), %edx
 	subl $MCOUNT_INSN_SIZE, %eax
 
-	call *ftrace_trace_function
+	movl    ftrace_trace_function, %ecx
+	CALL_NOSPEC %ecx
 
 	popl %edx
 	popl %ecx
@@ -1410,7 +1422,7 @@ return_to_handler:
 	movl %eax, %ecx
 	popl %edx
 	popl %eax
-	jmp *%ecx
+	JMP_NOSPEC %ecx
 #endif
 
 #ifdef TIF_CSTAR
@@ -1595,7 +1607,7 @@ error_code:
 	movl %ecx, %es
 	TRACE_IRQS_OFF
 	movl %esp,%eax			# pt_regs pointer
-	call *%edi
+	CALL_NOSPEC %edi
 	jmp ret_from_exception
 	CFI_ENDPROC
 END(page_fault)

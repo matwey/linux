@@ -45,4 +45,3 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct tss_struct, init_tss) = INIT_TSS;
 DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, init_tss) = INIT_TSS;
 #endif
 #endif
-

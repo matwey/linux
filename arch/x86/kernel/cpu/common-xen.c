@@ -29,6 +29,7 @@
 #include <asm/desc.h>
 #include <asm/i387.h>
 #include <asm/mtrr.h>
+#include <asm/bugs.h>
 #include <linux/numa.h>
 #include <asm/asm.h>
 #include <asm/cpu.h>
@@ -419,8 +420,8 @@ static const char *__cpuinit table_lookup_model(struct cpuinfo_x86 *c)
 	return NULL;		/* Not found */
 }
 
-__u32 cpu_caps_cleared[NCAPINTS] __cpuinitdata;
-__u32 cpu_caps_set[NCAPINTS] __cpuinitdata;
+__u32 cpu_caps_cleared[NCAPINTS];
+__u32 cpu_caps_set[NCAPINTS];
 
 void __ref load_percpu_segment(int cpu)
 {
@@ -658,6 +659,35 @@ void __cpuinit cpu_detect(struct cpuinfo_x86 *c)
 	kaiser_setup_pcid();
 }
 
+static void apply_forced_caps(struct cpuinfo_x86 *c)
+{
+	int i;
+
+	for (i = 0; i < NCAPINTS; i++) {
+		c->x86_capability[i] &= ~cpu_caps_cleared[i];
+		c->x86_capability[i] |= cpu_caps_set[i];
+	}
+}
+
+/*
+ * This late synchronization of CPU caps has no effect on alternatives patching
+ * but updates the visible feature bits per CPU.
+ *
+ * Callers need to disable CPU hotplug around it.
+ */
+void cpu_caps_sync_late(void)
+{
+	int cpu;
+
+
+	for_each_online_cpu(cpu) {
+		struct cpuinfo_x86 *c = &cpu_data(cpu);
+
+		apply_forced_caps(c);
+	}
+}
+EXPORT_SYMBOL_GPL(cpu_caps_sync_late);
+
 void __cpuinit get_cpu_cap(struct cpuinfo_x86 *c)
 {
 	u32 tfms, xlvl;
@@ -790,6 +820,8 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 
 	if (this_cpu->c_bsp_init)
 		this_cpu->c_bsp_init(c);
+
+	setup_force_cpu_bugs(0);
 }
 
 void __init early_cpu_init(void)
@@ -919,10 +951,7 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 		this_cpu->c_identify(c);
 
 	/* Clear/Set all flags overriden by options, after probe */
-	for (i = 0; i < NCAPINTS; i++) {
-		c->x86_capability[i] &= ~cpu_caps_cleared[i];
-		c->x86_capability[i] |= cpu_caps_set[i];
-	}
+	apply_forced_caps(c);
 
 #if defined(CONFIG_X86_64) && !defined(CONFIG_XEN)
 	c->apicid = apic->phys_pkg_id(c->initial_apicid, 0);
@@ -978,10 +1007,7 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 	 * Clear/Set all flags overriden by options, need do it
 	 * before following smp all cpus cap AND.
 	 */
-	for (i = 0; i < NCAPINTS; i++) {
-		c->x86_capability[i] &= ~cpu_caps_cleared[i];
-		c->x86_capability[i] |= cpu_caps_set[i];
-	}
+	apply_forced_caps(c);
 
 	/*
 	 * On SMP, boot_cpu_data holds the common feature set between
@@ -1130,7 +1156,7 @@ static __init int setup_disablecpuid(char *arg)
 {
 	int bit;
 
-	if (get_option(&arg, &bit) && bit < NCAPINTS*32)
+	if (get_option(&arg, &bit) && bit >= 0 && bit < NCAPINTS * 32)
 		setup_clear_cpu_cap(bit);
 	else
 		return 0;
@@ -1302,6 +1328,7 @@ void __cpuinit cpu_init(void)
 	struct task_struct *me;
 	int cpu;
 
+#ifndef CONFIG_XEN
 	if (!kaiser_enabled) {
 		/*
 		 * secondary_startup_64() deferred setting PGE in cr4:
@@ -1310,6 +1337,7 @@ void __cpuinit cpu_init(void)
 		 */
 		set_in_cr4(X86_CR4_PGE);
 	}
+#endif
 
 	cpu = stack_smp_processor_id();
 	/* CPU 0 is initialised in head64.c */

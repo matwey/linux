@@ -6,6 +6,7 @@
 #include <asm/cpufeature.h>
 #include <asm/cmpxchg.h>
 #include <asm/nops.h>
+#include <asm/nospec-branch.h>
 #include <asm/hypervisor.h>
 
 #include <linux/kernel.h>
@@ -37,6 +38,9 @@
 #define wmb()	asm volatile("sfence" ::: "memory")
 #endif
 
+/* there is no alternative_2 in 3.0, so reuse rdtsc_barrier */
+#define gmb()	rdtsc_barrier()
+
 struct task_struct; /* one of the stranger aspects of C forward declarations */
 struct task_struct *__switch_to(struct task_struct *prev,
 				struct task_struct *next);
@@ -60,6 +64,19 @@ extern void show_regs_common(void);
 #endif	/* CC_STACKPROTECTOR */
 
 /*
+ * When switching from a shallower to a deeper call stack
+ * the RSB may either underflow or use entries populated
+ * with userspace addresses. On CPUs where those concerns
+ * exist, overwrite the RSB with entries which capture
+ * speculative execution to prevent attack.
+ */
+#ifdef CONFIG_RETPOLINE
+#define __switch_fill_rsb __stringify(__FILL_RETURN_BUFFER(%%ebx, RSB_CLEAR_LOOPS, %%esp))
+#else
+#define __switch_fill_rsb
+#endif
+
+/*
  * Saving eflags is important. It switches not only IOPL between tasks,
  * it also protects other tasks from NT leaking through sysenter etc.
  */
@@ -81,6 +98,7 @@ do {									\
 		     "movl $1f,%[prev_ip]\n\t"	/* save    EIP   */	\
 		     "pushl %[next_ip]\n\t"	/* restore EIP   */	\
 		     __switch_canary					\
+		     __switch_fill_rsb "\n\t"				\
 		     "jmp __switch_to\n"	/* regparm call  */	\
 		     "1:\t"						\
 		     "popl %%ebp\n\t"		/* restore EBP   */	\
@@ -144,11 +162,25 @@ do {									\
 #define THREAD_RETURN_SYM
 #endif
 
+/*
+ * When switching from a shallower to a deeper call stack
+ * the RSB may either underflow or use entries populated
+ * with userspace addresses. On CPUs where those concerns
+ * exist, overwrite the RSB with entries which capture
+ * speculative execution to prevent attack.
+ */
+#ifdef CONFIG_RETPOLINE
+#define __switch_fill_rsb __stringify(__FILL_RETURN_BUFFER(%%rbx, RSB_CLEAR_LOOPS, %%rsp))
+#else
+#define __switch_fill_rsb
+#endif
+
 /* Save restore flags to clear handle leaking NT */
 #define switch_to(prev, next, last) \
 	asm volatile(SAVE_CONTEXT					  \
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
+	     __switch_fill_rsb "\n\t"					  \
 	     "call __switch_to\n\t"					  \
 	     THREAD_RETURN_SYM						  \
 	     "movq "__percpu_arg([current_task])",%%rsi\n\t"		  \

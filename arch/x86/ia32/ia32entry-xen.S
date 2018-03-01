@@ -14,6 +14,7 @@
 #include <asm/segment.h>
 #include <asm/irqflags.h>
 #include <linux/linkage.h>
+#include <asm/spec_ctrl.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
@@ -135,6 +136,9 @@ ENTRY(ia32_sysenter_target)
 	movq	%r10,8(%rsp)
 	movq	%rax,(%rsp)
 	cld
+
+	ENABLE_IBRS
+
 	SAVE_ARGS 0,0,1
  	/* no need to do an access_ok check here because rbp has been
  	   32bit zero extended */ 
@@ -212,6 +216,9 @@ ENTRY(ia32_cstar_target)
 	movl	%ebp,%ecx
 	movl	$__USER32_CS,CS-ARGOFFSET(%rsp)
 	movl	$__USER32_DS,SS-ARGOFFSET(%rsp)
+
+	ENABLE_IBRS
+
 	/* no need to do an access_ok check here because r8 has been
 	   32bit zero extended */ 
 	/* hardware stack frame is complete now */	
@@ -305,6 +312,9 @@ ENTRY(ia32_syscall)
 	GET_THREAD_INFO(%r10)
 	orl   $TS_COMPAT,TI_status(%r10)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
+
+	ENABLE_IBRS
+
 	jnz ia32_tracesys
 .Lia32_check_call:
 	cmpq $(IA32_NR_syscalls-1),%rax
