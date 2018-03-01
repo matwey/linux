@@ -717,18 +717,19 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 	}
 	case SHM_STAT:
 	case IPC_STAT:
+	case SHM_STAT_ANY:
 	{
 		struct shmid64_ds tbuf;
 		int result;
 
-		if (cmd == SHM_STAT) {
+		if (cmd == SHM_STAT || cmd == SHM_STAT_ANY) {
 			shp = shm_lock(ns, shmid);
 			if (IS_ERR(shp)) {
 				err = PTR_ERR(shp);
 				goto out;
 			}
 			result = shp->shm_perm.id;
-		} else {
+		} else { /* IPC_STAT */
 			shp = shm_lock_check(ns, shmid);
 			if (IS_ERR(shp)) {
 				err = PTR_ERR(shp);
@@ -736,9 +737,22 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 			}
 			result = 0;
 		}
-		err = -EACCES;
-		if (ipcperms(ns, &shp->shm_perm, S_IRUGO))
-			goto out_unlock;
+
+		/*
+		 * Semantically SHM_STAT_ANY ought to be identical to
+		 * that functionality provided by the /proc/sysvipc/
+		 * interface. As such, only audit these calls and
+		 * do not do traditional S_IRUGO permission checks on
+		 * the ipc object.
+		 */
+		if (cmd == SHM_STAT_ANY)
+			audit_ipc_obj(&shp->shm_perm);
+		else {
+			err = -EACCES;
+			if (ipcperms(ns, &shp->shm_perm, S_IRUGO))
+				goto out_unlock;
+		}
+
 		err = security_shm_shmctl(shp, cmd);
 		if (err)
 			goto out_unlock;
