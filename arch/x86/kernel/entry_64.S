@@ -527,6 +527,8 @@ ENTRY(system_call_after_swapgs)
 system_call_fastpath:
 	cmpq $__NR_syscall_max,%rax
 	ja badsys
+	sbb %rcx, %rcx			/* array_index_mask_nospec() */
+	and %rcx, %rax
 	movq %r10,%rcx
 #ifdef CONFIG_RETPOLINE
 	movq    sys_call_table(, %rax, 8), %rax
@@ -658,6 +660,8 @@ tracesys:
 	RESTORE_REST
 	cmpq $__NR_syscall_max,%rax
 	ja   int_ret_from_sys_call	/* RAX(%rsp) set to -ENOSYS above */
+	sbb %rcx, %rcx			/* array_index_mask_nospec() */
+	and %rcx, %rax
 	movq %r10,%rcx	/* fixup for C */
 #ifdef CONFIG_RETPOLINE
 	movq    sys_call_table(, %rax, 8), %rax

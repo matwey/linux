@@ -501,6 +501,12 @@ void xen_idle(void);
 
 void stop_this_cpu(void *dummy);
 
+/* Prevent speculative execution past this barrier. */
+#define barrier_nospec()  do {						\
+	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);	\
+	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);	\
+} while (0)
+
 /**
  * read_barrier_depends - Flush all pending reads that subsequents reads
  * depend on.
@@ -586,8 +592,7 @@ void stop_this_cpu(void *dummy);
  */
 static __always_inline void rdtsc_barrier(void)
 {
-	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
-	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);
+	barrier_nospec();
 }
 
 /*

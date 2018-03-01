@@ -165,6 +165,8 @@ ENTRY(ia32_sysenter_target)
 	jnz  sysenter_tracesys
 	cmpq	$(IA32_NR_syscalls-1),%rax
 	ja	ia32_badsys
+	sbb %r10, %r10			/* array_index_mask_nospec() */
+	and %r10, %rax
 sysenter_do_call:
 	IA32_ARG_FIXUP
 sysenter_dispatch:
@@ -209,6 +211,8 @@ sysexit_from_sys_call:
 	movl RAX-ARGOFFSET(%rsp),%eax	/* reload syscall number */
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja ia32_badsys
+	sbb %r8, %r8			/* array_index_mask_nospec() */
+	and %r8, %rax
 	movl %ebx,%edi			/* reload 1st syscall arg */
 	movl RCX-ARGOFFSET(%rsp),%esi	/* reload 2nd syscall arg */
 	movl RDX-ARGOFFSET(%rsp),%edx	/* reload 3rd syscall arg */
@@ -262,6 +266,8 @@ sysenter_tracesys:
 	RESTORE_REST
 	cmpq	$(IA32_NR_syscalls-1),%rax
 	ja	int_ret_from_sys_call /* sysenter_tracesys has set RAX(%rsp) */
+	sbb %r10, %r10			/* array_index_mask_nospec() */
+	and %r10, %rax
 	jmp	sysenter_do_call
 	CFI_ENDPROC
 ENDPROC(ia32_sysenter_target)
@@ -332,6 +338,8 @@ ENTRY(ia32_cstar_target)
 	jnz   cstar_tracesys
 	cmpq $IA32_NR_syscalls-1,%rax
 	ja  ia32_badsys
+	sbb %r10, %r10			/* array_index_mask_nospec() */
+	and %r10, %rax
 cstar_do_call:
 	IA32_ARG_FIXUP 1
 cstar_dispatch:
@@ -389,6 +397,8 @@ cstar_tracesys:
 	xchgl %ebp,%r9d
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja int_ret_from_sys_call /* cstar_tracesys has set RAX(%rsp) */
+	sbb %r10, %r10			/* array_index_mask_nospec() */
+	and %r10, %rax
 	jmp cstar_do_call
 END(ia32_cstar_target)
 				
@@ -479,6 +489,8 @@ ENTRY(ia32_syscall)
 	jnz ia32_tracesys
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja ia32_badsys
+	sbb %r10, %r10			/* array_index_mask_nospec() */
+	and %r10, %rax
 ia32_do_call:
 	IA32_ARG_FIXUP
 	call *ia32_sys_call_table(,%rax,8) # xxx: rip relative
@@ -498,6 +510,8 @@ ia32_tracesys:
 	RESTORE_REST
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja  int_ret_from_sys_call	/* ia32_tracesys has set RAX(%rsp) */
+	sbb %r10, %r10			/* array_index_mask_nospec() */
+	and %r10, %rax
 	jmp ia32_do_call
 END(ia32_syscall)
 
