@@ -520,6 +520,7 @@ SYSCALL_DEFINE3(msgctl, int, msqid, int, cmd, struct msqid_ds __user *, buf)
 	}
 	case MSG_STAT:	/* msqid is an index rather than a msg queue id */
 	case IPC_STAT:
+	case MSG_STAT_ANY:
 	{
 		struct msqid64_ds tbuf;
 		int success_return;
@@ -527,20 +528,26 @@ SYSCALL_DEFINE3(msgctl, int, msqid, int, cmd, struct msqid_ds __user *, buf)
 		if (!buf)
 			return -EFAULT;
 
-		if (cmd == MSG_STAT) {
+		if (cmd == MSG_STAT || MSG_STAT_ANY) {
 			msq = msg_lock(ns, msqid);
 			if (IS_ERR(msq))
 				return PTR_ERR(msq);
 			success_return = msq->q_perm.id;
-		} else {
+		} else { /* IPC_STAT */
 			msq = msg_lock_check(ns, msqid);
 			if (IS_ERR(msq))
 				return PTR_ERR(msq);
 			success_return = 0;
 		}
-		err = -EACCES;
-		if (ipcperms(ns, &msq->q_perm, S_IRUGO))
-			goto out_unlock;
+
+		/* see comment for SHM_STAT_ANY */
+		if (cmd == MSG_STAT_ANY)
+			audit_ipc_obj(&msq->q_perm);
+		else {
+			err = -EACCES;
+			if (ipcperms(ns, &msq->q_perm, S_IRUGO))
+				goto out_unlock;
+		}
 
 		err = security_msg_queue_msgctl(msq, cmd);
 		if (err)
