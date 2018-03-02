@@ -267,6 +267,7 @@ long compat_sys_semctl(int first, int second, int third, void __user *uptr)
 
 	case IPC_STAT:
 	case SEM_STAT:
+	case SEM_STAT_ANY:
 		up64 = compat_alloc_user_space(sizeof(s64));
 		fourth.__pad = up64;
 		err = sys_semctl(first, second, third, fourth);
@@ -449,6 +450,7 @@ long compat_sys_msgctl(int first, int second, void __user *uptr)
 
 	case IPC_STAT:
 	case MSG_STAT:
+	case MSG_STAT_ANY:
 		p = compat_alloc_user_space(sizeof(m64));
 		err = sys_msgctl(first, second, p);
 		if (err < 0)
@@ -640,6 +642,7 @@ long compat_sys_shmctl(int first, int second, void __user *uptr)
 
 	case IPC_STAT:
 	case SHM_STAT:
+	case SHM_STAT_ANY:
 		p = compat_alloc_user_space(sizeof(s64));
 		err = sys_shmctl(first, second, p);
 		if (err < 0)
