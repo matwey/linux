@@ -1478,9 +1478,14 @@ static const struct cd_list_entry ide_cd_quirks_list[] = {
 	{ NULL, NULL, 0 }
 };
 
+#define model_vmware "VMware"
+
 static unsigned int ide_cd_flags(u16 *id)
 {
 	const struct cd_list_entry *cle = ide_cd_quirks_list;
+
+	if (!strncmp((char *)&id[ATA_ID_PROD], model_vmware, strlen(model_vmware)))
+			return IDE_AFLAG_NO_AUTOCLOSE;
 
 	while (cle->id_model) {
 		if (strcmp(cle->id_model, (char *)&id[ATA_ID_PROD]) == 0 &&
