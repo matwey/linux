@@ -2735,8 +2735,6 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 		goto out_disconnect_admin_queue;
 	}
 
-	nvme_start_keep_alive(&ctrl->ctrl);
-
 	/* FC-NVME supports normal SGL Data Block Descriptors */
 
 	if (opts->queue_size > ctrl->ctrl.maxcmd) {
@@ -2767,6 +2765,8 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
 
+	nvme_start_keep_alive(&ctrl->ctrl);
+
 	ctrl->ctrl.opts->nr_reconnects = 0;
 
 	if (changed && ctrl->queue_count > 1) {
@@ -2779,7 +2779,6 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 
 out_term_aen_ops:
 	nvme_fc_term_aen_ops(ctrl);
-	nvme_stop_keep_alive(&ctrl->ctrl);
 out_disconnect_admin_queue:
 	/* send a Disconnect(association) LS to fc-nvme target */
 	nvme_fc_xmt_disconnect_assoc(ctrl);
@@ -2803,8 +2802,6 @@ static void
 nvme_fc_delete_association(struct nvme_fc_ctrl *ctrl)
 {
 	unsigned long flags;
-
-	nvme_stop_keep_alive(&ctrl->ctrl);
 
 	if (!ctrl->assoc_active)
 		return;
@@ -2903,6 +2900,8 @@ nvme_fc_delete_ctrl_work(struct work_struct *work)
 	 * waiting for io to terminate
 	 */
 	nvme_fc_delete_association(ctrl);
+
+	nvme_stop_keep_alive(&ctrl->ctrl);
 
 	/* resume the io queues so that things will fail */
 	nvme_start_queues(&ctrl->ctrl);
@@ -3019,6 +3018,8 @@ nvme_fc_reset_ctrl_work(struct work_struct *work)
 			"to RECONNECTING\n", ctrl->cnum);
 		return;
 	}
+
+	nvme_stop_keep_alive(&ctrl->ctrl);
 
 	if (ctrl->rport->remoteport.port_state == FC_OBJSTATE_ONLINE)
 		ret = nvme_fc_create_association(ctrl);
