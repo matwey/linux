@@ -822,6 +822,7 @@ el0_svc_naked:					// compat entry point
 	tst	x16, #_TIF_SYSCALL_WORK
 	b.ne	__sys_trace
 	cmp     scno, sc_nr                     // check upper syscall limit
+	mask_nospec64 scno, sc_nr, x19  // enforce bounds for syscall number
 	b.hs	ni_sys
 	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
 	blr	x16				// call sys_* routine
