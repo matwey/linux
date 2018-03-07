@@ -644,6 +644,8 @@ static int nvme_rdma_connect_io_queues(struct nvme_rdma_ctrl *ctrl)
 	return 0;
 
 out_free_queues:
+	for (i = 1; i < ctrl->queue_count; i++)
+		clear_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[i].flags);
 	nvme_rdma_free_io_queues(ctrl);
 	return ret;
 }
@@ -800,6 +802,7 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 requeue:
 	dev_info(ctrl->ctrl.device, "Failed reconnect attempt %d\n",
 			ctrl->ctrl.opts->nr_reconnects);
+	clear_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[0].flags);
 	nvme_rdma_reconnect_or_remove(ctrl);
 }
 
