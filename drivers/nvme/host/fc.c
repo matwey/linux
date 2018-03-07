@@ -1343,7 +1343,7 @@ nvme_fc_connect_queue(struct nvme_fc_ctrl *ctrl, struct nvme_fc_queue *queue,
 				sizeof(struct fcnvme_lsdesc_cr_conn_cmd));
 	conn_rqst->connect_cmd.ersp_ratio = cpu_to_be16(ersp_ratio);
 	conn_rqst->connect_cmd.qid  = cpu_to_be16(queue->qnum);
-	conn_rqst->connect_cmd.sqsize = cpu_to_be16(qsize);
+	conn_rqst->connect_cmd.sqsize = cpu_to_be16(qsize - 1);
 
 	lsop->queue = queue;
 	lsreq->rqstaddr = conn_rqst;
@@ -2681,7 +2681,7 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 	nvme_fc_init_queue(ctrl, 0);
 
 	ret = __nvme_fc_create_hw_queue(ctrl, &ctrl->queues[0], 0,
-				NVME_FC_AQ_BLKMQ_DEPTH);
+				NVME_FC_AQ_BLKMQ_DEPTH + 1);
 	if (ret)
 		goto out_free_queue;
 
