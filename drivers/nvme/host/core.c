@@ -528,7 +528,8 @@ static void nvme_keep_alive_end_io(struct request *rq, int error)
 		return;
 	}
 
-	schedule_delayed_work(&ctrl->ka_work, ctrl->kato * HZ);
+	if (ctrl->state == NVME_CTRL_LIVE)
+		schedule_delayed_work(&ctrl->ka_work, ctrl->kato * HZ);
 }
 
 static int nvme_keep_alive(struct nvme_ctrl *ctrl)

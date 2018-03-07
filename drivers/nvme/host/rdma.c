@@ -769,8 +769,6 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 	if (ret)
 		goto requeue;
 
-	nvme_start_keep_alive(&ctrl->ctrl);
-
 	if (ctrl->queue_count > 1) {
 		ret = nvme_rdma_init_io_queues(ctrl);
 		if (ret)
@@ -787,6 +785,8 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
 	WARN_ON_ONCE(!changed);
 	ctrl->ctrl.opts->nr_reconnects = 0;
+
+	nvme_start_keep_alive(&ctrl->ctrl);
 
 	if (ctrl->queue_count > 1) {
 		nvme_queue_scan(&ctrl->ctrl);
@@ -835,12 +835,18 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 	blk_mq_kick_requeue_list(ctrl->ctrl.admin_q);
 	nvme_start_queues(&ctrl->ctrl);
 
+	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RECONNECTING)) {
+		/* state change failure should never happen */
+		WARN_ON_ONCE(1);
+		return;
+	}
+
 	nvme_rdma_reconnect_or_remove(ctrl);
 }
 
 static void nvme_rdma_error_recovery(struct nvme_rdma_ctrl *ctrl)
 {
-	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RECONNECTING))
+	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RESETTING))
 		return;
 
 	queue_work(nvme_rdma_wq, &ctrl->err_work);
@@ -1624,8 +1630,6 @@ static int nvme_rdma_configure_admin_queue(struct nvme_rdma_ctrl *ctrl)
 	if (error)
 		goto out_cleanup_queue;
 
-	nvme_start_keep_alive(&ctrl->ctrl);
-
 	return 0;
 
 out_cleanup_queue:
@@ -1732,6 +1736,12 @@ static void nvme_rdma_reset_ctrl_work(struct work_struct *work)
 
 	nvme_rdma_shutdown_ctrl(ctrl);
 
+	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RECONNECTING)) {
+		/* state change failure should never happen */
+		WARN_ON_ONCE(1);
+		return;
+	}
+
 	ret = nvme_rdma_configure_admin_queue(ctrl);
 	if (ret) {
 		/* ctrl is already shutdown, just remove the ctrl */
@@ -1758,6 +1768,8 @@ static void nvme_rdma_reset_ctrl_work(struct work_struct *work)
 
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
 	WARN_ON_ONCE(!changed);
+
+	nvme_start_keep_alive(&ctrl->ctrl);
 
 	if (ctrl->queue_count > 1) {
 		nvme_start_queues(&ctrl->ctrl);
@@ -2060,6 +2072,8 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
 	WARN_ON_ONCE(!changed);
 
+	nvme_start_keep_alive(&ctrl->ctrl);
+
 	dev_info(ctrl->ctrl.device, "new ctrl: NQN \"%s\", addr %pISp\n",
 		ctrl->ctrl.opts->subsysnqn, &ctrl->addr);
 
@@ -2077,7 +2091,6 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	return &ctrl->ctrl;
 
 out_remove_admin_queue:
-	nvme_stop_keep_alive(&ctrl->ctrl);
 	nvme_rdma_destroy_admin_queue(ctrl);
 out_kfree_queues:
 	kfree(ctrl->queues);
