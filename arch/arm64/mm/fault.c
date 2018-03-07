@@ -301,7 +301,7 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 		mm_flags |= FAULT_FLAG_WRITE;
 	}
 
-	if (addr < USER_DS && is_permission_fault(esr, regs)) {
+	if (addr < TASK_SIZE && is_permission_fault(esr, regs)) {
 		if (get_thread_info(regs->sp)->addr_limit == KERNEL_DS)
 			die("Accessing user space memory with fs=KERNEL_DS", regs, esr);
 
