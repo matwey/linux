@@ -437,7 +437,7 @@ extern unsigned long __must_check __clear_user(void __user *addr, unsigned long 
 static inline unsigned long __must_check copy_from_user(void *to, const void __user *from, unsigned long n)
 {
 	if (access_ok(VERIFY_READ, from, n))
-		n = __copy_from_user(to, from, n);
+		n = __copy_from_user(to, __uaccess_mask_ptr(from), n);
 	else /* security hole - plug it */
 		memset(to, 0, n);
 	return n;
@@ -446,19 +446,26 @@ static inline unsigned long __must_check copy_from_user(void *to, const void __u
 static inline unsigned long __must_check copy_to_user(void __user *to, const void *from, unsigned long n)
 {
 	if (access_ok(VERIFY_WRITE, to, n))
-		n = __copy_to_user(to, from, n);
+		n = __copy_to_user(__uaccess_mask_ptr(to), from, n);
 	return n;
 }
 
 static inline unsigned long __must_check copy_in_user(void __user *to, const void __user *from, unsigned long n)
 {
 	if (access_ok(VERIFY_READ, from, n) && access_ok(VERIFY_WRITE, to, n))
-		n = __copy_in_user(to, from, n);
+		n = __copy_in_user(__uaccess_mask_ptr(to), __uaccess_mask_ptr(from), n);
 	return n;
 }
 
-#define __copy_to_user_inatomic __copy_to_user
-#define __copy_from_user_inatomic __copy_from_user
+#define __copy_to_user_inatomic(to, from, n)	\
+({											\
+	__copy_to_user(__uaccess_mask_ptr(to), from, n);				\
+})
+
+#define __copy_from_user_inatomic(to, from, n)	\
+({											\
+	__copy_from_user(to, __uaccess_mask_ptr(from), n);				\
+})
 
 static inline unsigned long __must_check clear_user(void __user *to, unsigned long n)
 {
