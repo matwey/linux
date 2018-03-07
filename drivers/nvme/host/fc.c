@@ -2882,6 +2882,7 @@ nvme_fc_delete_association(struct nvme_fc_ctrl *ctrl)
 
 	/* re-enable the admin_q so anything new can fast fail */
 	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
+	blk_mq_kick_requeue_list(ctrl->ctrl.admin_q);
 
 	nvme_fc_ctlr_inactive_on_rport(ctrl);
 }
