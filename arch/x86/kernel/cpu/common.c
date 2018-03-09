@@ -45,7 +45,9 @@
 #include <asm/microcode.h>
 #include <asm/microcode_intel.h>
 #include <asm/intel-family.h>
+#ifndef __GENKSYMS__
 #include <asm/cpu_device_id.h>
+#endif
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/uv/uv.h>
