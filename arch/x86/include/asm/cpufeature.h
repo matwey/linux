@@ -205,6 +205,8 @@
 #define X86_FEATURE_AVX512_4FMAPS (7*32+17) /* AVX-512 Multiply Accumulation Single precision */
 #define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* Fill RSB on context switches */
 #define X86_FEATURE_SPEC_CTRL	( 7*32+20) /* Control Speculation Control */
+#define X86_FEATURE_STIBP		(7*32+21) /* Single Thread Indirect Branch Predictors */
+#define X86_FEATURE_ARCH_CAPABILITIES	(7*32+22) /* IA32_ARCH_CAPABILITIES MSR (Intel) */
 
 #define X86_FEATURE_RETPOLINE	( 7*32+29) /* Generic Retpoline mitigation for Spectre variant 2 */
 #define X86_FEATURE_RETPOLINE_AMD ( 7*32+30) /* AMD Retpoline mitigation for Spectre variant 2 */
@@ -276,6 +278,8 @@
 #define X86_FEATURE_CLZERO	(13*32+0) /* CLZERO instruction */
 #define X86_FEATURE_IRPERF	(13*32+1) /* Instructions Retired Count */
 #define X86_FEATURE_IBPB       (13*32+12) /* Indirect Branch Prediction Barrier */
+#define X86_FEATURE_AMD_SPEC_CTRL	(13*32+14) /* Speculation Control MSR only (AMD) */
+#define X86_FEATURE_AMD_STIBP		(13*32+15) /* Single Thread Indirect Branch Predictors (AMD) */
 
 /* Intel-defined CPU features, CPUID level 0x00000007:0 (ecx), word 16 */
 #define X86_FEATURE_PKU		(16*32+ 3) /* Protection Keys for Userspace */

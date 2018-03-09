@@ -91,7 +91,7 @@ void x86_spec_check(void)
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
 
-int __init nospec(char *str)
+int nospec(char *str)
 {
 	setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
 	ibrs_state = 0;
