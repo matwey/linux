@@ -227,7 +227,6 @@ entry_SYSCALL_64_fastpath:
 	DISABLE_IBRS
 
 	RESTORE_C_REGS_EXCEPT_RCX_R11
-	movq	RSP(%rsp), %rsp
 	/*
 	 * This opens a window where we have a user CR3, but are
 	 * running in the kernel.  This makes using the CS
@@ -235,7 +234,8 @@ entry_SYSCALL_64_fastpath:
 	 * switch CR3 in NMIs.  Normal interrupts are OK because
 	 * they are off here.
 	 */
-	SWITCH_USER_CR3_NO_STACK
+	SWITCH_USER_CR3
+	movq	RSP(%rsp), %rsp
 	/*
 	 * 64-bit SYSRET restores rip from rcx,
 	 * rflags from r11 (but RF and VM bits are forced to 0),
@@ -381,7 +381,6 @@ syscall_return_via_sysret:
 
 	/* rcx and r11 are already restored (see code above) */
 	RESTORE_C_REGS_EXCEPT_RCX_R11
-	movq	RSP(%rsp), %rsp
 	/*
 	 * This opens a window where we have a user CR3, but are
 	 * running in the kernel.  This makes using the CS
@@ -389,13 +388,23 @@ syscall_return_via_sysret:
 	 * switch CR3 in NMIs.  Normal interrupts are OK because
 	 * they are off here.
 	 */
-	SWITCH_USER_CR3_NO_STACK
+	SWITCH_USER_CR3
+	movq	RSP(%rsp), %rsp
 	USERGS_SYSRET64
 
 opportunistic_sysret_failed:
 	DISABLE_IBRS
 
-	jmp tramp_restore_c_regs_and_iret
+	/*
+	 * This opens a window where we have a user CR3, but are
+	 * running in the kernel.  This makes using the CS
+	 * register useless for telling whether or not we need to
+	 * switch CR3 in NMIs.  Normal interrupts are OK because
+	 * they are off here.
+	 */
+	SWITCH_USER_CR3
+	SWAPGS
+	jmp	restore_c_regs_and_iret
 END(entry_SYSCALL_64)
 
 
@@ -540,26 +549,6 @@ END(irq_entries_start)
 /* 0(%rsp): ~(interrupt number) */
 	.macro interrupt func
 	cld
-
-	testb	$3, CS-ORIG_RAX(%rsp)
-	jz	1f
-	SWAPGS
-
-	/* Coming from user mode. Switch to the thread stack. */
-	pushq	%rdi
-	/* Need to switch before accessing the thread stack. */
-	SWITCH_KERNEL_CR3
-	movq	%rsp, %rdi
-	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
-	pushq	SS-RDI(%rdi)		/* regs->ss */
-	pushq	RSP-RDI(%rdi)		/* regs->rsp */
-	pushq	EFLAGS-RDI(%rdi)	/* regs->eflags */
-	pushq	CS-RDI(%rdi)		/* regs->cs */
-	pushq	RIP-RDI(%rdi)		/* regs->ip */
-	pushq	ORIG_RAX-RDI(%rdi)	/* regs->orig_ax */
-	movq	(%rdi), %rdi
-
-1:
 	ALLOC_PT_GPREGS_ON_STACK
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
@@ -567,6 +556,12 @@ END(irq_entries_start)
 	testb	$3, CS(%rsp)
 	jz	1f
 
+	/*
+	 * IRQ from user mode.  Switch to kernel gsbase and inform context
+	 * tracking that we're in kernel mode.
+	 */
+	SWAPGS
+	SWITCH_KERNEL_CR3
 	ENABLE_IBRS
 
 	/*
@@ -625,31 +620,10 @@ GLOBAL(retint_user)
 	mov	%rsp,%rdi
 	call	prepare_exit_to_usermode
 	TRACE_IRQS_IRETQ
-
 	DISABLE_IBRS
-	/*
-	 * Returning from an interrupt to user space, currently on the kernel
-	 * task stack.  Switch to the trampoline stack and push the iret frame
-	 * to it.
-	 */
-GLOBAL(tramp_restore_regs_and_iret)
-	RESTORE_EXTRA_REGS
-tramp_restore_c_regs_and_iret:
-	RESTORE_C_REGS
-	REMOVE_PT_GPREGS_FROM_STACK 8
-	pushq %rax
-	movq %rsp, %rax
-	movq PER_CPU_VAR(cpu_tss + TSS_sp0), %rsp
-	pushq SS-ORIG_RAX(%rax)
-	pushq RSP-ORIG_RAX(%rax)
-	pushq EFLAGS-ORIG_RAX(%rax)
-	pushq CS-ORIG_RAX(%rax)
-	pushq RIP-ORIG_RAX(%rax)
-	movq (%rax), %rax
-
 	SWITCH_USER_CR3
 	SWAPGS
-	INTERRUPT_RETURN
+	jmp	restore_regs_and_iret
 
 /* Returning to kernel space */
 retint_kernel:
@@ -822,12 +796,11 @@ ENTRY(\sym)
 
 	ALLOC_PT_GPREGS_ON_STACK
 
-	.if \paranoid < 2
+	.if \paranoid
+	.if \paranoid == 1
 	testb	$3, CS(%rsp)			/* If coming from userspace, switch stacks */
 	jnz	1f
 	.endif
-
-	.if \paranoid
 	call	paranoid_entry
 	.else
 	call	error_entry
@@ -868,15 +841,19 @@ ENTRY(\sym)
 	jmp	error_exit
 	.endif
 
-	.if \paranoid < 2
+	.if \paranoid == 1
 	/*
-	 * Entry from userspace.  Switch stacks and treat it
+	 * Paranoid entry from userspace.  Switch stacks and treat it
 	 * as a normal entry.  This means that paranoid handlers
 	 * run in real process context if user_mode(regs).
 	 */
 1:
 	call	error_entry
 
+
+	movq	%rsp, %rdi			/* pt_regs pointer */
+	call	sync_regs
+	movq	%rax, %rsp			/* switch stack */
 
 	movq	%rsp, %rdi			/* pt_regs pointer */
 
@@ -1208,16 +1185,15 @@ ENTRY(error_entry)
 	 * from user mode due to an IRET fault.
 	 */
 	SWAPGS
+
 	ENABLE_IBRS
 
 .Lerror_entry_from_usermode_after_swapgs:
-	/* Put us onto the real thread stack. */
-	popq    %r12                            /* save return addr in %12 */
-	movq    %rsp, %rdi                      /* arg0 = pt_regs pointer */
-	call    sync_regs
-	movq    %rax, %rsp                      /* switch stack */
-	pushq   %r12
-
+	/*
+	 * We need to tell lockdep that IRQs are off.  We can't do this until
+	 * we fix gsbase, and we should do it before enter_from_user_mode
+	 * (which can take locks).
+	 */
 	TRACE_IRQS_OFF
 	CALL_enter_from_user_mode
 	ret
@@ -1362,10 +1338,11 @@ ENTRY(nmi)
 	 */
 
 	SWAPGS_UNSAFE_STACK
+	/*
+	 * percpu variables are mapped with user CR3, so no need
+	 * to switch CR3 here.
+	 */
 	cld
-
-	SWITCH_KERNEL_CR3
-
 	movq	%rsp, %rdx
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
 	pushq	5*8(%rdx)	/* pt_regs->ss */
@@ -1398,6 +1375,18 @@ ENTRY(nmi)
 
 	movq	%rsp, %rdi
 	movq	$-1, %rsi
+#ifdef CONFIG_PAGE_TABLE_ISOLATION
+	/* Unconditionally use kernel CR3 for do_nmi() */
+	/* %rax is saved above, so OK to clobber here */
+	ALTERNATIVE "jmp 2f", "movq %cr3, %rax", X86_FEATURE_KAISER
+	/* If PCID enabled, NOFLUSH now and NOFLUSH on return */
+	ALTERNATIVE "", "bts $63, %rax", X86_FEATURE_PCID
+	pushq	%rax
+	/* mask off "user" bit of pgd address and 12 PCID bits: */
+	andq	$(~(X86_CR3_PCID_ASID_MASK | KAISER_SHADOW_PGD_OFFSET)), %rax
+	movq	%rax, %cr3
+2:
+#endif
 
 	ENABLE_IBRS
 
@@ -1405,13 +1394,23 @@ ENTRY(nmi)
 
 	DISABLE_IBRS
 
+#ifdef CONFIG_PAGE_TABLE_ISOLATION
+	/*
+	 * Unconditionally restore CR3.  I know we return to
+	 * kernel code that needs user CR3, but do we ever return
+	 * to "user mode" where we need the kernel CR3?
+	 */
+	ALTERNATIVE "", "popq %rax; movq %rax, %cr3", X86_FEATURE_KAISER
+#endif
+
 	/*
 	 * Return back to user mode.  We must *not* do the normal exit
 	 * work, because we don't want to enable interrupts.  Do not
 	 * switch to user CR3: we might be going back to kernel code
 	 * that had a user CR3 set.
 	 */
-	jmp	tramp_restore_c_regs_and_iret
+	SWAPGS
+	jmp	restore_c_regs_and_iret
 
 .Lnmi_from_kernel:
 	/*
