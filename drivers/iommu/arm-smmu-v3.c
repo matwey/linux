@@ -1646,13 +1646,20 @@ static __le64 *arm_smmu_get_step_for_sid(struct arm_smmu_device *smmu, u32 sid)
 
 static void arm_smmu_install_ste_for_dev(struct iommu_fwspec *fwspec)
 {
-	int i;
+	int i, j;
 	struct arm_smmu_master_data *master = fwspec->iommu_priv;
 	struct arm_smmu_device *smmu = master->smmu;
 
 	for (i = 0; i < fwspec->num_ids; ++i) {
 		u32 sid = fwspec->ids[i];
 		__le64 *step = arm_smmu_get_step_for_sid(smmu, sid);
+
+		/* Bridged PCI devices may end up with duplicated IDs */
+		for (j = 0; j < i; j++)
+			if (fwspec->ids[j] == sid)
+				break;
+		if (j < i)
+			continue;
 
 		arm_smmu_write_strtab_ent(smmu, sid, step, &master->ste);
 	}
@@ -1748,6 +1755,9 @@ arm_smmu_unmap(struct iommu_domain *domain, unsigned long iova, size_t size)
 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
 	struct io_pgtable_ops *ops = smmu_domain->pgtbl_ops;
 
+	if (domain->type == IOMMU_DOMAIN_IDENTITY)
+		return iova;
+
 	if (!ops)
 		return 0;
 
@@ -1764,9 +1774,6 @@ arm_smmu_iova_to_phys(struct iommu_domain *domain, dma_addr_t iova)
 	unsigned long flags;
 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
 	struct io_pgtable_ops *ops = smmu_domain->pgtbl_ops;
-
-	if (domain->type == IOMMU_DOMAIN_IDENTITY)
-		return iova;
 
 	if (!ops)
 		return 0;
