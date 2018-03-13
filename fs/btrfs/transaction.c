@@ -102,10 +102,22 @@ static void clear_btree_io_tree(struct extent_io_tree *tree)
 	spin_unlock(&tree->lock);
 }
 
-static noinline void switch_commit_root(struct btrfs_root *root)
+static noinline void switch_commit_roots(struct btrfs_transaction *trans,
+					 struct btrfs_fs_info *fs_info)
 {
-	free_extent_buffer(root->commit_root);
-	root->commit_root = btrfs_root_node(root);
+	struct btrfs_root *root, *tmp;
+
+	down_write(&fs_info->commit_root_sem);
+	list_for_each_entry_safe(root, tmp, &trans->switch_commits,
+				 dirty_list) {
+		list_del_init(&root->dirty_list);
+		free_extent_buffer(root->commit_root);
+		root->commit_root = btrfs_root_node(root);
+		if (is_fstree(root->objectid))
+			btrfs_unpin_free_ino(root);
+			clear_btree_io_tree(&root->dirty_log_pages);
+	}
+	up_write(&fs_info->commit_root_sem);
 }
 
 static inline void extwriter_counter_inc(struct btrfs_transaction *trans,
@@ -241,6 +253,7 @@ loop:
 	INIT_LIST_HEAD(&cur_trans->pending_snapshots);
 	INIT_LIST_HEAD(&cur_trans->ordered_operations);
 	INIT_LIST_HEAD(&cur_trans->pending_chunks);
+	INIT_LIST_HEAD(&cur_trans->switch_commits);
 	list_add_tail(&cur_trans->list, &fs_info->trans_list);
 	extent_io_tree_init(&cur_trans->dirty_pages,
 			     fs_info->btree_inode->i_mapping);
@@ -983,7 +996,7 @@ int btrfs_write_and_wait_transaction(struct btrfs_trans_handle *trans,
 static int update_cowonly_root(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root)
 {
-	int ret = 0;
+	int ret;
 	u64 old_root_bytenr;
 	u64 old_root_used;
 	struct btrfs_root *tree_root = root->fs_info->tree_root;
@@ -1002,20 +1015,15 @@ static int update_cowonly_root(struct btrfs_trans_handle *trans,
 					&root->root_key,
 					&root->root_item);
 		if (ret)
-			goto out;
+			return ret;
 
 		old_root_used = btrfs_root_used(&root->root_item);
 		ret = btrfs_write_dirty_block_groups(trans, root);
 		if (ret)
-			goto out;
+			return ret;
 	}
 
-	if (root != root->fs_info->extent_root)
-		switch_commit_root(root);
- out:
-	clear_btree_io_tree(&root->dirty_log_pages);
-
-	return ret;
+	return 0;
 }
 
 /*
@@ -1067,15 +1075,16 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans,
 		list_del_init(next);
 		root = list_entry(next, struct btrfs_root, dirty_list);
 
+		if (root != fs_info->extent_root)
+			list_add_tail(&root->dirty_list,
+				      &trans->transaction->switch_commits);
 		ret = update_cowonly_root(trans, root);
 		if (ret)
 			return ret;
 	}
 
-	down_write(&fs_info->extent_commit_sem);
-	switch_commit_root(fs_info->extent_root);
-	up_write(&fs_info->extent_commit_sem);
-
+	list_add_tail(&fs_info->extent_root->dirty_list,
+		      &trans->transaction->switch_commits);
 	btrfs_after_dev_replace_commit(fs_info);
 
 	return 0;
@@ -1132,11 +1141,8 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans,
 			smp_wmb();
 
 			if (root->commit_root != root->node) {
-				mutex_lock(&root->fs_commit_mutex);
-				switch_commit_root(root);
-				btrfs_unpin_free_ino(root);
-				mutex_unlock(&root->fs_commit_mutex);
-
+				list_add_tail(&root->dirty_list,
+					&trans->transaction->switch_commits);
 				btrfs_set_root_node(&root->root_item,
 						    root->node);
 			}
@@ -1927,11 +1933,15 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	btrfs_set_root_node(&root->fs_info->tree_root->root_item,
 			    root->fs_info->tree_root->node);
-	switch_commit_root(root->fs_info->tree_root);
+	list_add_tail(&root->fs_info->tree_root->dirty_list,
+		      &cur_trans->switch_commits);
 
 	btrfs_set_root_node(&root->fs_info->chunk_root->root_item,
 			    root->fs_info->chunk_root->node);
-	switch_commit_root(root->fs_info->chunk_root);
+	list_add_tail(&root->fs_info->chunk_root->dirty_list,
+		      &cur_trans->switch_commits);
+
+	switch_commit_roots(cur_trans, root->fs_info);
 
 	assert_qgroups_uptodate(trans);
 	update_super_roots(root);
