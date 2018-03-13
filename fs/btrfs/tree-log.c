@@ -2347,6 +2347,7 @@ static int wait_log_commit(struct btrfs_trans_handle *trans,
 {
 	DEFINE_WAIT(wait);
 	int index = transid % 2;
+	int ret = 0;
 
 	/*
 	 * we only allow two pending log transactions at a time,
@@ -2354,21 +2355,26 @@ static int wait_log_commit(struct btrfs_trans_handle *trans,
 	 * current transaction, we're done
 	 */
 	do {
+		if (ACCESS_ONCE(root->fs_info->last_trans_log_full_commit) ==
+		    trans->transid) {
+			ret = -EAGAIN;
+			break;
+		}
+
 		prepare_to_wait(&root->log_commit_wait[index],
 				&wait, TASK_UNINTERRUPTIBLE);
 		mutex_unlock(&root->log_mutex);
 
-		if (root->fs_info->last_trans_log_full_commit !=
-		    trans->transid && root->log_transid < transid + 2 &&
+		if (root->log_transid < transid + 2 &&
 		    atomic_read(&root->log_commit[index]))
 			schedule();
 
 		finish_wait(&root->log_commit_wait[index], &wait);
 		mutex_lock(&root->log_mutex);
-	} while (root->fs_info->last_trans_log_full_commit !=
-		 trans->transid && root->log_transid < transid + 2 &&
+	} while (root->log_transid < transid + 2 &&
 		 atomic_read(&root->log_commit[index]));
-	return 0;
+
+	return ret;
 }
 
 static void wait_for_writer(struct btrfs_trans_handle *trans,
@@ -2415,15 +2421,16 @@ int btrfs_sync_log(struct btrfs_trans_handle *trans,
 	log_transid = root->log_transid;
 	index1 = root->log_transid % 2;
 	if (atomic_read(&root->log_commit[index1])) {
-		wait_log_commit(trans, root, root->log_transid);
+		ret = wait_log_commit(trans, root, root->log_transid);
 		mutex_unlock(&root->log_mutex);
-		return 0;
+		return ret;
 	}
 	atomic_set(&root->log_commit[index1], 1);
 
 	/* wait for previous tree log sync to complete */
 	if (atomic_read(&root->log_commit[(index1 + 1) % 2]))
 		wait_log_commit(trans, root, root->log_transid - 1);
+
 	while (1) {
 		int batch = atomic_read(&root->log_batch);
 		/* when we're on an ssd, just kick the log commit out */
@@ -2506,10 +2513,9 @@ int btrfs_sync_log(struct btrfs_trans_handle *trans,
 	if (atomic_read(&log_root_tree->log_commit[index2])) {
 		btrfs_wait_marked_extents(log, &log->dirty_log_pages, mark);
 		btrfs_wait_logged_extents(log, log_transid);
-		wait_log_commit(trans, log_root_tree,
-				log_root_tree->log_transid);
+		ret = wait_log_commit(trans, log_root_tree,
+				      log_root_tree->log_transid);
 		mutex_unlock(&log_root_tree->log_mutex);
-		ret = 0;
 		goto out;
 	}
 	atomic_set(&log_root_tree->log_commit[index2], 1);
