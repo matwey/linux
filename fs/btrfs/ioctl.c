@@ -57,6 +57,7 @@
 #include "rcu-string.h"
 #include "send.h"
 #include "dev-replace.h"
+#include "tree-log.h"
 
 static int btrfs_clone(struct inode *src, struct inode *inode,
 		       u64 off, u64 olen, u64 olen_aligned, u64 destoff);
@@ -2256,6 +2257,8 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 out_end_trans:
 	trans->block_rsv = NULL;
 	trans->bytes_reserved = 0;
+	if (!err)
+		btrfs_record_snapshot_destroy(trans, dir);
 	ret = btrfs_end_transaction(trans, root);
 	if (ret && !err)
 		err = ret;
