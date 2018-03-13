@@ -203,7 +203,11 @@ void btrfs_add_ordered_operation(struct btrfs_trans_handle *trans,
 				 struct btrfs_root *root,
 				 struct inode *inode);
 void btrfs_wait_ordered_extents(struct btrfs_root *root, int delay_iput);
-void btrfs_get_logged_extents(struct btrfs_root *log, struct inode *inode);
+void btrfs_get_logged_extents(struct inode *inode,
+			      struct list_head *logged_list);
+void btrfs_put_logged_extents(struct list_head *logged_list);
+void btrfs_submit_logged_extents(struct list_head *logged_list,
+				 struct btrfs_root *log);
 void btrfs_wait_logged_extents(struct btrfs_root *log, u64 transid);
 void btrfs_free_logged_extents(struct btrfs_root *log, u64 transid);
 int __init ordered_data_init(void);
