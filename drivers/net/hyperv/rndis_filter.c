@@ -717,7 +717,7 @@ cleanup:
 }
 
 int rndis_filter_set_rss_param(struct rndis_device *rdev,
-			       const u8 *rss_key, int num_queue)
+			       const u8 *rss_key)
 {
 	struct net_device *ndev = rdev->ndev;
 	struct rndis_request *request;
@@ -1256,8 +1256,7 @@ struct netvsc_device *rndis_filter_device_add(struct hv_device *dev,
 		init_packet->msg.v5_msg.subchn_comp.num_subchannels;
 
 	/* ignore failues from setting rss parameters, still have channels */
-	rndis_filter_set_rss_param(rndis_device, netvsc_hash_key,
-				   net_device->num_chn);
+	rndis_filter_set_rss_param(rndis_device, netvsc_hash_key);
 out:
 	if (ret) {
 		net_device->max_chn = 1;
