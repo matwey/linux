@@ -3933,6 +3933,9 @@ static int __btrfs_alloc_chunk(struct btrfs_trans_handle *trans,
 	if (ret)
 		goto error_del_extent;
 
+	for (i = 0; i < map->num_stripes; i++)
+		map->stripes[i].dev->bytes_used += stripe_size;
+
 	free_extent_map(em);
 	kfree(devices_info);
 	return 0;
@@ -4002,7 +4005,6 @@ int btrfs_finish_chunk_alloc(struct btrfs_trans_handle *trans,
 		device = map->stripes[i].dev;
 		dev_offset = map->stripes[i].physical;
 
-		device->bytes_used += stripe_size;
 		ret = btrfs_update_device(trans, device);
 		if (ret)
 			goto out;
