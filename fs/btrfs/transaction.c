@@ -1951,6 +1951,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	memcpy(root->fs_info->super_for_commit, root->fs_info->super_copy,
 	       sizeof(*root->fs_info->super_copy));
 
+	btrfs_update_commit_device_size(root->fs_info);
+
 	clear_bit(BTRFS_INODE_BTREE_LOG1_ERR, &btree_ino->runtime_flags);
 	clear_bit(BTRFS_INODE_BTREE_LOG2_ERR, &btree_ino->runtime_flags);
 
