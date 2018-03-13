@@ -1770,7 +1770,7 @@ static void ipmr_queue_xmit(struct net *net, struct mr_table *mrt,
 		vif->dev->stats.tx_bytes += skb->len;
 	}
 
-	IPCB(skb)->flags |= IPSKB_FORWARDED | IPSKB_FRAG_SEGS;
+	IPCB(skb)->flags |= IPSKB_FORWARDED;
 
 	/*
 	 * RFC1584 teaches, that DVMRP/PIM router must deliver packets locally
