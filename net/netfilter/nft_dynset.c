@@ -54,7 +54,7 @@ static void *nft_dynset_new(struct nft_set *set, const struct nft_expr *expr,
 	return elem;
 
 err2:
-	nft_set_elem_destroy(set, elem, false);
+	nft_set_elem_destroy_ext(set, elem, false);
 err1:
 	if (set->size)
 		atomic_dec(&set->nelems);

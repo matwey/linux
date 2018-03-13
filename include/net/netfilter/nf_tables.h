@@ -515,8 +515,9 @@ void *nft_set_elem_init(const struct nft_set *set,
 			const struct nft_set_ext_tmpl *tmpl,
 			const u32 *key, const u32 *data,
 			u64 timeout, gfp_t gfp);
-void nft_set_elem_destroy(const struct nft_set *set, void *elem,
-			  bool destroy_expr);
+void nft_set_elem_destroy(const struct nft_set *set, void *elem);
+void nft_set_elem_destroy_ext(const struct nft_set *set, void *elem,
+			      bool destroy_expr);
 
 /**
  *	struct nft_set_gc_batch_head - nf_tables set garbage collection batch
