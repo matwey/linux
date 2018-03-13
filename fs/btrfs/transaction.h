@@ -65,8 +65,8 @@ struct btrfs_transaction {
 	struct list_head ordered_operations;
 	struct list_head pending_chunks;
 	struct list_head switch_commits;
+	/* Protected by spin lock fs_info->unused_bgs_lock. */
 	struct list_head deleted_bgs;
-	spinlock_t deleted_bgs_lock;
 	struct btrfs_delayed_ref_root delayed_refs;
 	int aborted;
 };
