@@ -326,29 +326,19 @@ int btrfs_dev_replace_start(struct btrfs_root *root,
 		return -EINVAL;
 
 	mutex_lock(&fs_info->volume_mutex);
-	ret = btrfs_init_dev_replace_tgtdev(root, args->start.tgtdev_name,
-					    &tgt_device);
-	if (ret) {
-		pr_err("btrfs: target device %s is invalid!\n",
-		       args->start.tgtdev_name);
-		mutex_unlock(&fs_info->volume_mutex);
-		return -EINVAL;
-	}
-
 	ret = btrfs_dev_replace_find_srcdev(root, args->start.srcdevid,
 					    args->start.srcdev_name,
 					    &src_device);
-	mutex_unlock(&fs_info->volume_mutex);
 	if (ret) {
-		ret = -EINVAL;
-		goto leave_no_lock;
+		mutex_unlock(&fs_info->volume_mutex);
+		return ret;
 	}
 
-	if (tgt_device->total_bytes < src_device->total_bytes) {
-		pr_err("btrfs: target device is smaller than source device!\n");
-		ret = -EINVAL;
-		goto leave_no_lock;
-	}
+	ret = btrfs_init_dev_replace_tgtdev(root, args->start.tgtdev_name,
+					    src_device, &tgt_device);
+	mutex_unlock(&fs_info->volume_mutex);
+	if (ret)
+		return ret;
 
 	btrfs_dev_replace_lock(dev_replace);
 	switch (dev_replace->replace_state) {
@@ -375,10 +365,6 @@ int btrfs_dev_replace_start(struct btrfs_root *root,
 		        rcu_str_deref(src_device->name),
 		      src_device->devid,
 		      rcu_str_deref(tgt_device->name));
-
-	tgt_device->total_bytes = src_device->total_bytes;
-	tgt_device->disk_total_bytes = src_device->disk_total_bytes;
-	tgt_device->bytes_used = src_device->bytes_used;
 
 	/*
 	 * from now on, the writes to the srcdev are all duplicated to
@@ -422,9 +408,7 @@ leave:
 	dev_replace->srcdev = NULL;
 	dev_replace->tgtdev = NULL;
 	btrfs_dev_replace_unlock(dev_replace);
-leave_no_lock:
-	if (tgt_device)
-		btrfs_destroy_dev_replace_tgtdev(fs_info, tgt_device);
+	btrfs_destroy_dev_replace_tgtdev(fs_info, tgt_device);
 	return ret;
 }
 
