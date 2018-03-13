@@ -171,6 +171,12 @@ void hyperv_cleanup(void)
 }
 EXPORT_SYMBOL_GPL(hyperv_cleanup);
 
+u64 hv_do_hypercall(u64 control, void *input, void *output)
+{
+	return suse_hv_do_hypercall(control, input, output);
+}
+EXPORT_SYMBOL_GPL(hv_do_hypercall);
+
 void hyperv_report_panic(struct pt_regs *regs)
 {
 	static bool panic_reported;

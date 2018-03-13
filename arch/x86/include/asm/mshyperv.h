@@ -172,7 +172,10 @@ void hv_remove_crash_handler(void);
 extern struct clocksource *hyperv_cs;
 extern void *hv_hypercall_pg;
 
-static inline u64 hv_do_hypercall(u64 control, void *input, void *output)
+/* Preserve kABI by keeping the stale hv_do_hypercall() function */
+u64 hv_do_hypercall(u64 control, void *input, void *output);
+
+static inline u64 suse_hv_do_hypercall(u64 control, void *input, void *output)
 {
 	u64 input_address = input ? virt_to_phys(input) : 0;
 	u64 output_address = output ? virt_to_phys(output) : 0;
