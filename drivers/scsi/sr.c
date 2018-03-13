@@ -830,6 +830,7 @@ static void get_capabilities(struct scsi_cd *cd)
 	struct scsi_sense_hdr sshdr;
 	int rc, n;
 
+	static const char *model_vmware = "VMware";
 	static const char *loadmech[] =
 	{
 		"caddy",
@@ -883,6 +884,12 @@ static void get_capabilities(struct scsi_cd *cd)
 	       buffer[n + 4] & 0x20 ? "xa/form2 " : "",	/* can read xa/from2 */
 	       buffer[n + 5] & 0x01 ? "cdda " : "", /* can read audio data */
 	       loadmech[buffer[n + 6] >> 5]);
+	if (!strncmp(cd->device->model, model_vmware, strlen(model_vmware))) {
+		buffer[n + 6] &= ~(0xff << 5);
+		printk(KERN_INFO
+			  "%s: VMware ESXi bug workaround: tray -> caddy\n", 
+			  cd->cdi.name);
+	}
 	if ((buffer[n + 6] >> 5) == 0)
 		/* caddy drives can't close tray... */
 		cd->cdi.mask |= CDC_CLOSE_TRAY;
