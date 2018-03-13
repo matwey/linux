@@ -444,11 +444,11 @@ fail:
 }
 EXPORT_SYMBOL_GPL(rhashtable_insert_rehash);
 
-struct bucket_table *rhashtable_insert_slow(struct rhashtable *ht,
-					    const void *key,
-					    struct rhash_head *obj,
-					    struct bucket_table *tbl,
-					    void **data)
+struct bucket_table *rhashtable_insert_slow_ext(struct rhashtable *ht,
+						const void *key,
+						struct rhash_head *obj,
+						struct bucket_table *tbl,
+						void **data)
 {
 	struct rhash_head *head;
 	unsigned int hash;
@@ -493,6 +493,18 @@ exit:
 		return tbl;
 	else
 		return ERR_PTR(err);
+}
+EXPORT_SYMBOL_GPL(rhashtable_insert_slow_ext);
+
+/* kabi compatibility wrapper */
+struct bucket_table *rhashtable_insert_slow(struct rhashtable *ht,
+					    const void *key,
+					    struct rhash_head *obj,
+					    struct bucket_table *tbl)
+{
+	void *unused;
+
+	return rhashtable_insert_slow_ext(ht, key, obj, tbl, &unused);
 }
 EXPORT_SYMBOL_GPL(rhashtable_insert_slow);
 

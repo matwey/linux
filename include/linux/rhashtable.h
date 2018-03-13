@@ -343,8 +343,12 @@ int rhashtable_init(struct rhashtable *ht,
 struct bucket_table *rhashtable_insert_slow(struct rhashtable *ht,
 					    const void *key,
 					    struct rhash_head *obj,
-					    struct bucket_table *old_tbl,
-					    void **data);
+					    struct bucket_table *old_tbl);
+struct bucket_table *rhashtable_insert_slow_ext(struct rhashtable *ht,
+						const void *key,
+						struct rhash_head *obj,
+						struct bucket_table *old_tbl,
+						void **data);
 int rhashtable_insert_rehash(struct rhashtable *ht, struct bucket_table *tbl);
 
 int rhashtable_walk_init(struct rhashtable *ht, struct rhashtable_iter *iter);
@@ -605,7 +609,7 @@ restart:
 
 	new_tbl = rht_dereference_rcu(tbl->future_tbl, ht);
 	if (unlikely(new_tbl)) {
-		tbl = rhashtable_insert_slow(ht, key, obj, new_tbl, &data);
+		tbl = rhashtable_insert_slow_ext(ht, key, obj, new_tbl, &data);
 		if (!IS_ERR_OR_NULL(tbl))
 			goto slow_path;
 
