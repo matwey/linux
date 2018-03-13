@@ -525,10 +525,10 @@ ENTRY(system_call_after_swapgs)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys
 system_call_fastpath:
-	cmpq $__NR_syscall_max,%rax
-	ja badsys
-	sbb %rcx, %rcx			/* array_index_mask_nospec() */
-	and %rcx, %rax
+	cmpq $NR_syscalls,%rax
+	jae badsys
+	sbbq %rcx,%rcx			/* array_index_mask_nospec() */
+	andq %rcx,%rax
 	movq %r10,%rcx
 #ifdef CONFIG_RETPOLINE
 	movq    sys_call_table(, %rax, 8), %rax
@@ -658,10 +658,10 @@ tracesys:
 	 */
 	LOAD_ARGS ARGOFFSET, 1
 	RESTORE_REST
-	cmpq $__NR_syscall_max,%rax
-	ja   int_ret_from_sys_call	/* RAX(%rsp) set to -ENOSYS above */
-	sbb %rcx, %rcx			/* array_index_mask_nospec() */
-	and %rcx, %rax
+	cmpq $NR_syscalls,%rax
+	jae  int_ret_from_sys_call	/* RAX(%rsp) set to -ENOSYS above */
+	sbbq %rcx,%rcx			/* array_index_mask_nospec() */
+	andq %rcx,%rax
 	movq %r10,%rcx	/* fixup for C */
 #ifdef CONFIG_RETPOLINE
 	movq    sys_call_table(, %rax, 8), %rax
