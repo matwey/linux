@@ -45,7 +45,8 @@
 
 #include "hyperv_net.h"
 
-#define RING_SIZE_MIN 64
+#define RING_SIZE_MIN		64
+
 #define LINKCHANGE_INT (2 * HZ)
 static int ring_size = 128;
 module_param(ring_size, int, S_IRUGO);
@@ -112,11 +113,15 @@ static int netvsc_close(struct net_device *net)
 	struct net_device *vf_netdev
 		= rtnl_dereference(net_device_ctx->vf_netdev);
 	struct netvsc_device *nvdev = rtnl_dereference(net_device_ctx->nvdev);
-	int ret;
+	int ret = 0;
 	u32 aread, i, msec = 10, retry = 0, retry_max = 20;
 	struct vmbus_channel *chn;
 
 	netif_tx_disable(net);
+
+	/* No need to close rndis filter if it is removed already */
+	if (!nvdev)
+		goto out;
 
 	ret = rndis_filter_close(nvdev);
 	if (ret != 0) {
@@ -156,23 +161,22 @@ static int netvsc_close(struct net_device *net)
 		ret = -ETIMEDOUT;
 	}
 
+out:
 	if (vf_netdev)
 		dev_close(vf_netdev);
 
 	return ret;
 }
 
-static void *init_ppi_data(struct rndis_message *msg, u32 ppi_size,
-				int pkt_type)
+static inline void *init_ppi_data(struct rndis_message *msg,
+				  u32 ppi_size, u32 pkt_type)
 {
-	struct rndis_packet *rndis_pkt;
+	struct rndis_packet *rndis_pkt = &msg->msg.pkt;
 	struct rndis_per_packet_info *ppi;
 
-	rndis_pkt = &msg->msg.pkt;
 	rndis_pkt->data_offset += ppi_size;
-
-	ppi = (struct rndis_per_packet_info *)((void *)rndis_pkt +
-		rndis_pkt->per_pkt_info_offset + rndis_pkt->per_pkt_info_len);
+	ppi = (void *)rndis_pkt + rndis_pkt->per_pkt_info_offset
+		+ rndis_pkt->per_pkt_info_len;
 
 	ppi->size = ppi_size;
 	ppi->type = pkt_type;
@@ -180,16 +184,18 @@ static void *init_ppi_data(struct rndis_message *msg, u32 ppi_size,
 
 	rndis_pkt->per_pkt_info_len += ppi_size;
 
-	return ppi;
+	return ppi + 1;
 }
 
-/* Azure hosts don't support non-TCP port numbers in hashing yet. We compute
- * hash for non-TCP traffic with only IP numbers.
+/* Azure hosts don't support non-TCP port numbers in hashing for fragmented
+ * packets. We can use ethtool to change UDP hash level when necessary.
  */
-static inline u32 netvsc_get_hash(struct sk_buff *skb, struct sock *sk)
+static inline u32 netvsc_get_hash(
+	struct sk_buff *skb,
+	const struct net_device_context *ndc)
 {
 	struct flow_keys flow;
-	u32 hash;
+	u32 hash, pkt_proto = 0;
 	static u32 hashrnd __read_mostly;
 
 	net_get_random_once(&hashrnd, sizeof(hashrnd));
@@ -197,7 +203,25 @@ static inline u32 netvsc_get_hash(struct sk_buff *skb, struct sock *sk)
 	if (!skb_flow_dissect_flow_keys(skb, &flow, 0))
 		return 0;
 
-	if (flow.basic.ip_proto == IPPROTO_TCP) {
+	switch (flow.basic.ip_proto) {
+	case IPPROTO_TCP:
+		if (flow.basic.n_proto == htons(ETH_P_IP))
+			pkt_proto = HV_TCP4_L4HASH;
+		else if (flow.basic.n_proto == htons(ETH_P_IPV6))
+			pkt_proto = HV_TCP6_L4HASH;
+
+		break;
+
+	case IPPROTO_UDP:
+		if (flow.basic.n_proto == htons(ETH_P_IP))
+			pkt_proto = HV_UDP4_L4HASH;
+		else if (flow.basic.n_proto == htons(ETH_P_IPV6))
+			pkt_proto = HV_UDP6_L4HASH;
+
+		break;
+	}
+
+	if (pkt_proto & ndc->l4_hash) {
 		return skb_get_hash(skb);
 	} else {
 		if (flow.basic.n_proto == htons(ETH_P_IP))
@@ -220,8 +244,8 @@ static inline int netvsc_get_tx_queue(struct net_device *ndev,
 	struct sock *sk = skb->sk;
 	int q_idx;
 
-	q_idx = ndc->tx_send_table[netvsc_get_hash(skb, sk) &
-				   (VRSS_SEND_TAB_SIZE - 1)];
+	q_idx = ndc->tx_table[netvsc_get_hash(skb, ndc) &
+			      (VRSS_SEND_TAB_SIZE - 1)];
 
 	/* If queue index changed record the new value */
 	if (q_idx != old_idx &&
@@ -284,7 +308,7 @@ static u16 netvsc_select_queue(struct net_device *ndev, struct sk_buff *skb,
 }
 
 static u32 fill_pg_buf(struct page *page, u32 offset, u32 len,
-			struct hv_page_buffer *pb)
+		       struct hv_page_buffer *pb)
 {
 	int j = 0;
 
@@ -331,10 +355,9 @@ static u32 init_page_array(void *hdr, u32 len, struct sk_buff *skb,
 	 * 2. skb linear data
 	 * 3. skb fragment data
 	 */
-	if (hdr != NULL)
-		slots_used += fill_pg_buf(virt_to_page(hdr),
-					offset_in_page(hdr),
-					len, &pb[slots_used]);
+	slots_used += fill_pg_buf(virt_to_page(hdr),
+				  offset_in_page(hdr),
+				  len, &pb[slots_used]);
 
 	packet->rmsg_size = len;
 	packet->rmsg_pgcnt = slots_used;
@@ -438,10 +461,8 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 	int ret;
 	unsigned int num_data_pgs;
 	struct rndis_message *rndis_msg;
-	struct rndis_packet *rndis_pkt;
 	struct net_device *vf_netdev;
 	u32 rndis_msg_size;
-	struct rndis_per_packet_info *ppi;
 	u32 hash;
 	struct hv_page_buffer pb[MAX_PAGE_BUFFER_COUNT];
 
@@ -496,34 +517,36 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 
 	rndis_msg = (struct rndis_message *)skb->head;
 
-	memset(rndis_msg, 0, RNDIS_AND_PPI_SIZE);
-
 	/* Add the rndis header */
 	rndis_msg->ndis_msg_type = RNDIS_MSG_PACKET;
 	rndis_msg->msg_len = packet->total_data_buflen;
-	rndis_pkt = &rndis_msg->msg.pkt;
-	rndis_pkt->data_offset = sizeof(struct rndis_packet);
-	rndis_pkt->data_len = packet->total_data_buflen;
-	rndis_pkt->per_pkt_info_offset = sizeof(struct rndis_packet);
+
+	rndis_msg->msg.pkt = (struct rndis_packet) {
+		.data_offset = sizeof(struct rndis_packet),
+		.data_len = packet->total_data_buflen,
+		.per_pkt_info_offset = sizeof(struct rndis_packet),
+	};
 
 	rndis_msg_size = RNDIS_MESSAGE_SIZE(struct rndis_packet);
 
 	hash = skb_get_hash_raw(skb);
 	if (hash != 0 && net->real_num_tx_queues > 1) {
+		u32 *hash_info;
+
 		rndis_msg_size += NDIS_HASH_PPI_SIZE;
-		ppi = init_ppi_data(rndis_msg, NDIS_HASH_PPI_SIZE,
-				    NBL_HASH_VALUE);
-		*(u32 *)((void *)ppi + ppi->ppi_offset) = hash;
+		hash_info = init_ppi_data(rndis_msg, NDIS_HASH_PPI_SIZE,
+					  NBL_HASH_VALUE);
+		*hash_info = hash;
 	}
 
 	if (skb_vlan_tag_present(skb)) {
 		struct ndis_pkt_8021q_info *vlan;
 
 		rndis_msg_size += NDIS_VLAN_PPI_SIZE;
-		ppi = init_ppi_data(rndis_msg, NDIS_VLAN_PPI_SIZE,
-					IEEE_8021Q_INFO);
-		vlan = (struct ndis_pkt_8021q_info *)((void *)ppi +
-						ppi->ppi_offset);
+		vlan = init_ppi_data(rndis_msg, NDIS_VLAN_PPI_SIZE,
+				     IEEE_8021Q_INFO);
+
+		vlan->value = 0;
 		vlan->vlanid = skb->vlan_tci & VLAN_VID_MASK;
 		vlan->pri = (skb->vlan_tci & VLAN_PRIO_MASK) >>
 				VLAN_PRIO_SHIFT;
@@ -533,12 +556,10 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 		struct ndis_tcp_lso_info *lso_info;
 
 		rndis_msg_size += NDIS_LSO_PPI_SIZE;
-		ppi = init_ppi_data(rndis_msg, NDIS_LSO_PPI_SIZE,
-				    TCP_LARGESEND_PKTINFO);
+		lso_info = init_ppi_data(rndis_msg, NDIS_LSO_PPI_SIZE,
+					 TCP_LARGESEND_PKTINFO);
 
-		lso_info = (struct ndis_tcp_lso_info *)((void *)ppi +
-							ppi->ppi_offset);
-
+		lso_info->value = 0;
 		lso_info->lso_v2_transmit.type = NDIS_TCP_LARGE_SEND_OFFLOAD_V2_TYPE;
 		if (skb->protocol == htons(ETH_P_IP)) {
 			lso_info->lso_v2_transmit.ip_version =
@@ -563,12 +584,10 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 			struct ndis_tcp_ip_checksum_info *csum_info;
 
 			rndis_msg_size += NDIS_CSUM_PPI_SIZE;
-			ppi = init_ppi_data(rndis_msg, NDIS_CSUM_PPI_SIZE,
-					    TCPIP_CHKSUM_PKTINFO);
+			csum_info = init_ppi_data(rndis_msg, NDIS_CSUM_PPI_SIZE,
+						  TCPIP_CHKSUM_PKTINFO);
 
-			csum_info = (struct ndis_tcp_ip_checksum_info *)((void *)ppi +
-									 ppi->ppi_offset);
-
+			csum_info->value = 0;
 			csum_info->transmit.tcp_header_offset = skb_transport_offset(skb);
 
 			if (skb->protocol == htons(ETH_P_IP)) {
@@ -602,7 +621,7 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 	/* timestamp packet in software */
 	skb_tx_timestamp(skb);
 
-	ret = netvsc_send(net_device_ctx, packet, rndis_msg, pb, skb);
+	ret = netvsc_send(net, packet, rndis_msg, pb, skb);
 	if (likely(ret == 0))
 		return NETDEV_TX_OK;
 
@@ -624,31 +643,24 @@ no_memory:
 	++net_device_ctx->eth_stats.tx_no_memory;
 	goto drop;
 }
+
 /*
  * netvsc_linkstatus_callback - Link up/down notification
  */
-void netvsc_linkstatus_callback(struct hv_device *device_obj,
+void netvsc_linkstatus_callback(struct net_device *net,
 				struct rndis_message *resp)
 {
 	struct rndis_indicate_status *indicate = &resp->msg.indicate_status;
-	struct net_device *net;
-	struct net_device_context *ndev_ctx;
+	struct net_device_context *ndev_ctx = netdev_priv(net);
 	struct netvsc_reconfig *event;
 	unsigned long flags;
-
-	net = hv_get_drvdata(device_obj);
-
-	if (!net)
-		return;
-
-	ndev_ctx = netdev_priv(net);
 
 	/* Update the physical link speed when changing to another vSwitch */
 	if (indicate->status == RNDIS_STATUS_LINK_SPEED_CHANGE) {
 		u32 speed;
 
-		speed = *(u32 *)((void *)indicate + indicate->
-				 status_buf_offset) / 10000;
+		speed = *(u32 *)((void *)indicate
+				 + indicate->status_buf_offset) / 10000;
 		ndev_ctx->speed = speed;
 		return;
 	}
@@ -722,34 +734,26 @@ static struct sk_buff *netvsc_alloc_recv_skb(struct net_device *net,
  * "wire" on the specified device.
  */
 int netvsc_recv_callback(struct net_device *net,
+			 struct netvsc_device *net_device,
 			 struct vmbus_channel *channel,
 			 void  *data, u32 len,
 			 const struct ndis_tcp_ip_checksum_info *csum_info,
 			 const struct ndis_pkt_8021q_info *vlan)
 {
 	struct net_device_context *net_device_ctx = netdev_priv(net);
-	struct netvsc_device *net_device;
 	u16 q_idx = channel->offermsg.offer.sub_channel_index;
-	struct netvsc_channel *nvchan;
+	struct netvsc_channel *nvchan = &net_device->chan_table[q_idx];
 	struct sk_buff *skb;
 	struct netvsc_stats *rx_stats;
 
 	if (net->reg_state != NETREG_REGISTERED)
 		return NVSP_STAT_FAIL;
 
-	rcu_read_lock();
-	net_device = rcu_dereference(net_device_ctx->nvdev);
-	if (unlikely(!net_device))
-		goto drop;
-
-	nvchan = &net_device->chan_table[q_idx];
-
 	/* Allocate a skb - TODO direct I/O to pages? */
 	skb = netvsc_alloc_recv_skb(net, &nvchan->napi,
 				    csum_info, vlan, data, len);
 	if (unlikely(!skb)) {
-drop:
-		++net->stats.rx_dropped;
+		++net_device_ctx->eth_stats.rx_no_memory;
 		rcu_read_unlock();
 		return NVSP_STAT_FAIL;
 	}
@@ -773,8 +777,6 @@ drop:
 	u64_stats_update_end(&rx_stats->syncp);
 
 	napi_gro_receive(&nvchan->napi, skb);
-	rcu_read_unlock();
-
 	return 0;
 }
 
@@ -813,9 +815,6 @@ static int netvsc_set_channels(struct net_device *net,
 	    channels->rx_count || channels->tx_count || channels->other_count)
 		return -EINVAL;
 
-	if (count > net->num_tx_queues || count > VRSS_CHANNEL_MAX)
-		return -EINVAL;
-
 	if (!nvdev || nvdev->destroy)
 		return -ENODEV;
 
@@ -830,11 +829,15 @@ static int netvsc_set_channels(struct net_device *net,
 	if (was_opened)
 		rndis_filter_close(nvdev);
 
-	rndis_filter_device_remove(dev, nvdev);
-
 	memset(&device_info, 0, sizeof(device_info));
 	device_info.num_chn = count;
 	device_info.ring_size = ring_size;
+	device_info.send_sections = nvdev->send_section_cnt;
+	device_info.send_section_size = nvdev->send_section_size;
+	device_info.recv_sections = nvdev->recv_section_cnt;
+	device_info.recv_section_size = nvdev->recv_section_size;
+
+	rndis_filter_device_remove(dev, nvdev);
 
 	nvdev = rndis_filter_device_add(dev, &device_info);
 	if (!IS_ERR(nvdev)) {
@@ -843,7 +846,13 @@ static int netvsc_set_channels(struct net_device *net,
 	} else {
 		ret = PTR_ERR(nvdev);
 		device_info.num_chn = orig;
-		rndis_filter_device_add(dev, &device_info);
+		nvdev = rndis_filter_device_add(dev, &device_info);
+
+		if (IS_ERR(nvdev)) {
+			netdev_err(net, "restoring channel setting failed: %ld\n",
+				   PTR_ERR(nvdev));
+			return ret;
+		}
 	}
 
 	if (was_opened)
@@ -876,6 +885,8 @@ netvsc_validate_ethtool_ss_cmd(const struct ethtool_link_ksettings *cmd)
 static void netvsc_init_settings(struct net_device *dev)
 {
 	struct net_device_context *ndc = netdev_priv(dev);
+
+	ndc->l4_hash = HV_DEFAULT_L4HASH;
 
 	ndc->speed = SPEED_UNKNOWN;
 	ndc->duplex = DUPLEX_FULL;
@@ -940,6 +951,10 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
 	memset(&device_info, 0, sizeof(device_info));
 	device_info.ring_size = ring_size;
 	device_info.num_chn = nvdev->num_chn;
+	device_info.send_sections = nvdev->send_section_cnt;
+	device_info.send_section_size = nvdev->send_section_size;
+	device_info.recv_sections = nvdev->recv_section_cnt;
+	device_info.recv_section_size = nvdev->recv_section_size;
 
 	rndis_filter_device_remove(hdev, nvdev);
 
@@ -951,10 +966,16 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
 
 		/* Attempt rollback to original MTU */
 		ndev->mtu = orig_mtu;
-		rndis_filter_device_add(hdev, &device_info);
+		nvdev = rndis_filter_device_add(hdev, &device_info);
 
 		if (vf_netdev)
 			dev_set_mtu(vf_netdev, orig_mtu);
+
+		if (IS_ERR(nvdev)) {
+			netdev_err(ndev, "restoring mtu failed: %ld\n",
+				   PTR_ERR(nvdev));
+			return ret;
+		}
 	}
 
 	if (was_opened)
@@ -1004,7 +1025,7 @@ static void netvsc_get_stats64(struct net_device *net,
 	struct net_device_context *ndev_ctx = netdev_priv(net);
 	struct netvsc_device *nvdev = rcu_dereference_rtnl(ndev_ctx->nvdev);
 	struct netvsc_vf_pcpu_stats vf_tot;
-		int i;
+	int i;
 
 	if (!nvdev)
 		return;
@@ -1051,27 +1072,31 @@ static void netvsc_get_stats64(struct net_device *net,
 static int netvsc_set_mac_addr(struct net_device *ndev, void *p)
 {
 	struct net_device_context *ndc = netdev_priv(ndev);
+	struct net_device *vf_netdev = rtnl_dereference(ndc->vf_netdev);
 	struct netvsc_device *nvdev = rtnl_dereference(ndc->nvdev);
 	struct sockaddr *addr = p;
-	char save_adr[ETH_ALEN];
-	unsigned char save_aatype;
 	int err;
 
-	memcpy(save_adr, ndev->dev_addr, ETH_ALEN);
-	save_aatype = ndev->addr_assign_type;
-
-	err = eth_mac_addr(ndev, p);
-	if (err != 0)
+	err = eth_prepare_mac_addr_change(ndev, p);
+	if (err)
 		return err;
 
 	if (!nvdev)
 		return -ENODEV;
 
+	if (vf_netdev) {
+		err = dev_set_mac_address(vf_netdev, addr);
+		if (err)
+			return err;
+	}
+
 	err = rndis_filter_set_device_mac(nvdev, addr->sa_data);
-	if (err != 0) {
-		/* roll back to saved MAC */
-		memcpy(ndev->dev_addr, save_adr, ETH_ALEN);
-		ndev->addr_assign_type = save_aatype;
+	if (!err) {
+		eth_commit_mac_addr_change(ndev, p);
+	} else if (vf_netdev) {
+		/* rollback change on VF */
+		memcpy(addr->sa_data, ndev->dev_addr, ETH_ALEN);
+		dev_set_mac_address(vf_netdev, addr);
 	}
 
 	return err;
@@ -1082,10 +1107,15 @@ static const struct {
 	u16 offset;
 } netvsc_stats[] = {
 	{ "tx_scattered", offsetof(struct netvsc_ethtool_stats, tx_scattered) },
-	{ "tx_no_memory",  offsetof(struct netvsc_ethtool_stats, tx_no_memory) },
+	{ "tx_no_memory", offsetof(struct netvsc_ethtool_stats, tx_no_memory) },
 	{ "tx_no_space",  offsetof(struct netvsc_ethtool_stats, tx_no_space) },
 	{ "tx_too_big",	  offsetof(struct netvsc_ethtool_stats, tx_too_big) },
 	{ "tx_busy",	  offsetof(struct netvsc_ethtool_stats, tx_busy) },
+	{ "tx_send_full", offsetof(struct netvsc_ethtool_stats, tx_send_full) },
+	{ "rx_comp_busy", offsetof(struct netvsc_ethtool_stats, rx_comp_busy) },
+	{ "rx_no_memory", offsetof(struct netvsc_ethtool_stats, rx_no_memory) },
+	{ "stop_queue", offsetof(struct netvsc_ethtool_stats, stop_queue) },
+	{ "wake_queue", offsetof(struct netvsc_ethtool_stats, wake_queue) },
 }, vf_stats[] = {
 	{ "vf_rx_packets", offsetof(struct netvsc_vf_pcpu_stats, rx_packets) },
 	{ "vf_rx_bytes",   offsetof(struct netvsc_vf_pcpu_stats, rx_bytes) },
@@ -1200,18 +1230,38 @@ static void netvsc_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 }
 
 static int
-netvsc_get_rss_hash_opts(struct netvsc_device *nvdev,
+netvsc_get_rss_hash_opts(struct net_device_context *ndc,
 			 struct ethtool_rxnfc *info)
 {
+	const u32 l4_flag = RXH_L4_B_0_1 | RXH_L4_B_2_3;
+
 	info->data = RXH_IP_SRC | RXH_IP_DST;
 
 	switch (info->flow_type) {
 	case TCP_V4_FLOW:
+		if (ndc->l4_hash & HV_TCP4_L4HASH)
+			info->data |= l4_flag;
+
+		break;
+
 	case TCP_V6_FLOW:
-		info->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
-		/* fallthrough */
+		if (ndc->l4_hash & HV_TCP6_L4HASH)
+			info->data |= l4_flag;
+
+		break;
+
 	case UDP_V4_FLOW:
+		if (ndc->l4_hash & HV_UDP4_L4HASH)
+			info->data |= l4_flag;
+
+		break;
+
 	case UDP_V6_FLOW:
+		if (ndc->l4_hash & HV_UDP6_L4HASH)
+			info->data |= l4_flag;
+
+		break;
+
 	case IPV4_FLOW:
 	case IPV6_FLOW:
 		break;
@@ -1239,8 +1289,76 @@ netvsc_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *info,
 		return 0;
 
 	case ETHTOOL_GRXFH:
-		return netvsc_get_rss_hash_opts(nvdev, info);
+		return netvsc_get_rss_hash_opts(ndc, info);
 	}
+	return -EOPNOTSUPP;
+}
+
+static int netvsc_set_rss_hash_opts(struct net_device_context *ndc,
+				    struct ethtool_rxnfc *info)
+{
+	if (info->data == (RXH_IP_SRC | RXH_IP_DST |
+			   RXH_L4_B_0_1 | RXH_L4_B_2_3)) {
+		switch (info->flow_type) {
+		case TCP_V4_FLOW:
+			ndc->l4_hash |= HV_TCP4_L4HASH;
+			break;
+
+		case TCP_V6_FLOW:
+			ndc->l4_hash |= HV_TCP6_L4HASH;
+			break;
+
+		case UDP_V4_FLOW:
+			ndc->l4_hash |= HV_UDP4_L4HASH;
+			break;
+
+		case UDP_V6_FLOW:
+			ndc->l4_hash |= HV_UDP6_L4HASH;
+			break;
+
+		default:
+			return -EOPNOTSUPP;
+		}
+
+		return 0;
+	}
+
+	if (info->data == (RXH_IP_SRC | RXH_IP_DST)) {
+		switch (info->flow_type) {
+		case TCP_V4_FLOW:
+			ndc->l4_hash &= ~HV_TCP4_L4HASH;
+			break;
+
+		case TCP_V6_FLOW:
+			ndc->l4_hash &= ~HV_TCP6_L4HASH;
+			break;
+
+		case UDP_V4_FLOW:
+			ndc->l4_hash &= ~HV_UDP4_L4HASH;
+			break;
+
+		case UDP_V6_FLOW:
+			ndc->l4_hash &= ~HV_UDP6_L4HASH;
+			break;
+
+		default:
+			return -EOPNOTSUPP;
+		}
+
+		return 0;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static int
+netvsc_set_rxnfc(struct net_device *ndev, struct ethtool_rxnfc *info)
+{
+	struct net_device_context *ndc = netdev_priv(ndev);
+
+	if (info->cmd == ETHTOOL_SRXFH)
+		return netvsc_set_rss_hash_opts(ndc, info);
+
 	return -EOPNOTSUPP;
 }
 
@@ -1291,7 +1409,7 @@ static int netvsc_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
 	rndis_dev = ndev->extension;
 	if (indir) {
 		for (i = 0; i < ITAB_NUM; i++)
-			indir[i] = rndis_dev->ind_table[i];
+			indir[i] = rndis_dev->rx_table[i];
 	}
 
 	if (key)
@@ -1317,11 +1435,11 @@ static int netvsc_set_rxfh(struct net_device *dev, const u32 *indir,
 	rndis_dev = ndev->extension;
 	if (indir) {
 		for (i = 0; i < ITAB_NUM; i++)
-			if (indir[i] >= VRSS_CHANNEL_MAX)
+			if (indir[i] >= ndev->num_chn)
 				return -EINVAL;
 
 		for (i = 0; i < ITAB_NUM; i++)
-			rndis_dev->ind_table[i] = indir[i];
+			rndis_dev->rx_table[i] = indir[i];
 	}
 
 	if (!key) {
@@ -1331,7 +1449,107 @@ static int netvsc_set_rxfh(struct net_device *dev, const u32 *indir,
 		key = rndis_dev->rss_key;
 	}
 
-	return rndis_filter_set_rss_param(rndis_dev, key, ndev->num_chn);
+	return rndis_filter_set_rss_param(rndis_dev, key);
+}
+
+/* Hyper-V RNDIS protocol does not have ring in the HW sense.
+ * It does have pre-allocated receive area which is divided into sections.
+ */
+static void __netvsc_get_ringparam(struct netvsc_device *nvdev,
+				   struct ethtool_ringparam *ring)
+{
+	u32 max_buf_size;
+
+	ring->rx_pending = nvdev->recv_section_cnt;
+	ring->tx_pending = nvdev->send_section_cnt;
+
+	if (nvdev->nvsp_version <= NVSP_PROTOCOL_VERSION_2)
+		max_buf_size = NETVSC_RECEIVE_BUFFER_SIZE_LEGACY;
+	else
+		max_buf_size = NETVSC_RECEIVE_BUFFER_SIZE;
+
+	ring->rx_max_pending = max_buf_size / nvdev->recv_section_size;
+	ring->tx_max_pending = NETVSC_SEND_BUFFER_SIZE
+		/ nvdev->send_section_size;
+}
+
+static void netvsc_get_ringparam(struct net_device *ndev,
+				 struct ethtool_ringparam *ring)
+{
+	struct net_device_context *ndevctx = netdev_priv(ndev);
+	struct netvsc_device *nvdev = rtnl_dereference(ndevctx->nvdev);
+
+	if (!nvdev)
+		return;
+
+	__netvsc_get_ringparam(nvdev, ring);
+}
+
+static int netvsc_set_ringparam(struct net_device *ndev,
+				struct ethtool_ringparam *ring)
+{
+	struct net_device_context *ndevctx = netdev_priv(ndev);
+	struct netvsc_device *nvdev = rtnl_dereference(ndevctx->nvdev);
+	struct hv_device *hdev = ndevctx->device_ctx;
+	struct netvsc_device_info device_info;
+	struct ethtool_ringparam orig;
+	u32 new_tx, new_rx;
+	bool was_opened;
+	int ret = 0;
+
+	if (!nvdev || nvdev->destroy)
+		return -ENODEV;
+
+	memset(&orig, 0, sizeof(orig));
+	__netvsc_get_ringparam(nvdev, &orig);
+
+	new_tx = clamp_t(u32, ring->tx_pending,
+			 NETVSC_MIN_TX_SECTIONS, orig.tx_max_pending);
+	new_rx = clamp_t(u32, ring->rx_pending,
+			 NETVSC_MIN_RX_SECTIONS, orig.rx_max_pending);
+
+	if (new_tx == orig.tx_pending &&
+	    new_rx == orig.rx_pending)
+		return 0;	 /* no change */
+
+	memset(&device_info, 0, sizeof(device_info));
+	device_info.num_chn = nvdev->num_chn;
+	device_info.ring_size = ring_size;
+	device_info.send_sections = new_tx;
+	device_info.send_section_size = nvdev->send_section_size;
+	device_info.recv_sections = new_rx;
+	device_info.recv_section_size = nvdev->recv_section_size;
+
+	netif_device_detach(ndev);
+	was_opened = rndis_filter_opened(nvdev);
+	if (was_opened)
+		rndis_filter_close(nvdev);
+
+	rndis_filter_device_remove(hdev, nvdev);
+
+	nvdev = rndis_filter_device_add(hdev, &device_info);
+	if (IS_ERR(nvdev)) {
+		ret = PTR_ERR(nvdev);
+
+		device_info.send_sections = orig.tx_pending;
+		device_info.recv_sections = orig.rx_pending;
+		nvdev = rndis_filter_device_add(hdev, &device_info);
+		if (IS_ERR(nvdev)) {
+			netdev_err(ndev, "restoring ringparam failed: %ld\n",
+				   PTR_ERR(nvdev));
+			return ret;
+		}
+	}
+
+	if (was_opened)
+		rndis_filter_open(nvdev);
+	netif_device_attach(ndev);
+
+	/* We may have missed link change notifications */
+	ndevctx->last_reconfig = 0;
+	schedule_delayed_work(&ndevctx->dwork, 0);
+
+	return ret;
 }
 
 static const struct ethtool_ops ethtool_ops = {
@@ -1344,12 +1562,15 @@ static const struct ethtool_ops ethtool_ops = {
 	.set_channels   = netvsc_set_channels,
 	.get_ts_info	= ethtool_op_get_ts_info,
 	.get_rxnfc	= netvsc_get_rxnfc,
+	.set_rxnfc	= netvsc_set_rxnfc,
 	.get_rxfh_key_size = netvsc_get_rxfh_key_size,
 	.get_rxfh_indir_size = netvsc_rss_indir_size,
 	.get_rxfh	= netvsc_get_rxfh,
 	.set_rxfh	= netvsc_set_rxfh,
 	.get_link_ksettings = netvsc_get_link_ksettings,
 	.set_link_ksettings = netvsc_set_link_ksettings,
+	.get_ringparam	= netvsc_get_ringparam,
+	.set_ringparam	= netvsc_set_ringparam,
 };
 
 static const struct net_device_ops device_ops = {
@@ -1384,7 +1605,12 @@ static void netvsc_link_change(struct work_struct *w)
 	bool notify = false, reschedule = false;
 	unsigned long flags, next_reconfig, delay;
 
-	rtnl_lock();
+	/* if changes are happening, comeback later */
+	if (!rtnl_trylock()) {
+		schedule_delayed_work(&ndev_ctx->dwork, LINKCHANGE_INT);
+		return;
+	}
+
 	net_device = rtnl_dereference(ndev_ctx->nvdev);
 	if (!net_device)
 		goto out_unlock;
@@ -1640,19 +1866,18 @@ static int netvsc_register_vf(struct net_device *vf_netdev)
 
 	netdev_info(ndev, "VF registering: %s\n", vf_netdev->name);
 
-	/* Prevent this module from being unloaded while VF is registered */
-	try_module_get(THIS_MODULE);
-
 	dev_hold(vf_netdev);
 	rcu_assign_pointer(net_device_ctx->vf_netdev, vf_netdev);
 	return NOTIFY_OK;
 }
 
-static int netvsc_vf_up(struct net_device *vf_netdev)
+/* VF up/down change detected, schedule to change data path */
+static int netvsc_vf_changed(struct net_device *vf_netdev)
 {
 	struct net_device_context *net_device_ctx;
 	struct netvsc_device *netvsc_dev;
 	struct net_device *ndev;
+	bool vf_is_up = netif_running(vf_netdev);
 
 	ndev = get_netvsc_byref(vf_netdev);
 	if (!ndev)
@@ -1663,34 +1888,9 @@ static int netvsc_vf_up(struct net_device *vf_netdev)
 	if (!netvsc_dev)
 		return NOTIFY_DONE;
 
-	/* Bump refcount when datapath is acvive - Why? */
-	rndis_filter_open(netvsc_dev);
-
-	/* notify the host to switch the data path. */
-	netvsc_switch_datapath(ndev, true);
-	netdev_info(ndev, "Data path switched to VF: %s\n", vf_netdev->name);
-
-	return NOTIFY_OK;
-}
-
-static int netvsc_vf_down(struct net_device *vf_netdev)
-{
-	struct net_device_context *net_device_ctx;
-	struct netvsc_device *netvsc_dev;
-	struct net_device *ndev;
-
-	ndev = get_netvsc_byref(vf_netdev);
-	if (!ndev)
-		return NOTIFY_DONE;
-
-	net_device_ctx = netdev_priv(ndev);
-	netvsc_dev = rtnl_dereference(net_device_ctx->nvdev);
-	if (!netvsc_dev)
-		return NOTIFY_DONE;
-
-	netvsc_switch_datapath(ndev, false);
-	netdev_info(ndev, "Data path switched from VF: %s\n", vf_netdev->name);
-	rndis_filter_close(netvsc_dev);
+	netvsc_switch_datapath(ndev, vf_is_up);
+	netdev_info(ndev, "Data path switched %s VF: %s\n",
+		    vf_is_up ? "to" : "from", vf_netdev->name);
 
 	return NOTIFY_OK;
 }
@@ -1709,10 +1909,11 @@ static int netvsc_unregister_vf(struct net_device *vf_netdev)
 
 	netdev_info(ndev, "VF unregistering: %s\n", vf_netdev->name);
 
+	netdev_rx_handler_unregister(vf_netdev);
 	netdev_upper_dev_unlink(vf_netdev, ndev);
 	RCU_INIT_POINTER(net_device_ctx->vf_netdev, NULL);
 	dev_put(vf_netdev);
-	module_put(THIS_MODULE);
+
 	return NOTIFY_OK;
 }
 
@@ -1761,10 +1962,20 @@ static int netvsc_probe(struct hv_device *dev,
 	/* We always need headroom for rndis header */
 	net->needed_headroom = RNDIS_AND_PPI_SIZE;
 
+	/* Initialize the number of queues to be 1, we may change it if more
+	 * channels are offered later.
+	 */
+	netif_set_real_num_tx_queues(net, 1);
+	netif_set_real_num_rx_queues(net, 1);
+
 	/* Notify the netvsc driver of the new device */
 	memset(&device_info, 0, sizeof(device_info));
 	device_info.ring_size = ring_size;
 	device_info.num_chn = VRSS_CHANNEL_DEFAULT;
+	device_info.send_sections = NETVSC_DEFAULT_TX;
+	device_info.send_section_size = NETVSC_SEND_SECTION_SIZE;
+	device_info.recv_sections = NETVSC_DEFAULT_RX;
+	device_info.recv_section_size = NETVSC_RECV_SECTION_SIZE;
 
 	nvdev = rndis_filter_device_add(dev, &device_info);
 	if (IS_ERR(nvdev)) {
@@ -1814,11 +2025,11 @@ no_net:
 
 static int netvsc_remove(struct hv_device *dev)
 {
-	struct net_device *net;
 	struct net_device_context *ndev_ctx;
+	struct net_device *vf_netdev;
+	struct net_device *net;
 
 	net = hv_get_drvdata(dev);
-
 	if (net == NULL) {
 		dev_err(&dev->device, "No net device to remove\n");
 		return 0;
@@ -1835,11 +2046,14 @@ static int netvsc_remove(struct hv_device *dev)
 	 * removed. Also blocks mtu and channel changes.
 	 */
 	rtnl_lock();
+	vf_netdev = rtnl_dereference(ndev_ctx->vf_netdev);
+	if (vf_netdev)
+		netvsc_unregister_vf(vf_netdev);
+
 	rndis_filter_device_remove(dev,
 				   rtnl_dereference(ndev_ctx->nvdev));
+	unregister_netdevice(net);
 	rtnl_unlock();
-
-	unregister_netdev(net);
 
 	hv_set_drvdata(dev, NULL);
 
@@ -1898,9 +2112,8 @@ static int netvsc_netdev_event(struct notifier_block *this,
 	case NETDEV_UNREGISTER:
 		return netvsc_unregister_vf(event_dev);
 	case NETDEV_UP:
-		return netvsc_vf_up(event_dev);
 	case NETDEV_DOWN:
-		return netvsc_vf_down(event_dev);
+		return netvsc_vf_changed(event_dev);
 	default:
 		return NOTIFY_DONE;
 	}

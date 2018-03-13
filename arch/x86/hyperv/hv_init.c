@@ -28,45 +28,22 @@
 #include <linux/clockchips.h>
 #include <linux/hyperv.h>
 
-#ifdef CONFIG_X86_64
+#ifdef CONFIG_HYPERV_TSCPAGE
 
 static struct ms_hyperv_tsc_page *tsc_pg;
 
+struct ms_hyperv_tsc_page *hv_get_tsc_page(void)
+{
+	return tsc_pg;
+}
+
 static u64 read_hv_clock_tsc(struct clocksource *arg)
 {
-	u64 current_tick;
+	u64 current_tick = hv_read_tsc_page(tsc_pg);
 
-	if (tsc_pg->tsc_sequence != 0) {
-		/*
-		 * Use the tsc page to compute the value.
-		 */
+	if (current_tick == U64_MAX)
+		rdmsrl(HV_X64_MSR_TIME_REF_COUNT, current_tick);
 
-		while (1) {
-			u64 tmp;
-			u32 sequence = tsc_pg->tsc_sequence;
-			u64 cur_tsc;
-			u64 scale = tsc_pg->tsc_scale;
-			s64 offset = tsc_pg->tsc_offset;
-
-			rdtscll(cur_tsc);
-			/* current_tick = ((cur_tsc *scale) >> 64) + offset */
-			asm("mulq %3"
-				: "=d" (current_tick), "=a" (tmp)
-				: "a" (cur_tsc), "r" (scale));
-
-			current_tick += offset;
-			if (tsc_pg->tsc_sequence == sequence)
-				return current_tick;
-
-			if (tsc_pg->tsc_sequence != 0)
-				continue;
-			/*
-			 * Fallback using MSR method.
-			 */
-			break;
-		}
-	}
-	rdmsrl(HV_X64_MSR_TIME_REF_COUNT, current_tick);
 	return current_tick;
 }
 
@@ -99,7 +76,8 @@ static struct clocksource hyperv_cs_msr = {
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
-static void *hypercall_pg;
+void *hv_hypercall_pg;
+EXPORT_SYMBOL_GPL(hv_hypercall_pg);
 struct clocksource *hyperv_cs;
 EXPORT_SYMBOL_GPL(hyperv_cs);
 
@@ -128,21 +106,21 @@ void hyperv_init(void)
 	guest_id = generate_guest_id(d1, LINUX_VERSION_CODE, d2);
 	wrmsrl(HV_X64_MSR_GUEST_OS_ID, guest_id);
 
-	hypercall_pg  = __vmalloc(PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL_EXEC);
-	if (hypercall_pg == NULL) {
+	hv_hypercall_pg  = __vmalloc(PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL_RX);
+	if (hv_hypercall_pg == NULL) {
 		wrmsrl(HV_X64_MSR_GUEST_OS_ID, 0);
 		return;
 	}
 
 	rdmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 	hypercall_msr.enable = 1;
-	hypercall_msr.guest_physical_address = vmalloc_to_pfn(hypercall_pg);
+	hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
 	wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 
 	/*
 	 * Register Hyper-V specific clocksource.
 	 */
-#ifdef CONFIG_X86_64
+#ifdef CONFIG_HYPERV_TSCPAGE
 	if (ms_hyperv.features & HV_X64_MSR_REFERENCE_TSC_AVAILABLE) {
 		union hv_x64_msr_hypercall_contents tsc_msr;
 
@@ -193,50 +171,9 @@ void hyperv_cleanup(void)
 }
 EXPORT_SYMBOL_GPL(hyperv_cleanup);
 
-/*
- * hv_do_hypercall- Invoke the specified hypercall
- */
 u64 hv_do_hypercall(u64 control, void *input, void *output)
 {
-	u64 input_address = (input) ? virt_to_phys(input) : 0;
-	u64 output_address = (output) ? virt_to_phys(output) : 0;
-#ifdef CONFIG_X86_64
-	u64 hv_status = 0;
-
-	if (!hypercall_pg)
-		return (u64)ULLONG_MAX;
-
-	__asm__ __volatile__("mov %0, %%r8" : : "r" (output_address) : "r8");
-	__asm__ __volatile__(CALL_NOSPEC :
-			     "=a" (hv_status) :
-			     "c" (control), "d" (input_address),
-			     THUNK_TARGET(hypercall_pg));
-
-	return hv_status;
-
-#else
-
-	u32 control_hi = control >> 32;
-	u32 control_lo = control & 0xFFFFFFFF;
-	u32 hv_status_hi = 1;
-	u32 hv_status_lo = 1;
-	u32 input_address_hi = input_address >> 32;
-	u32 input_address_lo = input_address & 0xFFFFFFFF;
-	u32 output_address_hi = output_address >> 32;
-	u32 output_address_lo = output_address & 0xFFFFFFFF;
-
-	if (!hypercall_pg)
-		return (u64)ULLONG_MAX;
-
-	__asm__ __volatile__ (CALL_NOSPEC : "=d"(hv_status_hi),
-			      "=a"(hv_status_lo) : "d" (control_hi),
-			      "a" (control_lo), "b" (input_address_hi),
-			      "c" (input_address_lo), "D"(output_address_hi),
-			      "S"(output_address_lo),
-			      THUNK_TARGET(hypercall_pg));
-
-	return hv_status_lo | ((u64)hv_status_hi << 32);
-#endif /* !x86_64 */
+	return suse_hv_do_hypercall(control, input, output);
 }
 EXPORT_SYMBOL_GPL(hv_do_hypercall);
 

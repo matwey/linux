@@ -3,7 +3,9 @@
 
 #include <linux/types.h>
 #include <linux/atomic.h>
+#include <asm/io.h>
 #include <asm/hyperv.h>
+#include <asm/nospec-branch.h>
 
 /*
  * The below CPUID leaves are present if VersionAndFeatures.HypervisorPresent
@@ -168,10 +170,146 @@ void hv_remove_crash_handler(void);
 
 #if IS_ENABLED(CONFIG_HYPERV)
 extern struct clocksource *hyperv_cs;
+extern void *hv_hypercall_pg;
+
+/* Preserve kABI by keeping the stale hv_do_hypercall() function */
+u64 hv_do_hypercall(u64 control, void *input, void *output);
+
+static inline u64 suse_hv_do_hypercall(u64 control, void *input, void *output)
+{
+	u64 input_address = input ? virt_to_phys(input) : 0;
+	u64 output_address = output ? virt_to_phys(output) : 0;
+	u64 hv_status;
+	register void *__sp asm(_ASM_SP);
+
+#ifdef CONFIG_X86_64
+	if (!hv_hypercall_pg)
+		return U64_MAX;
+
+	__asm__ __volatile__("mov %4, %%r8\n"
+			     CALL_NOSPEC
+			     : "=a" (hv_status), "+r" (__sp),
+			       "+c" (control), "+d" (input_address)
+			     :  "r" (output_address),
+				THUNK_TARGET(hv_hypercall_pg)
+			     : "cc", "memory", "r8", "r9", "r10", "r11");
+#else
+	u32 input_address_hi = upper_32_bits(input_address);
+	u32 input_address_lo = lower_32_bits(input_address);
+	u32 output_address_hi = upper_32_bits(output_address);
+	u32 output_address_lo = lower_32_bits(output_address);
+
+	if (!hv_hypercall_pg)
+		return U64_MAX;
+
+	__asm__ __volatile__(CALL_NOSPEC
+			     : "=A" (hv_status),
+			       "+c" (input_address_lo), "+r" (__sp)
+			     : "A" (control),
+			       "b" (input_address_hi),
+			       "D"(output_address_hi), "S"(output_address_lo),
+			       THUNK_TARGET(hv_hypercall_pg)
+			     : "cc", "memory");
+#endif /* !x86_64 */
+	return hv_status;
+}
+
+#define HV_HYPERCALL_FAST_BIT		BIT(16)
+
+/* Fast hypercall with 8 bytes of input and no output */
+static inline u64 hv_do_fast_hypercall8(u16 code, u64 input1)
+{
+	u64 hv_status, control = (u64)code | HV_HYPERCALL_FAST_BIT;
+	register void *__sp asm(_ASM_SP);
+
+#ifdef CONFIG_X86_64
+	{
+		__asm__ __volatile__(CALL_NOSPEC
+				     : "=a" (hv_status), "+r" (__sp),
+				       "+c" (control), "+d" (input1)
+				     : THUNK_TARGET(hv_hypercall_pg)
+				     : "cc", "r8", "r9", "r10", "r11");
+	}
+#else
+	{
+		u32 input1_hi = upper_32_bits(input1);
+		u32 input1_lo = lower_32_bits(input1);
+
+		__asm__ __volatile__ (CALL_NOSPEC
+				      : "=A"(hv_status),
+					"+c"(input1_lo),
+					"+r"(__sp)
+				      :	"A" (control),
+					"b" (input1_hi),
+					THUNK_TARGET(hv_hypercall_pg)
+				      : "cc", "edi", "esi");
+	}
+#endif
+		return hv_status;
+}
 
 void hyperv_init(void);
 void hyperv_report_panic(struct pt_regs *regs);
 bool hv_is_hypercall_page_setup(void);
 void hyperv_cleanup(void);
+#else /* CONFIG_HYPERV */
+static inline void hyperv_init(void) {}
+static inline bool hv_is_hypercall_page_setup(void) { return false; }
+static inline hyperv_cleanup(void) {}
+#endif /* CONFIG_HYPERV */
+
+#ifdef CONFIG_HYPERV_TSCPAGE
+struct ms_hyperv_tsc_page *hv_get_tsc_page(void);
+static inline u64 hv_read_tsc_page(const struct ms_hyperv_tsc_page *tsc_pg)
+{
+	u64 scale, offset, cur_tsc;
+	u32 sequence;
+
+	/*
+	 * The protocol for reading Hyper-V TSC page is specified in Hypervisor
+	 * Top-Level Functional Specification ver. 3.0 and above. To get the
+	 * reference time we must do the following:
+	 * - READ ReferenceTscSequence
+	 *   A special '0' value indicates the time source is unreliable and we
+	 *   need to use something else. The currently published specification
+	 *   versions (up to 4.0b) contain a mistake and wrongly claim '-1'
+	 *   instead of '0' as the special value, see commit c35b82ef0294.
+	 * - ReferenceTime =
+	 *        ((RDTSC() * ReferenceTscScale) >> 64) + ReferenceTscOffset
+	 * - READ ReferenceTscSequence again. In case its value has changed
+	 *   since our first reading we need to discard ReferenceTime and repeat
+	 *   the whole sequence as the hypervisor was updating the page in
+	 *   between.
+	 */
+	do {
+		sequence = READ_ONCE(tsc_pg->tsc_sequence);
+		if (!sequence)
+			return U64_MAX;
+		/*
+		 * Make sure we read sequence before we read other values from
+		 * TSC page.
+		 */
+		smp_rmb();
+
+		scale = READ_ONCE(tsc_pg->tsc_scale);
+		offset = READ_ONCE(tsc_pg->tsc_offset);
+		cur_tsc = rdtsc_ordered();
+
+		/*
+		 * Make sure we read sequence after we read all other values
+		 * from TSC page.
+		 */
+		smp_rmb();
+
+	} while (READ_ONCE(tsc_pg->tsc_sequence) != sequence);
+
+	return mul_u64_u64_shr(cur_tsc, scale, 64) + offset;
+}
+
+#else
+static inline struct ms_hyperv_tsc_page *hv_get_tsc_page(void)
+{
+	return NULL;
+}
 #endif
 #endif
