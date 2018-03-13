@@ -65,7 +65,7 @@
 static const struct super_operations btrfs_super_ops;
 static struct file_system_type btrfs_fs_type;
 
-static const char *btrfs_decode_error(int errno)
+const char *btrfs_decode_error(int errno)
 {
 	char *errstr = "unknown";
 
