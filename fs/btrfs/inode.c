@@ -7325,8 +7325,16 @@ static ssize_t btrfs_direct_IO(int rw, struct kiocb *iocb,
 			    offset, nr_segs))
 		return 0;
 
+	/*
+	 * The generic stuff only does filemap_write_and_wait_range, which isn't
+	 * enough if we've written compressed pages to this area, so we need to
+	 * call btrfs_wait_ordered_range to make absolutely sure that any
+	 * outstanding dirty pages are on disk.
+	 */
+	count = iov_length(iov, nr_segs);
+	btrfs_wait_ordered_range(inode, offset, count);
+
 	if (rw & WRITE) {
-		count = iov_length(iov, nr_segs);
 		ret = btrfs_delalloc_reserve_space(inode, count);
 		if (ret)
 			return ret;
