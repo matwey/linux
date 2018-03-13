@@ -3001,10 +3001,6 @@ again:
 		if (found_key.objectid != key.objectid)
 			break;
 
-		/* chunk zero is special */
-		if (found_key.offset == 0)
-			break;
-
 		chunk = btrfs_item_ptr(leaf, slot, struct btrfs_chunk);
 
 		if (!counting) {
@@ -3040,6 +3036,8 @@ again:
 			spin_unlock(&fs_info->balance_lock);
 		}
 loop:
+		if (found_key.offset == 0)
+			break;
 		key.offset = found_key.offset - 1;
 	}
 
