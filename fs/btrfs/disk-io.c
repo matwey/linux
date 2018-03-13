@@ -2279,6 +2279,8 @@ int open_ctree(struct super_block *sb,
 	init_waitqueue_head(&fs_info->transaction_blocked_wait);
 	init_waitqueue_head(&fs_info->async_submit_wait);
 
+	INIT_LIST_HEAD(&fs_info->pinned_chunks);
+
 	__setup_root(4096, 4096, 4096, tree_root,
 		     fs_info, BTRFS_ROOT_TREE_OBJECTID);
 
@@ -3547,6 +3549,17 @@ int close_ctree(struct btrfs_root *root)
 
 	btrfs_free_block_rsv(root, root->orphan_block_rsv);
 	root->orphan_block_rsv = NULL;
+
+	lock_chunks(root);
+	while (!list_empty(&fs_info->pinned_chunks)) {
+		struct extent_map *em;
+
+		em = list_first_entry(&fs_info->pinned_chunks,
+				      struct extent_map, list);
+		list_del_init(&em->list);
+		free_extent_map(em);
+	}
+	unlock_chunks(root);
 
 	return 0;
 }
