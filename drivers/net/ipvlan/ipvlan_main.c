@@ -72,11 +72,16 @@ err:
 static void ipvlan_port_destroy(struct net_device *dev)
 {
 	struct ipvl_port *port = ipvlan_port_get_rtnl(dev);
+	struct sk_buff *skb;
 
 	dev->priv_flags &= ~IFF_IPVLAN_MASTER;
 	netdev_rx_handler_unregister(dev);
 	cancel_work_sync(&port->wq);
-	__skb_queue_purge(&port->backlog);
+	while ((skb = __skb_dequeue(&port->backlog)) != NULL) {
+		if (skb->dev)
+			dev_put(skb->dev);
+		kfree_skb(skb);
+	}
 	kfree_rcu(port, rcu);
 }
 

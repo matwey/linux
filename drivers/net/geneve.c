@@ -788,7 +788,7 @@ static struct dst_entry *geneve_get_v6_dst(struct sk_buff *skb,
 	if (info) {
 		fl6->daddr = info->key.u.ipv6.dst;
 		fl6->saddr = info->key.u.ipv6.src;
-		fl6->flowi6_tos = RT_TOS(info->key.tos);
+		fl6->flowlabel = ip6_make_flowinfo(RT_TOS(info->key.tos), 0);
 	} else {
 		prio = geneve->tos;
 		if (prio == 1) {
@@ -797,7 +797,7 @@ static struct dst_entry *geneve_get_v6_dst(struct sk_buff *skb,
 			prio = ip_tunnel_get_dsfield(iip, skb);
 		}
 
-		fl6->flowi6_tos = RT_TOS(prio);
+		fl6->flowlabel = ip6_make_flowinfo(RT_TOS(prio), 0);
 		fl6->daddr = geneve->remote.sin6.sin6_addr;
 	}
 
@@ -968,7 +968,8 @@ static netdev_tx_t geneve6_xmit_skb(struct sk_buff *skb, struct net_device *dev,
 		if (unlikely(err))
 			goto err;
 
-		prio = ip_tunnel_ecn_encap(fl6.flowi6_tos, ip_hdr(skb), skb);
+		prio = ip_tunnel_ecn_encap(ip6_tclass(fl6.flowlabel),
+					   ip_hdr(skb), skb);
 		ttl = geneve->ttl;
 		if (!ttl && ipv6_addr_is_multicast(&fl6.daddr))
 			ttl = 1;
@@ -1417,6 +1418,10 @@ struct net_device *geneve_dev_create_fb(struct net *net, const char *name,
 	 */
 	err = geneve_change_mtu(dev, IP_MAX_MTU);
 	if (err)
+		goto err;
+
+	err = rtnl_configure_link(dev, NULL);
+	if (err < 0)
 		goto err;
 
 	return dev;
