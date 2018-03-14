@@ -407,7 +407,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	this_cpu_write(current_task, next_p);
 
 	/* Reload esp0 and ss1.  This changes current_thread_info(). */
-	load_sp0(tss, next);
 	load_sp0(tss_orig, next);
 
 	/*
