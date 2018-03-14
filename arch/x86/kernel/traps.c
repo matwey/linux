@@ -246,7 +246,7 @@ dotraplinkage void do_double_fault(struct pt_regs *regs, long error_code)
 		regs->cs == __KERNEL_CS &&
 		regs->ip == (unsigned long)native_irq_return_iret)
 	{
-		struct pt_regs *normal_regs = task_pt_regs(current);
+		struct pt_regs *normal_regs = (struct pt_regs *)this_cpu_read(init_tss.x86_tss.sp0) - 1;
 
 		/* Fake a #GP(0) from userspace. */
 		memmove(&normal_regs->ip, (void *)regs->sp, 5*8);
