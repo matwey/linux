@@ -199,6 +199,8 @@ struct hisi_sas_hw {
 			    struct hisi_sas_device *dev);
 	int (*get_wideport_bitmap)(struct hisi_hba *hisi_hba, int port_id);
 	int (*soft_reset)(struct hisi_hba *hisi_hba);
+	int (*write_gpio)(struct hisi_hba *hisi_hba, u8 reg_type,
+				u8 reg_index, u8 reg_count, u8 *write_data);
 	int max_command_entries;
 	int complete_hdr_size;
 };
@@ -212,6 +214,7 @@ struct hisi_hba {
 	struct device *dev;
 
 	void __iomem *regs;
+	void __iomem *sgpio_regs;
 	struct regmap *ctrl;
 	u32 ctrl_reset_reg;
 	u32 ctrl_reset_sts_reg;
