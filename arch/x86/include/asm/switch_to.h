@@ -9,6 +9,8 @@ __visible struct task_struct *__switch_to(struct task_struct *prev,
 struct tss_struct;
 void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 		      struct tss_struct *tss);
+void __switch_to_xtra_io(struct task_struct *prev_p, struct task_struct *next_p,
+			 struct tss_struct *tss);
 
 #ifdef CONFIG_X86_32
 

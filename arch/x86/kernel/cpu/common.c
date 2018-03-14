@@ -1511,7 +1511,7 @@ void cpu_init(void)
 {
 	struct orig_ist *oist;
 	struct task_struct *me;
-	struct tss_struct *t;
+	struct tss_struct *t, *t_orig;
 	unsigned long v;
 	int cpu = stack_smp_processor_id();
 	int i;
@@ -1538,7 +1538,8 @@ void cpu_init(void)
 	 */
 	load_ucode_ap();
 
-	t = &per_cpu(cpu_tss, cpu);
+	t = &per_cpu(cpu_tss_tramp, cpu);
+	t_orig = &per_cpu(cpu_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 
 #ifdef CONFIG_NUMA
@@ -1589,13 +1590,16 @@ void cpu_init(void)
 	}
 
 	t->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
+	t_orig->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
 
 	/*
 	 * <= is required because the CPU will access up to
 	 * 8 bits beyond the end of the IO permission bitmap.
 	 */
-	for (i = 0; i <= IO_BITMAP_LONGS; i++)
+	for (i = 0; i <= IO_BITMAP_LONGS; i++) {
 		t->io_bitmap[i] = ~0UL;
+		t_orig->io_bitmap[i] = ~0UL;
+	}
 
 	atomic_inc(&init_mm.mm_count);
 	me->active_mm = &init_mm;
@@ -1603,6 +1607,7 @@ void cpu_init(void)
 	enter_lazy_tlb(&init_mm, me);
 
 	load_sp0(t, &current->thread);
+	load_sp0(t_orig, &current->thread);
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 	load_mm_ldt(&init_mm);
