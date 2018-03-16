@@ -675,10 +675,12 @@ int qeth_l3_add_ipato_entry(struct qeth_card *card,
 	return rc;
 }
 
-void qeth_l3_del_ipato_entry(struct qeth_card *card,
-		enum qeth_prot_versions proto, u8 *addr, int mask_bits)
+int qeth_l3_del_ipato_entry(struct qeth_card *card,
+			    enum qeth_prot_versions proto, u8 *addr,
+			    int mask_bits)
 {
 	struct qeth_ipato_entry *ipatoe, *tmp;
+	int rc = -ENOENT;
 
 	QETH_CARD_TEXT(card, 2, "delipato");
 
@@ -693,10 +695,12 @@ void qeth_l3_del_ipato_entry(struct qeth_card *card,
 			list_del(&ipatoe->entry);
 			qeth_l3_update_ipato(card);
 			kfree(ipatoe);
+			rc = 0;
 		}
 	}
 
 	spin_unlock_bh(&card->ip_lock);
+	return rc;
 }
 
 /*
@@ -706,7 +710,7 @@ int qeth_l3_add_vipa(struct qeth_card *card, enum qeth_prot_versions proto,
 	      const u8 *addr)
 {
 	struct qeth_ipaddr *ipaddr;
-	int rc = 0;
+	int rc;
 
 	ipaddr = qeth_l3_get_addr_buffer(proto);
 	if (ipaddr) {
@@ -730,7 +734,7 @@ int qeth_l3_add_vipa(struct qeth_card *card, enum qeth_prot_versions proto,
 	if (qeth_l3_ip_from_hash(card, ipaddr))
 		rc = -EEXIST;
 	else
-		qeth_l3_add_ip(card, ipaddr);
+		rc = qeth_l3_add_ip(card, ipaddr);
 
 	spin_unlock_bh(&card->ip_lock);
 
@@ -739,10 +743,11 @@ int qeth_l3_add_vipa(struct qeth_card *card, enum qeth_prot_versions proto,
 	return rc;
 }
 
-void qeth_l3_del_vipa(struct qeth_card *card, enum qeth_prot_versions proto,
-	      const u8 *addr)
+int qeth_l3_del_vipa(struct qeth_card *card, enum qeth_prot_versions proto,
+		     const u8 *addr)
 {
 	struct qeth_ipaddr *ipaddr;
+	int rc;
 
 	ipaddr = qeth_l3_get_addr_buffer(proto);
 	if (ipaddr) {
@@ -757,13 +762,14 @@ void qeth_l3_del_vipa(struct qeth_card *card, enum qeth_prot_versions proto,
 		}
 		ipaddr->type = QETH_IP_TYPE_VIPA;
 	} else
-		return;
+		return -ENOMEM;
 
 	spin_lock_bh(&card->ip_lock);
-	qeth_l3_delete_ip(card, ipaddr);
+	rc = qeth_l3_delete_ip(card, ipaddr);
 	spin_unlock_bh(&card->ip_lock);
 
 	kfree(ipaddr);
+	return rc;
 }
 
 /*
@@ -773,7 +779,7 @@ int qeth_l3_add_rxip(struct qeth_card *card, enum qeth_prot_versions proto,
 	      const u8 *addr)
 {
 	struct qeth_ipaddr *ipaddr;
-	int rc = 0;
+	int rc;
 
 	ipaddr = qeth_l3_get_addr_buffer(proto);
 	if (ipaddr) {
@@ -798,7 +804,7 @@ int qeth_l3_add_rxip(struct qeth_card *card, enum qeth_prot_versions proto,
 	if (qeth_l3_ip_from_hash(card, ipaddr))
 		rc = -EEXIST;
 	else
-		qeth_l3_add_ip(card, ipaddr);
+		rc = qeth_l3_add_ip(card, ipaddr);
 
 	spin_unlock_bh(&card->ip_lock);
 
@@ -807,10 +813,11 @@ int qeth_l3_add_rxip(struct qeth_card *card, enum qeth_prot_versions proto,
 	return rc;
 }
 
-void qeth_l3_del_rxip(struct qeth_card *card, enum qeth_prot_versions proto,
-			const u8 *addr)
+int qeth_l3_del_rxip(struct qeth_card *card, enum qeth_prot_versions proto,
+		     const u8 *addr)
 {
 	struct qeth_ipaddr *ipaddr;
+	int rc;
 
 	ipaddr = qeth_l3_get_addr_buffer(proto);
 	if (ipaddr) {
@@ -825,13 +832,14 @@ void qeth_l3_del_rxip(struct qeth_card *card, enum qeth_prot_versions proto,
 		}
 		ipaddr->type = QETH_IP_TYPE_RXIP;
 	} else
-		return;
+		return -ENOMEM;
 
 	spin_lock_bh(&card->ip_lock);
-	qeth_l3_delete_ip(card, ipaddr);
+	rc = qeth_l3_delete_ip(card, ipaddr);
 	spin_unlock_bh(&card->ip_lock);
 
 	kfree(ipaddr);
+	return rc;
 }
 
 static int qeth_l3_register_addr_entry(struct qeth_card *card,
