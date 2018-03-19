@@ -35,6 +35,8 @@ GCOV_PROFILE_paravirt.o		:= n
 # vread_tsc_64 is hot and should be fully optimized:
 CFLAGS_REMOVE_vread_tsc_64.o = -pg -fno-optimize-sibling-calls
 
+CFLAGS_REMOVE_vsyscall_64.o = $(RETPOLINE_CFLAGS)
+
 obj-y			:= process_$(BITS).o signal.o entry_$(BITS).o
 obj-y			+= traps.o irq.o irq_$(BITS).o dumpstack_$(BITS).o
 obj-y			+= time.o ioport.o ldt.o dumpstack.o
