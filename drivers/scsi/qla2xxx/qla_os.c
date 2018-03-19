@@ -399,7 +399,6 @@ static void qla_init_base_qpair(struct scsi_qla_host *vha, struct req_que *req,
 	ha->base_qpair->use_shadow_reg = IS_SHADOW_REG_CAPABLE(ha) ? 1 : 0;
 	ha->base_qpair->msix = &ha->msix_entries[QLA_MSIX_RSP_Q];
 	INIT_LIST_HEAD(&ha->base_qpair->hints_list);
-	INIT_LIST_HEAD(&ha->base_qpair->nvme_done_list);
 	ha->base_qpair->enable_class_2 = ql2xenableclass2;
 	/* init qpair to this cpu. Will adjust at run time. */
 	qla_cpu_update(rsp->qpair, raw_smp_processor_id());
@@ -456,7 +455,7 @@ static int qla2x00_alloc_queues(struct qla_hw_data *ha, struct req_que *req,
 	ha->req_q_map[0] = req;
 	set_bit(0, ha->rsp_qid_map);
 	set_bit(0, ha->req_qid_map);
-	return 1;
+	return 0;
 
 fail_qpair_map:
 	kfree(ha->base_qpair);
@@ -473,6 +472,9 @@ fail_req_map:
 
 static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 {
+	if (!ha->req_q_map)
+		return;
+
 	if (IS_QLAFX00(ha)) {
 		if (req && req->ring_fx00)
 			dma_free_coherent(&ha->pdev->dev,
@@ -483,14 +485,17 @@ static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 		(req->length + 1) * sizeof(request_t),
 		req->ring, req->dma);
 
-	if (req)
+	if (req) {
 		kfree(req->outstanding_cmds);
-
-	kfree(req);
+		kfree(req);
+	}
 }
 
 static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 {
+	if (!ha->rsp_q_map)
+		return;
+
 	if (IS_QLAFX00(ha)) {
 		if (rsp && rsp->ring)
 			dma_free_coherent(&ha->pdev->dev,
@@ -501,7 +506,8 @@ static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 		(rsp->length + 1) * sizeof(response_t),
 		rsp->ring, rsp->dma);
 	}
-	kfree(rsp);
+	if (rsp)
+		kfree(rsp);
 }
 
 static void qla2x00_free_queues(struct qla_hw_data *ha)
@@ -1725,6 +1731,8 @@ __qla2x00_abort_all_cmds(struct qla_qpair *qp, int res)
 	struct qla_tgt_cmd *cmd;
 	uint8_t trace = 0;
 
+	if (!ha->req_q_map)
+		return;
 	spin_lock_irqsave(qp->qp_lock_ptr, flags);
 	req = qp->req;
 	for (cnt = 1; cnt < req->num_outstanding_cmds; cnt++) {
@@ -1737,7 +1745,7 @@ __qla2x00_abort_all_cmds(struct qla_qpair *qp, int res)
 					sp_get(sp);
 					spin_unlock_irqrestore(qp->qp_lock_ptr,
 					    flags);
-					qla_nvme_abort(ha, sp);
+					qla_nvme_abort(ha, sp, res);
 					spin_lock_irqsave(qp->qp_lock_ptr,
 					    flags);
 				} else if (GET_CMD_SP(sp) &&
@@ -3097,14 +3105,14 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* Set up the irqs */
 	ret = qla2x00_request_irqs(ha, rsp);
 	if (ret)
-		goto probe_hw_failed;
+		goto probe_failed;
 
 	/* Alloc arrays of request and response ring ptrs */
-	if (!qla2x00_alloc_queues(ha, req, rsp)) {
+	if (qla2x00_alloc_queues(ha, req, rsp)) {
 		ql_log(ql_log_fatal, base_vha, 0x003d,
 		    "Failed to allocate memory for queue pointers..."
 		    "aborting.\n");
-		goto probe_init_failed;
+		goto probe_failed;
 	}
 
 	if (ha->mqenable && shost_use_blk_mq(host)) {
@@ -3388,15 +3396,6 @@ skip_dpc:
 	}
 
 	return 0;
-
-probe_init_failed:
-	qla2x00_free_req_que(ha, req);
-	ha->req_q_map[0] = NULL;
-	clear_bit(0, ha->req_qid_map);
-	qla2x00_free_rsp_que(ha, rsp);
-	ha->rsp_q_map[0] = NULL;
-	clear_bit(0, ha->rsp_qid_map);
-	ha->max_req_queues = ha->max_rsp_queues = 0;
 
 probe_failed:
 	if (base_vha->timer_active)
@@ -4508,11 +4507,17 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 	if (ha->init_cb)
 		dma_free_coherent(&ha->pdev->dev, ha->init_cb_size,
 			ha->init_cb, ha->init_cb_dma);
-	vfree(ha->optrom_buffer);
-	kfree(ha->nvram);
-	kfree(ha->npiv_info);
-	kfree(ha->swl);
-	kfree(ha->loop_id_map);
+
+	if (ha->optrom_buffer)
+		vfree(ha->optrom_buffer);
+	if (ha->nvram)
+		kfree(ha->nvram);
+	if (ha->npiv_info)
+		kfree(ha->npiv_info);
+	if (ha->swl)
+		kfree(ha->swl);
+	if (ha->loop_id_map)
+		kfree(ha->loop_id_map);
 
 	ha->srb_mempool = NULL;
 	ha->ctx_mempool = NULL;
@@ -4528,6 +4533,15 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 	ha->ex_init_cb_dma = 0;
 	ha->async_pd = NULL;
 	ha->async_pd_dma = 0;
+	ha->loop_id_map = NULL;
+	ha->npiv_info = NULL;
+	ha->optrom_buffer = NULL;
+	ha->swl = NULL;
+	ha->nvram = NULL;
+	ha->mctp_dump = NULL;
+	ha->dcbx_tlv = NULL;
+	ha->xgmac_data = NULL;
+	ha->sfp_data = NULL;
 
 	ha->s_dma_pool = NULL;
 	ha->dl_dma_pool = NULL;
@@ -4807,9 +4821,10 @@ void qla24xx_create_new_sess(struct scsi_qla_host *vha, struct qla_work_evt *e)
 			fcport->d_id = e->u.new_sess.id;
 			fcport->flags |= FCF_FABRIC_DEVICE;
 			fcport->fw_login_state = DSC_LS_PLOGI_PEND;
-			if (e->u.new_sess.fc4_type == FC4_TYPE_FCP_SCSI) {
+			if (e->u.new_sess.fc4_type & FS_FC4TYPE_FCP)
 				fcport->fc4_type = FC4_TYPE_FCP_SCSI;
-			} else if (e->u.new_sess.fc4_type == FC4_TYPE_NVME) {
+
+			if (e->u.new_sess.fc4_type == FS_FC4TYPE_NVME) {
 				fcport->fc4_type = FC4_TYPE_OTHER;
 				fcport->fc4f_nvme = FC4_TYPE_NVME;
 			}
@@ -5032,7 +5047,8 @@ qla2x00_do_work(struct scsi_qla_host *vha)
 			    e->u.logio.data);
 			break;
 		case QLA_EVT_GPNFT:
-			qla24xx_async_gpnft(vha, e->u.gpnft.fc4_type);
+			qla24xx_async_gpnft(vha, e->u.gpnft.fc4_type,
+			    e->u.gpnft.sp);
 			break;
 		case QLA_EVT_GPNFT_DONE:
 			qla24xx_async_gpnft_done(vha, e->u.iosb.sp);
