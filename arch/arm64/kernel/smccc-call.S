@@ -12,6 +12,7 @@
  *
  */
 #include <linux/linkage.h>
+#include <linux/arm-smccc.h>
 #include <asm/asm-offsets.h>
 
 	.macro SMCCC instr
