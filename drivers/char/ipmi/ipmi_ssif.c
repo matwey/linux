@@ -408,6 +408,7 @@ static void start_event_fetch(struct ssif_info *ssif_info, unsigned long *flags)
 	msg = ipmi_alloc_smi_msg();
 	if (!msg) {
 		ssif_info->ssif_state = SSIF_NORMAL;
+		ipmi_ssif_unlock_cond(ssif_info, flags);
 		return;
 	}
 
@@ -430,6 +431,7 @@ static void start_recv_msg_fetch(struct ssif_info *ssif_info,
 	msg = ipmi_alloc_smi_msg();
 	if (!msg) {
 		ssif_info->ssif_state = SSIF_NORMAL;
+		ipmi_ssif_unlock_cond(ssif_info, flags);
 		return;
 	}
 
@@ -928,23 +930,18 @@ static void msg_written_handler(struct ssif_info *ssif_info, int result,
 			msg_done_handler(ssif_info, -EIO, NULL, 0);
 		}
 	} else {
+		/* Ready to request the result. */
 		unsigned long oflags, *flags;
-		bool got_alert;
 
 		ssif_inc_stat(ssif_info, sent_messages);
 		ssif_inc_stat(ssif_info, sent_messages_parts);
 
 		flags = ipmi_ssif_lock_cond(ssif_info, &oflags);
-		got_alert = ssif_info->got_alert;
-		if (got_alert) {
+		if (ssif_info->got_alert) {
+			/* The result is already ready, just start it. */
 			ssif_info->got_alert = false;
-			ssif_info->waiting_alert = false;
-		}
-
-		if (got_alert) {
 			ipmi_ssif_unlock_cond(ssif_info, flags);
-			/* The alert already happened, try now. */
-			retry_timeout((unsigned long) ssif_info);
+			start_get(ssif_info);
 		} else {
 			/* Wait a jiffie then request the next message */
 			ssif_info->waiting_alert = true;
@@ -1102,7 +1099,7 @@ static int inc_usecount(void *send_info)
 {
 	struct ssif_info *ssif_info = send_info;
 
-	if (!i2c_get_adapter(ssif_info->client->adapter->nr))
+	if (!i2c_get_adapter(i2c_adapter_id(ssif_info->client->adapter)))
 		return -ENODEV;
 
 	i2c_use_client(ssif_info->client);
@@ -1429,8 +1426,7 @@ static int find_slave_address(struct i2c_client *client, int slave_addr)
 	list_for_each_entry(info, &ssif_infos, link) {
 		if (info->binfo.addr != client->addr)
 			continue;
-		if (info->adapter_name && client->adapter->name &&
-		    strcmp_nospace(info->adapter_name,
+		if (info->adapter_name && strcmp_nospace(info->adapter_name,
 				   client->adapter->name))
 			continue;
 		if (info->slave_addr) {
@@ -1677,7 +1673,8 @@ static int ssif_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	{
 		unsigned int thread_num;
 
-		thread_num = ((ssif_info->client->adapter->nr << 8) |
+		thread_num = ((i2c_adapter_id(ssif_info->client->adapter)
+			       << 8) |
 			      ssif_info->client->addr);
 		init_completion(&ssif_info->wake_thread);
 		ssif_info->thread = kthread_run(ipmi_ssif_thread, ssif_info,
@@ -1913,7 +1910,7 @@ static int try_init_spmi(struct SPMITable *spmi)
 		return -EIO;
 	}
 
-	myaddr = spmi->addr.address >> 1;
+	myaddr = spmi->addr.address & 0x7f;
 
 	return new_ssif_client(myaddr, NULL, 0, 0, SI_SPMI);
 }

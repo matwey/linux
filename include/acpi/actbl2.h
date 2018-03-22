@@ -793,6 +793,9 @@ struct acpi_iort_smmu_v3 {
 	u32 pri_gsiv;
 	u32 gerr_gsiv;
 	u32 sync_gsiv;
+	u8 pxm;
+	u8 reserved1;
+	u16 reserved2;
 };
 
 /* Values for Model field above */
@@ -805,6 +808,7 @@ struct acpi_iort_smmu_v3 {
 
 #define ACPI_IORT_SMMU_V3_COHACC_OVERRIDE   (1)
 #define ACPI_IORT_SMMU_V3_HTTU_OVERRIDE     (1<<1)
+#define ACPI_IORT_SMMU_V3_PXM_VALID         (1<<3)
 
 /*******************************************************************************
  *
@@ -1214,7 +1218,8 @@ enum acpi_spmi_interface_types {
  *        Version 2
  *
  * Conforms to "TCG ACPI Specification, Family 1.2 and 2.0",
- * December 19, 2014
+ * Version 1.2, Revision 8
+ * February 27, 2017
  *
  * NOTE: There are two versions of the table with the same signature --
  * the client version and the server version. The common platform_class
@@ -1277,7 +1282,8 @@ struct acpi_table_tcpa_server {
  *        Version 4
  *
  * Conforms to "TCG ACPI Specification, Family 1.2 and 2.0",
- * December 19, 2014
+ * Version 1.2, Revision 8
+ * February 27, 2017
  *
  ******************************************************************************/
 
@@ -1298,7 +1304,36 @@ struct acpi_table_tpm2 {
 #define ACPI_TPM2_MEMORY_MAPPED                     6
 #define ACPI_TPM2_COMMAND_BUFFER                    7
 #define ACPI_TPM2_COMMAND_BUFFER_WITH_START_METHOD  8
-#define ACPI_TPM2_COMMAND_BUFFER_WITH_SMC          11
+#define ACPI_TPM2_COMMAND_BUFFER_WITH_ARM_SMC       11	/* V1.2 Rev 8 */
+
+/* Trailer appears after any start_method subtables */
+
+struct acpi_tpm2_trailer {
+	u32 minimum_log_length;	/* Minimum length for the event log area */
+	u64 log_address;	/* Address of the event log area */
+};
+
+/*
+ * Subtables (start_method-specific)
+ */
+
+/* 11: Start Method for ARM SMC (V1.2 Rev 8) */
+
+struct acpi_tpm2_arm_smc {
+	u32 global_interrupt;
+	u8 interrupt_flags;
+	u8 operation_flags;
+	u16 reserved;
+	u32 function_id;
+};
+
+/* Values for interrupt_flags above */
+
+#define ACPI_TPM2_INTERRUPT_SUPPORT     (1)
+
+/* Values for operation_flags above */
+
+#define ACPI_TPM2_IDLE_SUPPORT          (1)
 
 #define ACPI_TPM2_START_METHOD_PARAMETER_OFFSET    52
 
