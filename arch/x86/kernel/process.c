@@ -39,11 +39,7 @@
  * section. Since TSS's are completely CPU-local, we want them
  * on exact cacheline boundaries, to eliminate cacheline ping-pong.
  */
-#if defined(CONFIG_GENKSYMS)
 __visible DEFINE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss) = {
-#else
-__visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss) = {
-#endif
 	.x86_tss = {
 		.sp0 = TOP_OF_INIT_STACK,
 #ifdef CONFIG_X86_32
@@ -63,6 +59,19 @@ __visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss) 
 #endif
 };
 EXPORT_PER_CPU_SYMBOL(cpu_tss);
+
+/*
+ * Duplicated cpu_tss for entry trampoline usage. We need to preserve the
+ * original cpu_tss and its .x86_tss.sp0 pointing to a thread stack due to kABI.
+ */
+#ifdef CONFIG_X86_64
+__visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss_tramp) = {
+	.x86_tss = {
+		.sp0 = TOP_OF_INIT_STACK,
+	 },
+};
+EXPORT_PER_CPU_SYMBOL(cpu_tss_tramp);
+#endif
 
 #ifdef CONFIG_X86_64
 static DEFINE_PER_CPU(unsigned char, is_idle);
@@ -105,13 +114,19 @@ void exit_thread(struct task_struct *tsk)
 	struct fpu *fpu = &t->fpu;
 
 	if (bp) {
-		struct tss_struct *tss = &per_cpu(cpu_tss, get_cpu());
+		struct tss_struct *tss;
+		unsigned int cpu;
+
+		cpu = get_cpu();
+		tss = &per_cpu(cpu_tss_tramp, cpu);
 
 		t->io_bitmap_ptr = NULL;
 		clear_thread_flag(TIF_IO_BITMAP);
 		/*
 		 * Careful, clear this in the TSS too:
 		 */
+		memset(tss->io_bitmap, 0xff, t->io_bitmap_max);
+		tss = &per_cpu(cpu_tss, cpu);
 		memset(tss->io_bitmap, 0xff, t->io_bitmap_max);
 		t->io_bitmap_max = 0;
 		put_cpu();
@@ -191,14 +206,32 @@ int set_tsc_mode(unsigned int val)
 	return 0;
 }
 
-void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
-		      struct tss_struct *tss)
+void __switch_to_xtra_io(struct task_struct *prev_p, struct task_struct *next_p,
+			 struct tss_struct *tss)
 {
 	struct thread_struct *prev, *next;
 
 	prev = &prev_p->thread;
 	next = &next_p->thread;
 
+	if (test_tsk_thread_flag(next_p, TIF_IO_BITMAP)) {
+		/*
+		 * Copy the relevant range of the IO bitmap.
+		 * Normally this is 128 bytes or less:
+		 */
+		memcpy(tss->io_bitmap, next->io_bitmap_ptr,
+		       max(prev->io_bitmap_max, next->io_bitmap_max));
+	} else if (test_tsk_thread_flag(prev_p, TIF_IO_BITMAP)) {
+		/*
+		 * Clear any possible leftover bits:
+		 */
+		memset(tss->io_bitmap, 0xff, prev->io_bitmap_max);
+	}
+}
+
+void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
+		      struct tss_struct *tss)
+{
 	if (test_tsk_thread_flag(prev_p, TIF_BLOCKSTEP) ^
 	    test_tsk_thread_flag(next_p, TIF_BLOCKSTEP)) {
 		unsigned long debugctl = get_debugctlmsr();
@@ -219,19 +252,7 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 			hard_enable_TSC();
 	}
 
-	if (test_tsk_thread_flag(next_p, TIF_IO_BITMAP)) {
-		/*
-		 * Copy the relevant range of the IO bitmap.
-		 * Normally this is 128 bytes or less:
-		 */
-		memcpy(tss->io_bitmap, next->io_bitmap_ptr,
-		       max(prev->io_bitmap_max, next->io_bitmap_max));
-	} else if (test_tsk_thread_flag(prev_p, TIF_IO_BITMAP)) {
-		/*
-		 * Clear any possible leftover bits:
-		 */
-		memset(tss->io_bitmap, 0xff, prev->io_bitmap_max);
-	}
+	__switch_to_xtra_io(prev_p, next_p, tss);
 	propagate_user_return_notify(prev_p, next_p);
 }
 
