@@ -3853,6 +3853,12 @@ static void pci_reset_notify(struct pci_dev *dev, bool prepare)
 {
 	const struct pci_error_handlers *err_handler =
 			dev->driver ? dev->driver->err_handler : NULL;
+
+	/*
+	 * dev->driver->err_handler->reset_notify() is protected against
+	 * races with ->remove() by the device lock, which must be held by
+	 * the caller.
+	 */
 	if (err_handler && err_handler->reset_notify)
 		err_handler->reset_notify(dev, prepare);
 }
@@ -3988,11 +3994,13 @@ int pci_reset_function(struct pci_dev *dev)
 	if (rc)
 		return rc;
 
+	pci_dev_lock(dev);
 	pci_dev_save_and_disable(dev);
 
-	rc = pci_dev_reset(dev, 0);
+	rc = __pci_dev_reset(dev, 0);
 
 	pci_dev_restore(dev);
+	pci_dev_unlock(dev);
 
 	return rc;
 }
@@ -4012,16 +4020,14 @@ int pci_try_reset_function(struct pci_dev *dev)
 	if (rc)
 		return rc;
 
-	pci_dev_save_and_disable(dev);
+	if (!pci_dev_trylock(dev))
+		return -EAGAIN;
 
-	if (pci_dev_trylock(dev)) {
-		rc = __pci_dev_reset(dev, 0);
-		pci_dev_unlock(dev);
-	} else
-		rc = -EAGAIN;
+	pci_dev_save_and_disable(dev);
+	rc = __pci_dev_reset(dev, 0);
+	pci_dev_unlock(dev);
 
 	pci_dev_restore(dev);
-
 	return rc;
 }
 EXPORT_SYMBOL_GPL(pci_try_reset_function);
@@ -4179,7 +4185,9 @@ static void pci_bus_save_and_disable(struct pci_bus *bus)
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pci_dev_lock(dev);
 		pci_dev_save_and_disable(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
 			pci_bus_save_and_disable(dev->subordinate);
 	}
@@ -4194,7 +4202,9 @@ static void pci_bus_restore(struct pci_bus *bus)
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pci_dev_lock(dev);
 		pci_dev_restore(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
 			pci_bus_restore(dev->subordinate);
 	}
