@@ -25,7 +25,7 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 {
 	struct thread_struct *t = &current->thread;
 	struct tss_struct *tss;
-	unsigned int i, max_long, bytes, bytes_updated;
+	unsigned int i, max_long, bytes, bytes_updated, cpu;
 
 	if ((from + num <= from) || (from + num > IO_BITMAP_BITS))
 		return -EINVAL;
@@ -55,7 +55,8 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	 * because the ->io_bitmap_max value must match the bitmap
 	 * contents:
 	 */
-	tss = &per_cpu(cpu_tss, get_cpu());
+	cpu = get_cpu();
+	tss = &per_cpu(cpu_tss_tramp, cpu);
 
 	if (turn_on)
 		bitmap_clear(t->io_bitmap_ptr, from, num);
@@ -77,6 +78,8 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	t->io_bitmap_max = bytes;
 
 	/* Update the TSS: */
+	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
+	tss = &per_cpu(cpu_tss, cpu);
 	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
 
 	put_cpu();
