@@ -185,6 +185,8 @@ enum pci_dev_flags {
 	PCI_DEV_FLAGS_BRIDGE_XLATE_ROOT = (__force pci_dev_flags_t) (1 << 9),
 	/* Use Relaxed Ordering for TLPs directed at this device */
 	PCI_DEV_FLAGS_RELAXED_ORDERING = (__force pci_dev_flags_t) (1 << 10),
+	/* Do not use FLR even if device advertises PCI_AF_CAP */
+	PCI_DEV_FLAGS_NO_FLR_RESET = (__force pci_dev_flags_t) (1 << 11),
 };
 
 enum pci_irq_reroute_variant {
