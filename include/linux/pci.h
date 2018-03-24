@@ -185,6 +185,8 @@ enum pci_dev_flags {
 	PCI_DEV_FLAGS_BRIDGE_XLATE_ROOT = (__force pci_dev_flags_t) (1 << 9),
 	/* Use Relaxed Ordering for TLPs directed at this device */
 	PCI_DEV_FLAGS_RELAXED_ORDERING = (__force pci_dev_flags_t) (1 << 10),
+	/* Do not use FLR even if device advertises PCI_AF_CAP */
+	PCI_DEV_FLAGS_NO_FLR_RESET = (__force pci_dev_flags_t) (1 << 11),
 };
 
 enum pci_irq_reroute_variant {
@@ -1045,9 +1047,11 @@ int pcie_get_mps(struct pci_dev *dev);
 int pcie_set_mps(struct pci_dev *dev, int mps);
 int pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
 			  enum pcie_link_width *width);
+void pcie_flr(struct pci_dev *dev);
 int __pci_reset_function(struct pci_dev *dev);
 int __pci_reset_function_locked(struct pci_dev *dev);
 int pci_reset_function(struct pci_dev *dev);
+int pci_reset_function_locked(struct pci_dev *dev);
 int pci_try_reset_function(struct pci_dev *dev);
 int pci_probe_reset_slot(struct pci_slot *slot);
 int pci_reset_slot(struct pci_slot *slot);
