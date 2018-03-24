@@ -3578,6 +3578,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 		       int flags)
 {
 	struct module *mod;
+	static char modname[MODULE_NAME_LEN+1];
 	long err;
 	char *after_dashes;
 	unsigned long time_start, time_end;
@@ -3597,6 +3598,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
 		err = PTR_ERR(mod);
 		goto free_copy;
 	}
+
+	strlcpy(modname, mod->name, sizeof(modname));
 
 	/* Reserve our place in the list. */
 	err = add_unformed_module(mod);
@@ -3720,7 +3723,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	 */
 	WARN(delta >= 300000,
 	     "Device driver %s initialization / probe took %d ms to complete, report this\n",
-	     mod->name, delta);
+	     modname, delta);
 
 	return err;
 

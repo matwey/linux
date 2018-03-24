@@ -3550,24 +3550,64 @@ int pci_wait_for_pending_transaction(struct pci_dev *dev)
 }
 EXPORT_SYMBOL(pci_wait_for_pending_transaction);
 
-static int pcie_flr(struct pci_dev *dev, int probe)
+/*
+ * We should only need to wait 100ms after FLR, but some devices take longer.
+ * Wait for up to 1000ms for config space to return something other than -1.
+ * Intel IGD requires this when an LCD panel is attached.  We read the 2nd
+ * dword because VFs don't implement the 1st dword.
+ */
+static void pci_flr_wait(struct pci_dev *dev)
+{
+	int i = 0;
+	u32 id;
+
+	do {
+		msleep(100);
+		pci_read_config_dword(dev, PCI_COMMAND, &id);
+	} while (i++ < 10 && id == ~0);
+
+	if (id == ~0)
+		dev_warn(&dev->dev, "Failed to return from FLR\n");
+	else if (i > 1)
+		dev_info(&dev->dev, "Required additional %dms to return from FLR\n",
+			 (i - 1) * 100);
+}
+
+/**
+ * pcie_has_flr - check if a device supports function level resets
+ * @dev:	device to check
+ *
+ * Returns true if the device advertises support for PCIe function level
+ * resets.
+ */
+static bool pcie_has_flr(struct pci_dev *dev)
 {
 	u32 cap;
 
+	if (dev->dev_flags & PCI_DEV_FLAGS_NO_FLR_RESET)
+		return false;
+
 	pcie_capability_read_dword(dev, PCI_EXP_DEVCAP, &cap);
-	if (!(cap & PCI_EXP_DEVCAP_FLR))
-		return -ENOTTY;
+	return cap & PCI_EXP_DEVCAP_FLR;
+}
 
-	if (probe)
-		return 0;
-
+/**
+ * pcie_flr - initiate a PCIe function level reset
+ * @dev:	device to reset
+ *
+ * Initiate a function level reset on @dev.  The caller should ensure the
+ * device supports FLR before calling this function, e.g. by using the
+ * pcie_has_flr() helper.
+ */
+void pcie_flr(struct pci_dev *dev)
+{
 	if (!pci_wait_for_pending_transaction(dev))
 		dev_err(&dev->dev, "timed out waiting for pending transaction; performing function level reset anyway\n");
 
 	pcie_capability_set_word(dev, PCI_EXP_DEVCTL, PCI_EXP_DEVCTL_BCR_FLR);
-	msleep(100);
-	return 0;
+	pci_flr_wait(dev);
 }
+EXPORT_SYMBOL_GPL(pcie_flr);
 
 static int pci_af_flr(struct pci_dev *dev, int probe)
 {
@@ -3576,6 +3616,9 @@ static int pci_af_flr(struct pci_dev *dev, int probe)
 
 	pos = pci_find_capability(dev, PCI_CAP_ID_AF);
 	if (!pos)
+		return -ENOTTY;
+
+	if (dev->dev_flags & PCI_DEV_FLAGS_NO_FLR_RESET)
 		return -ENOTTY;
 
 	pci_read_config_byte(dev, pos + PCI_AF_CAP, &cap);
@@ -3595,7 +3638,7 @@ static int pci_af_flr(struct pci_dev *dev, int probe)
 		dev_err(&dev->dev, "timed out waiting for pending transaction; performing AF function level reset anyway\n");
 
 	pci_write_config_byte(dev, pos + PCI_AF_CTRL, PCI_AF_CTRL_FLR);
-	msleep(100);
+	pci_flr_wait(dev);
 	return 0;
 }
 
@@ -3738,37 +3781,6 @@ static int pci_dev_reset_slot_function(struct pci_dev *dev, int probe)
 	return pci_reset_hotplug_slot(dev->slot->hotplug, probe);
 }
 
-static int __pci_dev_reset(struct pci_dev *dev, int probe)
-{
-	int rc;
-
-	might_sleep();
-
-	rc = pci_dev_specific_reset(dev, probe);
-	if (rc != -ENOTTY)
-		goto done;
-
-	rc = pcie_flr(dev, probe);
-	if (rc != -ENOTTY)
-		goto done;
-
-	rc = pci_af_flr(dev, probe);
-	if (rc != -ENOTTY)
-		goto done;
-
-	rc = pci_pm_reset(dev, probe);
-	if (rc != -ENOTTY)
-		goto done;
-
-	rc = pci_dev_reset_slot_function(dev, probe);
-	if (rc != -ENOTTY)
-		goto done;
-
-	rc = pci_parent_bus_reset(dev, probe);
-done:
-	return rc;
-}
-
 static void pci_dev_lock(struct pci_dev *dev)
 {
 	pci_cfg_access_lock(dev);
@@ -3807,6 +3819,12 @@ static void pci_reset_notify(struct pci_dev *dev, bool prepare)
 {
 	const struct pci_error_handlers *err_handler =
 			dev->driver ? dev->driver->err_handler : NULL;
+
+	/*
+	 * dev->driver->err_handler->reset_notify() is protected against
+	 * races with ->remove() by the device lock, which must be held by
+	 * the caller.
+	 */
 	if (err_handler && err_handler->reset_notify)
 		err_handler->reset_notify(dev, prepare);
 }
@@ -3839,21 +3857,6 @@ static void pci_dev_restore(struct pci_dev *dev)
 	pci_reset_notify(dev, false);
 }
 
-static int pci_dev_reset(struct pci_dev *dev, int probe)
-{
-	int rc;
-
-	if (!probe)
-		pci_dev_lock(dev);
-
-	rc = __pci_dev_reset(dev, probe);
-
-	if (!probe)
-		pci_dev_unlock(dev);
-
-	return rc;
-}
-
 /**
  * __pci_reset_function - reset a PCI device function
  * @dev: PCI device to reset
@@ -3873,7 +3876,13 @@ static int pci_dev_reset(struct pci_dev *dev, int probe)
  */
 int __pci_reset_function(struct pci_dev *dev)
 {
-	return pci_dev_reset(dev, 0);
+	int ret;
+
+	pci_dev_lock(dev);
+	ret = __pci_reset_function_locked(dev);
+	pci_dev_unlock(dev);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(__pci_reset_function);
 
@@ -3898,7 +3907,27 @@ EXPORT_SYMBOL_GPL(__pci_reset_function);
  */
 int __pci_reset_function_locked(struct pci_dev *dev)
 {
-	return __pci_dev_reset(dev, 0);
+	int rc;
+
+	might_sleep();
+
+	rc = pci_dev_specific_reset(dev, 0);
+	if (rc != -ENOTTY)
+		return rc;
+	if (pcie_has_flr(dev)) {
+		pcie_flr(dev);
+		return 0;
+	}
+	rc = pci_af_flr(dev, 0);
+	if (rc != -ENOTTY)
+		return rc;
+	rc = pci_pm_reset(dev, 0);
+	if (rc != -ENOTTY)
+		return rc;
+	rc = pci_dev_reset_slot_function(dev, 0);
+	if (rc != -ENOTTY)
+		return rc;
+	return pci_parent_bus_reset(dev, 0);
 }
 EXPORT_SYMBOL_GPL(__pci_reset_function_locked);
 
@@ -3915,7 +3944,26 @@ EXPORT_SYMBOL_GPL(__pci_reset_function_locked);
  */
 int pci_probe_reset_function(struct pci_dev *dev)
 {
-	return pci_dev_reset(dev, 1);
+	int rc;
+
+	might_sleep();
+
+	rc = pci_dev_specific_reset(dev, 1);
+	if (rc != -ENOTTY)
+		return rc;
+	if (pcie_has_flr(dev))
+		return 0;
+	rc = pci_af_flr(dev, 1);
+	if (rc != -ENOTTY)
+		return rc;
+	rc = pci_pm_reset(dev, 1);
+	if (rc != -ENOTTY)
+		return rc;
+	rc = pci_dev_reset_slot_function(dev, 1);
+	if (rc != -ENOTTY)
+		return rc;
+
+	return pci_parent_bus_reset(dev, 1);
 }
 
 /**
@@ -3938,19 +3986,54 @@ int pci_reset_function(struct pci_dev *dev)
 {
 	int rc;
 
-	rc = pci_dev_reset(dev, 1);
-	if (rc)
-		return rc;
+	if (!dev->reset_fn)
+		return -ENOTTY;
+
+	pci_dev_lock(dev);
+	pci_dev_save_and_disable(dev);
+
+	rc = __pci_reset_function_locked(dev);
+
+	pci_dev_restore(dev);
+	pci_dev_unlock(dev);
+
+	return rc;
+}
+EXPORT_SYMBOL_GPL(pci_reset_function);
+
+/**
+ * pci_reset_function_locked - quiesce and reset a PCI device function
+ * @dev: PCI device to reset
+ *
+ * Some devices allow an individual function to be reset without affecting
+ * other functions in the same device.  The PCI device must be responsive
+ * to PCI config space in order to use this function.
+ *
+ * This function does not just reset the PCI portion of a device, but
+ * clears all the state associated with the device.  This function differs
+ * from __pci_reset_function() in that it saves and restores device state
+ * over the reset.  It also differs from pci_reset_function() in that it
+ * requires the PCI device lock to be held.
+ *
+ * Returns 0 if the device function was successfully reset or negative if the
+ * device doesn't support resetting a single function.
+ */
+int pci_reset_function_locked(struct pci_dev *dev)
+{
+	int rc;
+
+	if (!dev->reset_fn)
+		return -ENOTTY;
 
 	pci_dev_save_and_disable(dev);
 
-	rc = pci_dev_reset(dev, 0);
+	rc = __pci_reset_function_locked(dev);
 
 	pci_dev_restore(dev);
 
 	return rc;
 }
-EXPORT_SYMBOL_GPL(pci_reset_function);
+EXPORT_SYMBOL_GPL(pci_reset_function_locked);
 
 /**
  * pci_try_reset_function - quiesce and reset a PCI device function
@@ -3962,19 +4045,16 @@ int pci_try_reset_function(struct pci_dev *dev)
 {
 	int rc;
 
-	rc = pci_dev_reset(dev, 1);
-	if (rc)
-		return rc;
+	if (!dev->reset_fn)
+		return -ENOTTY;
+
+	if (!pci_dev_trylock(dev))
+		return -EAGAIN;
 
 	pci_dev_save_and_disable(dev);
-
-	if (pci_dev_trylock(dev)) {
-		rc = __pci_dev_reset(dev, 0);
-		pci_dev_unlock(dev);
-	} else
-		rc = -EAGAIN;
-
+	rc = __pci_reset_function_locked(dev);
 	pci_dev_restore(dev);
+	pci_dev_unlock(dev);
 
 	return rc;
 }
@@ -4133,7 +4213,9 @@ static void pci_bus_save_and_disable(struct pci_bus *bus)
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pci_dev_lock(dev);
 		pci_dev_save_and_disable(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
 			pci_bus_save_and_disable(dev->subordinate);
 	}
@@ -4148,7 +4230,9 @@ static void pci_bus_restore(struct pci_bus *bus)
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pci_dev_lock(dev);
 		pci_dev_restore(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
 			pci_bus_restore(dev->subordinate);
 	}
@@ -4179,7 +4263,9 @@ static void pci_slot_restore(struct pci_slot *slot)
 	list_for_each_entry(dev, &slot->bus->devices, bus_list) {
 		if (!dev->slot || dev->slot != slot)
 			continue;
+		pci_dev_lock(dev);
 		pci_dev_restore(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
 			pci_bus_restore(dev->subordinate);
 	}
