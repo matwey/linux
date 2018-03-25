@@ -901,7 +901,7 @@ ssetup_exit:
 				cifs_dbg(FYI,
 					"SMB3 session key generation failed\n");
 				mutex_unlock(&server->srv_mutex);
-				return rc;
+				goto keygen_exit;
 			}
 		}
 		if (!server->session_estab) {
@@ -917,6 +917,7 @@ ssetup_exit:
 		spin_unlock(&GlobalMid_Lock);
 	}
 
+keygen_exit:
 	if (spnego_key) {
 		key_invalidate(spnego_key);
 		key_put(spnego_key);
