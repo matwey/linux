@@ -528,7 +528,9 @@ static void nvme_keep_alive_end_io(struct request *rq, int error)
 		return;
 	}
 
-	schedule_delayed_work(&ctrl->ka_work, ctrl->kato * HZ);
+	/* Skip keep-alive if the controller is not live */
+	if (ctrl->state == NVME_CTRL_LIVE)
+		schedule_delayed_work(&ctrl->ka_work, ctrl->kato * HZ);
 }
 
 static int nvme_keep_alive(struct nvme_ctrl *ctrl)
@@ -556,6 +558,10 @@ static void nvme_keep_alive_work(struct work_struct *work)
 {
 	struct nvme_ctrl *ctrl = container_of(to_delayed_work(work),
 			struct nvme_ctrl, ka_work);
+
+	/* Short-circuit keep-alive during resetting */
+	if (ctrl->state == NVME_CTRL_RESETTING)
+		return;
 
 	if (nvme_keep_alive(ctrl)) {
 		/* allocation failure, reset the controller */
