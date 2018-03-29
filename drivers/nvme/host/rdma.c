@@ -849,6 +849,10 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 
 static void nvme_rdma_error_recovery(struct nvme_rdma_ctrl *ctrl)
 {
+	/* Error recovery should trigger on the first error */
+	if (ctrl->ctrl.state != NVME_CTRL_LIVE)
+		return;
+
 	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RESETTING))
 		return;
 
