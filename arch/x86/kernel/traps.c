@@ -502,6 +502,7 @@ dotraplinkage void notrace do_int3(struct pt_regs *regs, long error_code)
 	 * This means that we can't schedule.  That's okay.
 	 */
 	ist_enter(regs);
+
 	RCU_LOCKDEP_WARN(!rcu_is_watching(), "entry code didn't wake RCU");
 #ifdef CONFIG_KGDB_LOW_LEVEL_TRAP
 	if (kgdb_ll_trap(DIE_INT3, "int3", regs, error_code, X86_TRAP_BP,
@@ -521,7 +522,6 @@ dotraplinkage void notrace do_int3(struct pt_regs *regs, long error_code)
 	preempt_conditional_sti(regs);
 	do_trap(X86_TRAP_BP, SIGTRAP, "int3", regs, error_code, NULL);
 	preempt_conditional_cli(regs);
-
 exit:
 	ist_exit(regs);
 }
@@ -888,9 +888,9 @@ void __init trap_init(void)
 	cpu_init();
 
 	/*
-	 * X86_TRAP_DB and X86_TRAP_BP have been set
-	 * in early_trap_init(). However, ITS works only after
-	 * cpu_init() loads TSS. See comments in early_trap_init().
+	 * X86_TRAP_DB was installed in early_trap_init(). However,
+	 * IST works only after cpu_init() loads TSS. See comments
+	 * in early_trap_init().
 	 */
 	set_intr_gate_ist(X86_TRAP_DB, &debug, DEBUG_STACK);
 
