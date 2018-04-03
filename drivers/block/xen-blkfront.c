@@ -768,8 +768,8 @@ out_err:
 	return BLK_MQ_RQ_QUEUE_ERROR;
 
 out_busy:
-	spin_unlock_irq(&info->io_lock);
 	blk_mq_stop_hw_queue(hctx);
+	spin_unlock_irq(&info->io_lock);
 	return BLK_MQ_RQ_QUEUE_BUSY;
 }
 
