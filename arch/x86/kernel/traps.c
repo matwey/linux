@@ -516,7 +516,6 @@ void restart_nmi(void)
 	ignore_nmis--;
 }
 
-/* May run on IST stack. */
 dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
 {
 #ifdef CONFIG_KGDB_LOW_LEVEL_TRAP
@@ -928,7 +927,7 @@ void __init early_trap_init(void)
 {
 	set_intr_gate_ist(1, &debug, DEBUG_STACK);
 	/* int3 can be called from all */
-	set_system_intr_gate_ist(3, &int3, DEBUG_STACK);
+	set_system_intr_gate(3, &int3);
 	set_intr_gate(14, &page_fault);
 	load_idt(&idt_descr);
 }
