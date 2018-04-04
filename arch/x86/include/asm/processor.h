@@ -262,8 +262,10 @@ struct tss_struct {
 	/*
 	 * .. and then another 0x100 bytes for the emergency kernel stack:
 	 */
+#ifndef __GENKSYMS__
 	/* IRQ stacks have to maintain 16-bytes alignment! */
 	u8			pad;
+#endif
 	unsigned long		stack[64];
 
 } __attribute__((__aligned__(PAGE_SIZE)));
