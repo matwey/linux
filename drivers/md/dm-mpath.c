@@ -583,6 +583,7 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 		}
 		clone->bio = clone->biotail = NULL;
 		clone->rq_disk = bdev->bd_disk;
+		clone->cmd_flags = rq->cmd_flags | REQ_NOMERGE;
 		clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
 		*__clone = clone;
 	}
