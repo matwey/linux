@@ -3990,7 +3990,7 @@ intel_dp_get_dpcd(struct intel_dp *intel_dp)
 			intel_dp_dpcd_read_wake(&intel_dp->aux,
 					DP_SINK_DEVICE_AUX_FRAME_SYNC_CAP,
 					&frame_sync_cap, 1);
-			dev_priv->psr.aux_frame_sync = frame_sync_cap ? true : false;
+			dev_priv->psr.aux_frame_sync = frame_sync_cap & DP_AUX_FRAME_SYNC_CAP;
 			/* PSR2 needs frame sync as well */
 			dev_priv->psr.psr2_support = dev_priv->psr.aux_frame_sync;
 			DRM_DEBUG_KMS("PSR2 %s on sink",
