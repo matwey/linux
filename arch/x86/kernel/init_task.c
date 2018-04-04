@@ -40,7 +40,7 @@ EXPORT_SYMBOL(init_task);
  * on exact cacheline boundaries, to eliminate cacheline ping-pong.
  */
 #if defined(CONFIG_GENKSYMS)
-DEFINE_PER_CPU_SHARED_ALIGNED(struct tss_struct, init_tss) = INIT_TSS;
+DEFINE_PER_CPU_PAGE_ALIGNED(struct tss_struct, init_tss) = INIT_TSS;
 #else
 DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, init_tss) = INIT_TSS;
 #endif

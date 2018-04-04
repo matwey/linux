@@ -1348,6 +1348,13 @@ void __cpuinit cpu_init(void)
 	ACCESS_ONCE(t->x86_tss.sp0) = ACCESS_ONCE(current->thread.sp0);
 	current->thread.sp0 = v;        /* Restore original value */
 
+	/*
+	 * TSS is kept page-aligned (mandated by Intel SDM, Volume 3, 7.2.1)
+	 * and stack residing in it has to be 16-bytes aligned so that it
+	 * can serve as stack for IRQ handlers
+	 */
+	BUILD_BUG_ON(offsetofend(struct tss_struct, stack) % 16 != 0);
+
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 	load_mm_ldt(&init_mm);

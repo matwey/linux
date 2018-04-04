@@ -262,12 +262,14 @@ struct tss_struct {
 	/*
 	 * .. and then another 0x100 bytes for the emergency kernel stack:
 	 */
+	/* IRQ stacks have to maintain 16-bytes alignment! */
+	u8			pad;
 	unsigned long		stack[64];
 
-} ____cacheline_aligned;
+} __attribute__((__aligned__(PAGE_SIZE)));
 
 #ifndef __GENKSYMS__
-DECLARE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, init_tss);
+DECLARE_PER_CPU_PAGE_ALIGNED_USER_MAPPED(struct tss_struct, init_tss);
 #else
 DECLARE_PER_CPU_SHARED_ALIGNED(struct tss_struct, init_tss);
 #endif
