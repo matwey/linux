@@ -1625,6 +1625,12 @@ void cpu_init(void)
 	load_TR_desc();
 	load_mm_ldt(&init_mm);
 
+	/*
+	 * Entry stack has to be 16-bytes aligned so that it can serve as stack
+	 * for IRQ handlers (INT instruction implicitly aligns %rsp to 16-bytes)
+	 */
+	BUILD_BUG_ON(offsetofend(struct tss_struct, SYSENTER_stack) % 16 != 0);
+
 	clear_all_debug_regs();
 	dbg_restore_debug_regs();
 
