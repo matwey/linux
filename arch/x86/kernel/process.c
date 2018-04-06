@@ -39,7 +39,7 @@
  * section. Since TSS's are completely CPU-local, we want them
  * on exact cacheline boundaries, to eliminate cacheline ping-pong.
  */
-__visible DEFINE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss) = {
+__visible DEFINE_PER_CPU_PAGE_ALIGNED(struct tss_struct, cpu_tss) = {
 	.x86_tss = {
 		.sp0 = TOP_OF_INIT_STACK,
 #ifdef CONFIG_X86_32
@@ -65,7 +65,7 @@ EXPORT_PER_CPU_SYMBOL(cpu_tss);
  * original cpu_tss and its .x86_tss.sp0 pointing to a thread stack due to kABI.
  */
 #ifdef CONFIG_X86_64
-__visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss_tramp) = {
+__visible DEFINE_PER_CPU_PAGE_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss_tramp) = {
 	.x86_tss = {
 		.sp0 = TOP_OF_INIT_STACK,
 	 },

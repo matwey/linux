@@ -319,11 +319,18 @@ struct tss_struct {
 	/*
 	 * Space for the temporary SYSENTER stack:
 	 */
+	/* IRQ stacks have to maintain 16-bytes alignment! */
+#ifndef __GENKSYMS__
+	u8			pad;
+#endif
 	unsigned long		SYSENTER_stack[64];
 
-} ____cacheline_aligned;
-
+} __attribute__((__aligned__(PAGE_SIZE)));
+#ifndef __GENKSYMS__
+DECLARE_PER_CPU_PAGE_ALIGNED(struct tss_struct, cpu_tss);
+#else
 DECLARE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss);
+#endif
 
 #ifdef CONFIG_X86_32
 DECLARE_PER_CPU(unsigned long, cpu_current_top_of_stack);
