@@ -78,6 +78,13 @@
 extern unsigned long _get_SP(void);
 
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+/*
+ * Are we running in "Suspend disabled" mode? If so we have to block any
+ * sigreturn that would get us into suspended state, and we also warn in some
+ * other paths that we should never reach with suspend disabled.
+ */
+bool tm_suspend_disabled __ro_after_init = false;
+
 static void check_if_tm_restore_required(struct task_struct *tsk)
 {
 	/*
@@ -1154,6 +1161,11 @@ static inline void restore_sprs(struct thread_struct *old_thread,
 	thread_pkey_regs_restore(new_thread, old_thread);
 }
 
+#ifdef CONFIG_PPC_BOOK3S_64
+#define CP_SIZE 128
+static const u8 dummy_copy_buffer[CP_SIZE] __attribute__((aligned(CP_SIZE)));
+#endif
+
 struct task_struct *__switch_to(struct task_struct *prev,
 	struct task_struct *new)
 {
@@ -1243,8 +1255,28 @@ struct task_struct *__switch_to(struct task_struct *prev,
 		batch->active = 1;
 	}
 
-	if (current_thread_info()->task->thread.regs)
+	if (current_thread_info()->task->thread.regs) {
 		restore_math(current_thread_info()->task->thread.regs);
+
+		/*
+		 * The copy-paste buffer can only store into foreign real
+		 * addresses, so unprivileged processes can not see the
+		 * data or use it in any way unless they have foreign real
+		 * mappings. We don't have a VAS driver that allocates those
+		 * yet, so no cpabort is required.
+		 */
+		if (cpu_has_feature(CPU_FTR_POWER9_DD1)) {
+			/*
+			 * DD1 allows paste into normal system memory, so we
+			 * do an unpaired copy here to clear the buffer and
+			 * prevent a covert channel being set up.
+			 *
+			 * cpabort is not used because it is quite expensive.
+			 */
+			asm volatile(PPC_COPY(%0, %1)
+					: : "r"(dummy_copy_buffer), "r"(0));
+		}
+	}
 #endif /* CONFIG_PPC_BOOK3S_64 */
 
 	return last;
