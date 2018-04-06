@@ -677,7 +677,6 @@ _xfs_buf_read(
 	xfs_buf_t		*bp,
 	xfs_buf_flags_t		flags)
 {
-	int			status;
 
 	ASSERT(!(flags & (XBF_DELWRI|XBF_WRITE)));
 	ASSERT(bp->b_bn != XFS_BUF_DADDR_NULL);
@@ -687,11 +686,9 @@ _xfs_buf_read(
 	bp->b_flags |= flags & (XBF_READ | XBF_ASYNC | \
 			XBF_READ_AHEAD | _XBF_RUN_QUEUES);
 
-	status = xfs_buf_iorequest(bp);
-	if (status ||
-	    (XFS_BUF_ISERROR(bp) && XFS_BUF_GETERROR(bp) != EWOULDBLOCK) ||
-	    (flags & XBF_ASYNC))
-		return status;
+	xfs_buf_iorequest(bp);
+	if (flags & XBF_ASYNC)
+		return 0;
 	return xfs_buf_iowait(bp);
 }
 
@@ -778,7 +775,7 @@ xfs_buf_read_uncached(
 
 	xfsbdstrat(mp, bp);
 	error = xfs_buf_iowait(bp);
-	if (error || bp->b_error) {
+	if (error) {
 		xfs_buf_relse(bp);
 		return NULL;
 	}
@@ -1395,7 +1392,7 @@ next_chunk:
 	}
 }
 
-int
+void
 xfs_buf_iorequest(
 	xfs_buf_t		*bp)
 {
@@ -1403,7 +1400,6 @@ xfs_buf_iorequest(
 
 	if (bp->b_flags & XBF_DELWRI) {
 		xfs_buf_delwri_queue(bp, 1);
-		return 0;
 	}
 
 	if (bp->b_flags & XBF_WRITE) {
@@ -1424,13 +1420,12 @@ xfs_buf_iorequest(
 	_xfs_buf_ioend(bp, 0);
 
 	xfs_buf_rele(bp);
-	return 0;
 }
 
 /*
- *	Waits for I/O to complete on the buffer supplied.
- *	It returns immediately if no I/O is pending.
- *	It returns the I/O error code, if any, or 0 if there was no error.
+ * Waits for I/O to complete on the buffer supplied.  It returns immediately if
+ * no I/O is pending or there is already a pending error on the buffer.  It
+ * returns the I/O error code, if any, or 0 if there was no error.
  */
 int
 xfs_buf_iowait(
@@ -1438,7 +1433,8 @@ xfs_buf_iowait(
 {
 	trace_xfs_buf_iowait(bp, _RET_IP_);
 
-	wait_for_completion(&bp->b_iowait);
+	if (!bp->b_error || bp->b_error == EWOULDBLOCK)
+		wait_for_completion(&bp->b_iowait);
 
 	trace_xfs_buf_iowait_done(bp, _RET_IP_);
 	return bp->b_error;
