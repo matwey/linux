@@ -20,9 +20,13 @@ typedef struct {
 	unsigned int has_pgste:1;
 	/* The mmu context uses storage keys. */
 	unsigned int use_skey:1;
+#ifndef __GENKSYMS__
+	spinlock_t lock;
+#endif
 } mm_context_t;
 
 #define INIT_MM_CONTEXT(name)						      \
+	.context.lock = __SPIN_LOCK_UNLOCKED(name.context.lock),	      \
 	.context.list_lock    = __SPIN_LOCK_UNLOCKED(name.context.list_lock), \
 	.context.pgtable_list = LIST_HEAD_INIT(name.context.pgtable_list),    \
 	.context.gmap_list = LIST_HEAD_INIT(name.context.gmap_list),
