@@ -551,22 +551,31 @@ void __init initialize_cache_info(void)
 	DBG(" <- initialize_cache_info()\n");
 }
 
-/* This returns the limit below which memory accesses to the linear
- * mapping are guarnateed not to cause a TLB or SLB miss. This is
- * used to allocate interrupt or emergency stacks for which our
- * exception entry path doesn't deal with being interrupted.
+/*
+ * This returns the limit below which memory accesses to the linear
+ * mapping are guarnateed not to cause an architectural exception (e.g.,
+ * TLB or SLB miss fault).
+ *
+ * This is used to allocate PACAs and various interrupt stacks that
+ * that are accessed early in interrupt handlers that must not cause
+ * re-entrant interrupts.
  */
-static __init u64 safe_stack_limit(void)
+__init u64 ppc64_bolted_size(void)
 {
 #ifdef CONFIG_PPC_BOOK3E
 	/* Freescale BookE bolts the entire linear mapping */
-	if (mmu_has_feature(MMU_FTR_TYPE_FSL_E))
+	/* XXX: BookE ppc64_rma_limit setup seems to disagree? */
+	if (early_mmu_has_feature(MMU_FTR_TYPE_FSL_E))
 		return linear_map_top;
 	/* Other BookE, we assume the first GB is bolted */
 	return 1ul << 30;
 #else
-	/* BookS, the first segment is bolted */
-	if (mmu_has_feature(MMU_FTR_1T_SEGMENT))
+	/* BookS radix, does not take faults on linear mapping */
+	if (early_radix_enabled())
+		return ULONG_MAX;
+
+	/* BookS hash, the first segment is bolted */
+	if (early_mmu_has_feature(MMU_FTR_1T_SEGMENT))
 		return 1UL << SID_SHIFT_1T;
 	return 1UL << SID_SHIFT;
 #endif
@@ -574,12 +583,13 @@ static __init u64 safe_stack_limit(void)
 
 void __init irqstack_early_init(void)
 {
-	u64 limit = safe_stack_limit();
+	u64 limit = ppc64_bolted_size();
 	unsigned int i;
 
 	/*
 	 * Interrupt stacks must be in the first segment since we
-	 * cannot afford to take SLB misses on them.
+	 * cannot afford to take SLB misses on them. They are not
+	 * accessed in realmode.
 	 */
 	for_each_possible_cpu(i) {
 		softirq_ctx[i] = (struct thread_info *)
@@ -650,14 +660,15 @@ void __init emergency_stack_init(void)
 	 * aligned.
 	 *
 	 * Since we use these as temporary stacks during secondary CPU
-	 * bringup, we need to get at them in real mode. This means they
-	 * must also be within the RMO region.
+	 * bringup, machine check, system reset, and HMI, we need to get
+	 * at them in real mode. This means they must also be within the RMO
+	 * region.
 	 *
 	 * The IRQ stacks allocated elsewhere in this file are zeroed and
 	 * initialized in kernel/irq.c. These are initialized here in order
 	 * to have emergency stacks available as early as possible.
 	 */
-	limit = min(safe_stack_limit(), ppc64_rma_size);
+	limit = min(ppc64_bolted_size(), ppc64_rma_size);
 
 	for_each_possible_cpu(i) {
 		struct thread_info *ti;
@@ -853,7 +864,7 @@ static void init_fallback_flush(void)
 		return;
 
 	l1d_size = ppc64_caches.l1d.size;
-	limit = min(safe_stack_limit(), ppc64_rma_size);
+	limit = min(ppc64_bolted_size(), ppc64_rma_size);
 
 	/*
 	 * Align to L1d size, and size it at 2x L1d size, to catch possible
@@ -983,12 +994,4 @@ static __init int barrier_nospec_debugfs_init(void)
 }
 device_initcall(barrier_nospec_debugfs_init);
 #endif
-
-ssize_t cpu_show_meltdown(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	if (rfi_flush)
-		return sprintf(buf, "Mitigation: RFI Flush\n");
-
-	return sprintf(buf, "Vulnerable\n");
-}
 #endif /* CONFIG_PPC_BOOK3S_64 */
