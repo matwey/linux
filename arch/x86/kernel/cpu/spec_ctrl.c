@@ -77,7 +77,6 @@ void x86_spec_check(void)
 			printk_once(KERN_INFO "IBPB: Initialized\n");
 		} else {
 			ibpb_state = 0;
-			printk_once(KERN_INFO "IBPB: Disabling indirect branch predictor support\n");
 		}
 	}
 }
