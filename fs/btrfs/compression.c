@@ -162,6 +162,7 @@ static void end_compressed_bio_read(struct bio *bio, int err)
 	struct inode *inode;
 	struct page *page;
 	unsigned long index;
+	unsigned int mirror = (unsigned long)bio->bi_bdev;
 	int ret;
 
 	if (err)
@@ -172,6 +173,13 @@ static void end_compressed_bio_read(struct bio *bio, int err)
 	 */
 	if (!atomic_dec_and_test(&cb->pending_bios))
 		goto out;
+
+	/*
+	 * Record the correct mirror_num in cb->orig_bio so that
+	 * read-repair can work properly.
+	 */
+	cb->orig_bio->bi_bdev = (struct block_device *)(unsigned long)mirror;
+	cb->mirror_num = mirror;
 
 	inode = cb->inode;
 	ret = check_compressed_csum(inode, cb, (u64)bio->bi_sector << 9);
