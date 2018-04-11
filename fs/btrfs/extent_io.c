@@ -2858,7 +2858,7 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 	struct extent_state *cached_state = NULL;
 	struct extent_map *em;
 	struct block_device *bdev;
-	int ret;
+	int ret = 0;
 	int nr = 0;
 	size_t pg_offset = 0;
 	size_t blocksize;
