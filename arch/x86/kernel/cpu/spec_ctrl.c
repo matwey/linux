@@ -86,19 +86,6 @@ void x86_spec_check(void)
 			ibpb_state = 1;
 			printk_once(KERN_INFO "IBPB: Initialized\n");
 		} else {
-			u64 val;
-
-			switch (boot_cpu_data.x86) {
-			case 0x10:
-			case 0x12:
-			case 0x16:
-				printk_once(KERN_INFO
-					"IBPB: Disabling indirect branch predictor support\n");
-				rdmsrl(MSR_F15H_IC_CFG, val);
-				val |= MSR_F15H_IC_CFG_DIS_IND;
-				wrmsrl(MSR_F15H_IC_CFG, val);
-				break;
-			}
 			ibpb_state = 0;
 		}
 	}
