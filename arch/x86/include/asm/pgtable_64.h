@@ -105,28 +105,6 @@ static inline void native_pud_clear(pud_t *pud)
 	native_set_pud(pud, native_make_pud(0));
 }
 
-#ifdef CONFIG_KAISER
-extern pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd);
-
-static inline pgd_t *native_get_shadow_pgd(pgd_t *pgdp)
-{
-#ifdef CONFIG_DEBUG_VM
-	/* linux/mmdebug.h may not have been included at this point */
-	BUG_ON(!kaiser_enabled);
-#endif
-	return (pgd_t *)((unsigned long)pgdp | (unsigned long)PAGE_SIZE);
-}
-#else
-static inline pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
-{
-	return pgd;
-}
-static inline pgd_t *native_get_shadow_pgd(pgd_t *pgdp)
-{
-	return NULL;
-}
-#endif /* CONFIG_KAISER */
-
 static inline void native_set_pgd(pgd_t *pgdp, pgd_t pgd)
 {
 	*pgdp = kaiser_set_shadow_pgd(pgdp, pgd);
@@ -147,7 +125,6 @@ extern void sync_global_pgds(unsigned long start, unsigned long end);
 /*
  * Level 4 access.
  */
-static inline int pgd_large(pgd_t pgd) { return 0; }
 #define mk_kernel_pgd(address) __pgd((address) | _KERNPG_TABLE)
 
 /* PUD - Level3 access */

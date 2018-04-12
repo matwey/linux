@@ -52,6 +52,7 @@ void foo(void)
 	OFFSET(PT_EFLAGS, pt_regs, flags);
 	OFFSET(PT_OLDESP, pt_regs, sp);
 	OFFSET(PT_OLDSS,  pt_regs, ss);
+	DEFINE(PT_SIZE, sizeof(struct pt_regs));
 	BLANK();
 
 	OFFSET(IA32_RT_SIGFRAME_sigcontext, rt_sigframe, uc.uc_mcontext);
@@ -59,8 +60,15 @@ void foo(void)
 
 #ifndef CONFIG_X86_NO_TSS
 	/* Offset from the sysenter stack to tss.sp0 */
-	DEFINE(SYSENTER_stack_sp0, offsetof(struct tss_struct, x86_tss.sp0) -
-		 sizeof(struct tss_struct));
+	DEFINE(SYSENTER_stack_sp0, offsetof(struct tss_struct, x86_tss.sp1) -
+				   offsetofend(struct tss_struct, stack));
+
+	DEFINE(TSS_sp0, offsetof(struct tss_struct, x86_tss.sp0));
+	DEFINE(TSS_sp1, offsetof(struct tss_struct, x86_tss.sp1));
+
+	DEFINE(SYSENTER_stack_offset, offsetof(struct tss_struct, stack));
+	DEFINE(SYSENTER_stack_size, sizeof(((struct tss_struct *)0)->stack));
+	DEFINE(SYSENTER_stack_mask, (~((sizeof(((struct tss_struct*)0)->stack))-1)));
 #else
 	/* sysenter stack points directly to sp0 */
 	DEFINE(SYSENTER_stack_sp0, 0);

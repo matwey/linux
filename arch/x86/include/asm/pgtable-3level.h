@@ -97,6 +97,10 @@ static inline void native_set_pmd(pmd_t *pmdp, pmd_t pmd)
 
 static inline void native_set_pud(pud_t *pudp, pud_t pud)
 {
+#ifdef CONFIG_KAISER
+	pudp->pgd = kaiser_set_shadow_pgd(&pudp->pgd, pud.pgd);
+#endif
+
 	set_64bit((unsigned long long *)(pudp), native_pud_val(pud));
 }
 

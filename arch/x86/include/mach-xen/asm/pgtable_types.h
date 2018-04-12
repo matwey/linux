@@ -230,21 +230,45 @@ extern unsigned int __kernel_page_user;
 /* PTE_FLAGS_MASK extracts the flags from a (pte|pmd|pud|pgd)val_t */
 #define PTE_FLAGS_MASK		(~PTE_PFN_MASK)
 
+#ifdef CONFIG_X86_PAE
+
+/*
+ * PHYSICAL_PAGE_MASK might be non-constant when SME is compiled in, so we can't
+ * use it here.
+ */
+
+#define PGD_PAE_PAGE_MASK       ((signed long)PAGE_MASK)
+#define PGD_PAE_PHYS_MASK       (((1ULL << __PHYSICAL_MASK_SHIFT)-1) & PGD_PAE_PAGE_MASK)
+
+/*
+ * PAE allows Base Address, P, PWT, PCD and AVL bits to be set in PGD entries.
+ * All other bits are Reserved MBZ
+ */
+#define PGD_ALLOWED_BITS        (PGD_PAE_PHYS_MASK | _PAGE_PRESENT | \
+                                 _PAGE_PWT | _PAGE_PCD | \
+                                 _PAGE_UNUSED1 | _PAGE_IOMAP | _PAGE_HIDDEN)
+
+#else
+/* No need to mask any bits for !PAE */
+#define PGD_ALLOWED_BITS        (~0UL)
+#endif
+
+
 typedef struct pgprot { pgprotval_t pgprot; } pgprot_t;
 
 #include <asm/maddr.h>
 
 typedef struct { pgdval_t pgd; } pgd_t;
 
-#define __pgd_ma(x) ((pgd_t) { (x) } )
+#define __pgd_ma(x) ((pgd_t) { (x) & PGD_ALLOWED_BITS } )
 static inline pgd_t xen_make_pgd(pgdval_t val)
 {
 	if (likely(val & _PAGE_PRESENT))
 		val = pte_phys_to_machine(val);
-	return (pgd_t) { val };
+	return __pgd_ma(val);
 }
 
-#define __pgd_val(x) ((x).pgd)
+#define __pgd_val(x) ((x).pgd & PGD_ALLOWED_BITS)
 static inline pgdval_t xen_pgd_val(pgd_t pgd)
 {
 	pgdval_t ret = __pgd_val(pgd);

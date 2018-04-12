@@ -32,7 +32,12 @@ static inline void kaiser_init(void)
 {
 }
 static inline int kaiser_add_mapping(unsigned long addr,
-				     unsigned long size, unsigned long flags)
+				     unsigned long size,
+#ifdef CONFIG_X86
+				     pteval_t flags)
+#else
+				     unsigned long flags)
+#endif
 {
 	return 0;
 }

@@ -61,7 +61,8 @@ static DEFINE_SPINLOCK(shadow_table_allocation_lock);
 /*
  * Returns -1 on error.
  */
-static inline unsigned long get_pa_from_mapping(unsigned long vaddr)
+static inline int get_pa_from_mapping(unsigned long vaddr,
+				      phys_addr_t *paddr)
 {
 	pgd_t *pgd;
 	pud_t *pud;
@@ -83,28 +84,35 @@ static inline unsigned long get_pa_from_mapping(unsigned long vaddr)
 	pud = pud_offset(pgd, vaddr);
 	if (pud_none(*pud)) {
 		WARN_ON_ONCE(1);
-		return -1;
+		return -EINVAL;
 	}
 
-	if (pud_large(*pud))
-		return (pud_pfn(*pud) << PAGE_SHIFT) | (vaddr & ~PUD_PAGE_MASK);
+	if (pud_large(*pud)) {
+		*paddr = ((phys_addr_t)pud_pfn(*pud) << PAGE_SHIFT) | (vaddr & ~PUD_PAGE_MASK);
+		return 0;
+	}
 
 	pmd = pmd_offset(pud, vaddr);
 	if (pmd_none(*pmd)) {
 		WARN_ON_ONCE(1);
-		return -1;
+		return -EINVAL;
 	}
 
-	if (pmd_large(*pmd))
-		return (pmd_pfn(*pmd) << PAGE_SHIFT) | (vaddr & ~PMD_PAGE_MASK);
+	if (pmd_large(*pmd)) {
+		*paddr = ((phys_addr_t)pmd_pfn(*pmd) << PAGE_SHIFT) | (vaddr & ~PMD_PAGE_MASK);
+		return 0;
+	}
 
 	pte = pte_offset_kernel(pmd, vaddr);
 	if (pte_none(*pte)) {
 		WARN_ON_ONCE(1);
-		return -1;
+		return -EINVAL;
 	}
 
-	return (pte_pfn(*pte) << PAGE_SHIFT) | (vaddr & ~PAGE_MASK);
+	*paddr = ((phys_addr_t)pte_pfn(*pte) << PAGE_SHIFT) | (vaddr &
+			~PAGE_MASK);
+
+	return 0;
 }
 
 /*
@@ -166,14 +174,14 @@ static pte_t *kaiser_pagetable_walk(unsigned long address)
 }
 
 static int kaiser_add_user_map(const void *__start_addr, unsigned long size,
-			       unsigned long flags)
+			       pteval_t flags)
 {
 	int ret = 0;
 	pte_t *pte;
 	unsigned long start_addr = (unsigned long )__start_addr;
 	unsigned long address = start_addr & PAGE_MASK;
 	unsigned long end_addr = PAGE_ALIGN(start_addr + size);
-	unsigned long target_address;
+	phys_addr_t target_address = 0;
 
 	if (!(__supported_pte_mask & _PAGE_NX))
 		flags &= ~_PAGE_NX;
@@ -188,11 +196,10 @@ static int kaiser_add_user_map(const void *__start_addr, unsigned long size,
 	flags &= ~_PAGE_GLOBAL;
 
 	if (flags & _PAGE_USER)
-		BUG_ON(address < FIXADDR_START || end_addr >= FIXADDR_TOP);
+		BUG_ON(address < FIXADDR_START || end_addr > FIXADDR_TOP);
 
 	for (; address < end_addr; address += PAGE_SIZE) {
-		target_address = get_pa_from_mapping(address);
-		if (target_address == -1) {
+		if (get_pa_from_mapping(address, &target_address)) {
 			ret = -EIO;
 			break;
 		}
@@ -212,7 +219,7 @@ static int kaiser_add_user_map(const void *__start_addr, unsigned long size,
 	return ret;
 }
 
-static int kaiser_add_user_map_ptrs(const void *start, const void *end, unsigned long flags)
+static int kaiser_add_user_map_ptrs(const void *start, const void *end, pteval_t flags)
 {
 	unsigned long size = end - start;
 
@@ -230,11 +237,12 @@ static int kaiser_add_user_map_ptrs(const void *start, const void *end, unsigned
  */
 static void __init kaiser_init_all_pgds(void)
 {
+#ifdef CONFIG_X86_64
 	pgd_t *pgd;
 	int i = 0;
 
 	pgd = native_get_shadow_pgd(pgd_offset_k((unsigned long )0));
-	for (i = PTRS_PER_PGD / 2; i < PTRS_PER_PGD; i++) {
+	for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++) {
 		pgd_t new_pgd;
 		pud_t *pud = pud_alloc_one(&init_mm,
 					   PAGE_OFFSET + i * PGDIR_SIZE);
@@ -252,6 +260,19 @@ static void __init kaiser_init_all_pgds(void)
 		}
 		set_pgd(pgd + i, new_pgd);
 	}
+#else
+	/*
+	 * On 32 bit we pre-allocate the PTEs for the kernel so that any
+	 * changes there get propagated into every existing page-table.
+	 */
+	unsigned long addr;
+
+	for (addr = PAGE_OFFSET;
+	     (addr >= PAGE_OFFSET) && (addr < FIXADDR_TOP);
+	    addr += PMD_SIZE) {
+		kaiser_pagetable_walk(addr);
+	}
+#endif
 }
 
 #define kaiser_add_user_map_early(start, size, flags) do {	\
@@ -290,8 +311,10 @@ skip:
 		goto disable;
 
 enable:
-	if (enable)
+	if (enable) {
+		pr_info("Kernel/User page tables isolation: enabled\n");
 		setup_force_cpu_cap(X86_FEATURE_KAISER);
+	}
 
 	return;
 
@@ -341,14 +364,16 @@ void __init kaiser_init(void)
 	kaiser_add_user_map_early((void *)idt_descr.address,
 				  sizeof(gate_desc) * NR_VECTORS,
 				  __PAGE_KERNEL_RO);
+#ifdef CONFIG_X86_64
 	kaiser_add_user_map_early((void *)VVAR_ADDRESS, PAGE_SIZE,
 				  __PAGE_KERNEL_VVAR);
 	kaiser_add_user_map_early((void *)VSYSCALL_START, PAGE_SIZE,
 				  vsyscall_pgprot);
+#endif
 }
 
 /* Add a mapping to the shadow mapping, and synchronize the mappings */
-int kaiser_add_mapping(unsigned long addr, unsigned long size, unsigned long flags)
+int kaiser_add_mapping(unsigned long addr, unsigned long size, pteval_t flags)
 {
 	if (!kaiser_enabled)
 		return 0;
@@ -379,38 +404,50 @@ void kaiser_remove_mapping(unsigned long start, unsigned long size)
  */
 static inline bool is_userspace_pgd(pgd_t *pgdp)
 {
-	return ((unsigned long)pgdp % PAGE_SIZE) < (PAGE_SIZE / 2);
+	unsigned long ptr = (unsigned long)pgdp;
+
+	return (((ptr % PAGE_SIZE) / sizeof(pgd_t)) < KERNEL_PGD_BOUNDARY);
+}
+
+static void kaiser_set_pgd(pgd_t *pgdp, pgd_t pgd)
+{
+#ifdef CONFIG_X86_PAE
+	set_64bit((unsigned long long *)(pgdp), native_pgd_val(pgd));
+#else
+	pgdp->pgd = pgd.pgd;
+#endif
 }
 
 pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
 {
 	if (!kaiser_enabled)
 		return pgd;
+
+	if (!is_userspace_pgd(pgdp))
+		return pgd;
+
+	kaiser_set_pgd(native_get_shadow_pgd(pgdp), pgd);
+
 	/*
 	 * Do we need to also populate the shadow pgd?  Check _PAGE_USER to
 	 * skip cases like kexec and EFI which make temporary low mappings.
 	 */
 	if (pgd.pgd & _PAGE_USER) {
-		if (is_userspace_pgd(pgdp)) {
-			native_get_shadow_pgd(pgdp)->pgd = pgd.pgd;
-			/*
-			 * Even if the entry is *mapping* userspace, ensure
-			 * that userspace can not use it.  This way, if we
-			 * get out to userspace running on the kernel CR3,
-			 * userspace will crash instead of running.
-			 */
-			if (__supported_pte_mask & _PAGE_NX)
-				pgd.pgd |= _PAGE_NX;
-		}
+		/*
+		 * Even if the entry is *mapping* userspace, ensure
+		 * that userspace can not use it.  This way, if we
+		 * get out to userspace running on the kernel CR3,
+		 * userspace will crash instead of running.
+		 */
+		if (__supported_pte_mask & _PAGE_NX)
+			pgd.pgd |= _PAGE_NX;
 	} else if (!pgd.pgd) {
 		/*
 		 * pgd_clear() cannot check _PAGE_USER, and is even used to
 		 * clear corrupted pgd entries: so just rely on cases like
 		 * kexec and EFI never to be using pgd_clear().
 		 */
-		if (!WARN_ON_ONCE((unsigned long)pgdp & PAGE_SIZE) &&
-		    is_userspace_pgd(pgdp))
-			native_get_shadow_pgd(pgdp)->pgd = pgd.pgd;
+		WARN_ON_ONCE((unsigned long)pgdp & PAGE_SIZE);
 	}
 	return pgd;
 }

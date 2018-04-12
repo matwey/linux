@@ -265,8 +265,10 @@ struct tss_struct {
 #ifndef __GENKSYMS__
 	/* IRQ stacks have to maintain 16-bytes alignment! */
 	u8			pad;
-#endif
+	unsigned long		stack[64] __aligned(256);
+#else
 	unsigned long		stack[64];
+#endif
 
 } __attribute__((__aligned__(PAGE_SIZE)));
 
@@ -567,6 +569,20 @@ native_load_sp0(struct tss_struct *tss, struct thread_struct *thread)
 	}
 #endif
 }
+
+#ifdef CONFIG_X86_32
+static inline void
+update_sp0(struct tss_struct *tss, struct thread_struct *thread)
+{
+	tss->x86_tss.sp1 = thread->sp0;
+
+	/* Only happens when SEP is enabled, no need to test "SEP"arately: */
+	if (unlikely(tss->x86_tss.ss1 != thread->sysenter_cs)) {
+		tss->x86_tss.ss1 = thread->sysenter_cs;
+		wrmsr(MSR_IA32_SYSENTER_CS, thread->sysenter_cs, 0);
+	}
+}
+#endif
 
 static inline void native_swapgs(void)
 {

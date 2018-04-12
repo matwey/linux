@@ -150,7 +150,7 @@ static inline void __init kaiser_check_boottime_disable(void) {}
  *  synchronization has to be done.  the pages have to be
  *  manually unmapped again when they are not needed any longer.
  */
-extern int kaiser_add_mapping(unsigned long addr, unsigned long size, unsigned long flags);
+extern int kaiser_add_mapping(unsigned long addr, unsigned long size, pteval_t flags);
 
 /**
  *  kaiser_remove_mapping - unmap a virtual memory part of the shadow mapping

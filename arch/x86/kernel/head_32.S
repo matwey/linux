@@ -623,20 +623,24 @@ ENTRY(initial_code)
  * BSS section
  */
 __PAGE_ALIGNED_BSS
-	.align PAGE_SIZE
+	.align 2*PAGE_SIZE
 #ifdef CONFIG_X86_PAE
 initial_pg_pmd:
+	.fill 1024*KPMDS,4,0
 	.fill 1024*KPMDS,4,0
 #else
 ENTRY(initial_page_table)
 	.fill 1024,4,0
+	.fill 1024,4,0
 #endif
 initial_pg_fixmap:
 	.fill 1024,4,0
-ENTRY(empty_zero_page)
-	.fill 4096,1,0
+	.fill 1024,4,0
 ENTRY(swapper_pg_dir)
 	.fill 1024,4,0
+	.fill 1024,4,0
+ENTRY(empty_zero_page)
+	.fill 4096,1,0
 
 /*
  * This starts the data section.
@@ -644,7 +648,7 @@ ENTRY(swapper_pg_dir)
 #ifdef CONFIG_X86_PAE
 __PAGE_ALIGNED_DATA
 	/* Page-aligned for the benefit of paravirt? */
-	.align PAGE_SIZE
+	.align 2*PAGE_SIZE
 ENTRY(initial_page_table)
 	.long	pa(initial_pg_pmd+PGD_IDENT_ATTR),0	/* low identity map */
 # if KPMDS == 3
@@ -662,7 +666,7 @@ ENTRY(initial_page_table)
 # else
 #  error "Kernel PMDs should be 1, 2 or 3"
 # endif
-	.align PAGE_SIZE		/* needs to be page-sized too */
+	.align 2*PAGE_SIZE		/* needs to be page-sized too */
 #endif
 
 .data

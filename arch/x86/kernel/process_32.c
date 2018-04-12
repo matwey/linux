@@ -302,7 +302,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	/*
 	 * Reload esp0.
 	 */
-	load_sp0(tss, next);
+	update_sp0(tss, next);
 
 	/*
 	 * Save away %gs. No need to save %fs, as it was saved on the

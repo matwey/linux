@@ -25,6 +25,7 @@
 #include <asm/tlbflush.h>
 #include <asm/vdso.h>
 #include <asm/proto.h>
+#include <asm/kaiser.h>
 
 enum {
 	VDSO_DISABLED = 0,
@@ -234,7 +235,7 @@ void enable_sep_cpu(void)
 	}
 
 	tss->x86_tss.ss1 = __KERNEL_CS;
-	tss->x86_tss.sp1 = sizeof(struct tss_struct) + (unsigned long) tss;
+	tss->x86_tss.sp1 = (unsigned long)tss->stack + sizeof(tss->stack);
 	wrmsr(MSR_IA32_SYSENTER_CS, __KERNEL_CS, 0);
 	wrmsr(MSR_IA32_SYSENTER_ESP, tss->x86_tss.sp1, 0);
 	wrmsr(MSR_IA32_SYSENTER_EIP, (unsigned long) ia32_sysenter_target, 0);
@@ -273,6 +274,12 @@ static void map_compat_vdso(int map)
 
 	__set_fixmap(FIX_VDSO, page_to_pfn(vdso32_pages[0]) << PAGE_SHIFT,
 		     map ? PAGE_READONLY_EXEC : PAGE_NONE);
+
+#ifdef CONFIG_KAISER
+	kaiser_add_mapping(VDSO_HIGH_BASE, PAGE_SIZE,
+			   map ? __PAGE_KERNEL_VSYSCALL :
+			         (_PAGE_PROTNONE | _PAGE_ACCESSED));
+#endif
 
 	/* flush stray tlbs */
 	flush_tlb_all();

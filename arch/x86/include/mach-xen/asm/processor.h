@@ -528,11 +528,26 @@ native_load_sp0(struct tss_struct *tss, struct thread_struct *thread)
 	}
 #endif
 }
+
+#ifdef CONFIG_X86_32
+static inline void
+update_sp0(struct tss_struct *tss, struct thread_struct *thread)
+{
+	tss->x86_tss.sp1 = thread->sp0;
+
+	/* Only happens when SEP is enabled, no need to test "SEP"arately: */
+	if (unlikely(tss->x86_tss.ss1 != thread->sysenter_cs)) {
+		tss->x86_tss.ss1 = thread->sysenter_cs;
+		wrmsr(MSR_IA32_SYSENTER_CS, thread->sysenter_cs, 0);
+	}
+}
+#endif
 #else
 #define xen_load_sp0(tss, thread) do { \
 	if (HYPERVISOR_stack_switch(__KERNEL_DS, (thread)->sp0)) \
 		BUG(); \
 } while (0)
+#define update_sp0 xen_load_sp0
 #endif
 
 #define __cpuid			xen_cpuid
