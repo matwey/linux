@@ -176,6 +176,7 @@ xlog_bread_noalign(
 	XFS_BUF_READ(bp);
 	XFS_BUF_BUSY(bp);
 	XFS_BUF_SET_COUNT(bp, BBTOB(nbblks));
+	bp->b_error = 0;
 	XFS_BUF_SET_TARGET(bp, log->l_mp->m_logdev_targp);
 
 	xfsbdstrat(log->l_mp, bp);
@@ -266,6 +267,7 @@ xlog_bwrite(
 	XFS_BUF_HOLD(bp);
 	XFS_BUF_PSEMA(bp, PRIBIO);
 	XFS_BUF_SET_COUNT(bp, BBTOB(nbblks));
+	bp->b_error = 0;
 	XFS_BUF_SET_TARGET(bp, log->l_mp->m_logdev_targp);
 
 	if ((error = xfs_bwrite(log->l_mp, bp)))
