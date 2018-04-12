@@ -792,7 +792,7 @@ static const struct inode_operations cifs_ipc_inode_ops = {
 char *cifs_build_path_to_root(struct smb_vol *vol, struct cifs_sb_info *cifs_sb,
 			      struct cifs_tcon *tcon, int add_treename)
 {
-	int pplen = vol->prepath ? strlen(vol->prepath) : 0;
+	int pplen = vol->prepath ? strlen(vol->prepath) + 1: 0;
 	int dfsplen;
 	char *full_path = NULL;
 
@@ -809,15 +809,15 @@ char *cifs_build_path_to_root(struct smb_vol *vol, struct cifs_sb_info *cifs_sb,
 	else
 		dfsplen = 0;
 
-	full_path = kmalloc(dfsplen + pplen + 1, GFP_KERNEL);
+	full_path = kzalloc(dfsplen + pplen + 1, GFP_KERNEL);
 	if (full_path == NULL)
 		return full_path;
 
 	if (dfsplen)
 		strncpy(full_path, tcon->treeName, dfsplen);
 	strncpy(full_path + dfsplen, vol->prepath, pplen);
-	convert_delimiter(full_path, CIFS_DIR_SEP(cifs_sb));
 	full_path[dfsplen + pplen] = 0; /* add trailing null */
+	convert_delimiter(full_path, CIFS_DIR_SEP(cifs_sb));
 	return full_path;
 }
 
