@@ -265,8 +265,10 @@ struct tss_struct {
 #ifndef __GENKSYMS__
 	/* IRQ stacks have to maintain 16-bytes alignment! */
 	u8			pad;
-#endif
 	unsigned long		stack[64] __aligned(256);
+#else
+	unsigned long		stack[64];
+#endif
 
 } __attribute__((__aligned__(PAGE_SIZE)));
 
