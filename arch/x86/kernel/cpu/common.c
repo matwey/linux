@@ -1378,7 +1378,7 @@ void __cpuinit cpu_init(void)
 	int cpu = smp_processor_id();
 	struct task_struct *curr = current;
 	struct tss_struct *t = &per_cpu(init_tss, cpu);
-	struct thread_struct *thread = &curr->thread;
+	unsigned long v;
 
 	if (cpumask_test_and_set_cpu(cpu, cpu_initialized_mask)) {
 		printk(KERN_WARNING "CPU#%d already initialized!\n", cpu);
@@ -1402,7 +1402,13 @@ void __cpuinit cpu_init(void)
 	BUG_ON(curr->mm);
 	enter_lazy_tlb(&init_mm, curr);
 
-	load_sp0(t, thread);
+	v = current->thread.sp0;
+	current->thread.sp0 = (unsigned long)t +
+		offsetofend(struct tss_struct, stack);
+	load_sp0(t, &current->thread);
+	ACCESS_ONCE(t->x86_tss.sp0) = ACCESS_ONCE(current->thread.sp0);
+	current->thread.sp0 = v;        /* Restore original value */
+
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 	load_mm_ldt(&init_mm);

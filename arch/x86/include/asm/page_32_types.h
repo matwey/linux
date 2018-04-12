@@ -24,6 +24,9 @@
 #define MCE_STACK 0
 #define N_EXCEPTION_STACKS 1
 
+/* There are no pud_large pages on 32bit, but we need the define for KAISER */
+#define PUD_PAGE_MASK	0
+
 #ifdef CONFIG_X86_PAE
 /* 44=32+12, the limit we can fit into an unsigned long pfn */
 #define __PHYSICAL_MASK_SHIFT	44

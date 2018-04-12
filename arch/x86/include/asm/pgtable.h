@@ -390,6 +390,29 @@ static inline int is_new_memtype_allowed(u64 paddr, unsigned long size,
 
 pmd_t *populate_extra_pmd(unsigned long vaddr);
 pte_t *populate_extra_pte(unsigned long vaddr);
+
+#ifdef CONFIG_KAISER
+extern pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd);
+
+static inline pgd_t *native_get_shadow_pgd(pgd_t *pgdp)
+{
+#ifdef CONFIG_DEBUG_VM
+	/* linux/mmdebug.h may not have been included at this point */
+	BUG_ON(!kaiser_enabled);
+#endif
+	return (pgd_t *)((unsigned long)pgdp | (unsigned long)PAGE_SIZE);
+}
+#else
+static inline pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
+{
+	return pgd;
+}
+static inline pgd_t *native_get_shadow_pgd(pgd_t *pgdp)
+{
+	return NULL;
+}
+#endif /* CONFIG_KAISER */
+
 #endif	/* __ASSEMBLY__ */
 
 #ifdef CONFIG_X86_32
@@ -545,6 +568,8 @@ static inline int pud_large(pud_t pud)
 	return 0;
 }
 #endif	/* PAGETABLE_LEVELS > 2 */
+
+static inline int pgd_large(pgd_t pgd) { return 0; }
 
 #if PAGETABLE_LEVELS > 3
 static inline int pgd_present(pgd_t pgd)

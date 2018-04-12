@@ -19,9 +19,9 @@
 #endif
 
 .macro altinstruction_entry orig alt feature orig_len alt_len
-	.align 8
-	.quad \orig
-	.quad \alt
+	_ASM_ALIGN
+	_ASM_PTR \orig
+	_ASM_PTR \alt
 	.word \feature
 	.byte \orig_len
 	.byte \alt_len
