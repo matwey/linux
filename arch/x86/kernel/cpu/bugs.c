@@ -13,7 +13,6 @@
 #include <linux/module.h>
 
 #include <asm/nospec-branch.h>
-#include <asm/spec_ctrl.h>
 #include <asm/cmdline.h>
 #include <asm/bugs.h>
 #include <asm/processor.h>
@@ -25,6 +24,7 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/intel-family.h>
+#include <asm/spec_ctrl.h>
 
 static void __init spectre_v2_select_mitigation(void);
 
@@ -160,10 +160,9 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 	int ret, i;
 	enum spectre_v2_mitigation_cmd cmd = SPECTRE_V2_CMD_AUTO;
 
-	if (cmdline_find_option_bool(boot_command_line, "nospectre_v2")) {
-		nospec("");
+	if (cmdline_find_option_bool(boot_command_line, "nospectre_v2"))
 		return SPECTRE_V2_CMD_NONE;
-	} else {
+	else {
 		ret = cmdline_find_option(boot_command_line, "spectre_v2", arg,
 					  sizeof(arg));
 		if (ret < 0)
@@ -201,9 +200,6 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 		spec2_print_if_secure(mitigation_options[i].option);
 	else
 		spec2_print_if_insecure(mitigation_options[i].option);
-
-	if (cmd == SPECTRE_V2_CMD_NONE)
-		nospec("");
 
 	return cmd;
 }

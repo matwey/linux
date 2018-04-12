@@ -91,3 +91,19 @@ int nospec(char *str)
 	return 0;
 }
 early_param("nospec", nospec);
+
+static int __init nospectre_v2(char *str)
+{
+	return nospec(str);
+}
+early_param("nospectre_v2", nospectre_v2);
+
+static int __init spectre_v2(char *str)
+{
+	if (str && !strcmp(str, "off"))
+		return nospec(str);
+
+	return 0;
+}
+early_param("spectre_v2", spectre_v2);
+
