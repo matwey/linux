@@ -1648,14 +1648,15 @@ static void qedr_reset_qp_hwq_info(struct qedr_qp_hwq_info *qph)
 
 static int qedr_update_qp_state(struct qedr_dev *dev,
 				struct qedr_qp *qp,
+				enum qed_roce_qp_state cur_state,
 				enum qed_roce_qp_state new_state)
 {
 	int status = 0;
 
-	if (new_state == qp->state)
+	if (new_state == cur_state)
 		return 0;
 
-	switch (qp->state) {
+	switch (cur_state) {
 	case QED_ROCE_QP_STATE_RESET:
 		switch (new_state) {
 		case QED_ROCE_QP_STATE_INIT:
@@ -1758,6 +1759,7 @@ int qedr_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	struct qed_rdma_modify_qp_in_params qp_params = { 0 };
 	struct qedr_dev *dev = get_qedr_dev(&qp->dev->ibdev);
 	enum ib_qp_state old_qp_state, new_qp_state;
+	enum qed_roce_qp_state cur_state;
 	int rc = 0;
 
 	DP_DEBUG(dev, QEDR_MSG_QP,
@@ -1976,13 +1978,25 @@ int qedr_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		qp->dest_qp_num = attr->dest_qp_num;
 	}
 
+	cur_state = qp->state;
+
+	/* Update the QP state before the actual ramrod to prevent a race with
+	 * fast path. Modifying the QP state to error will cause the device to
+	 * flush the CQEs and while polling the flushed CQEs will considered as
+	 * a potential issue if the QP isn't in error state.
+	 */
+	if ((attr_mask & IB_QP_STATE) && qp->qp_type != IB_QPT_GSI &&
+	    !udata && qp_params.new_state == QED_ROCE_QP_STATE_ERR)
+		qp->state = QED_ROCE_QP_STATE_ERR;
+
 	if (qp->qp_type != IB_QPT_GSI)
 		rc = dev->ops->rdma_modify_qp(dev->rdma_ctx,
 					      qp->qed_qp, &qp_params);
 
 	if (attr_mask & IB_QP_STATE) {
 		if ((qp->qp_type != IB_QPT_GSI) && (!udata))
-			rc = qedr_update_qp_state(dev, qp, qp_params.new_state);
+			rc = qedr_update_qp_state(dev, qp, cur_state,
+						  qp_params.new_state);
 		qp->state = qp_params.new_state;
 	}
 
