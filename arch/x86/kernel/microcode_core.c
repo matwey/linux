@@ -294,6 +294,13 @@ static int reload_for_cpu(int cpu)
 	return err;
 }
 
+static void microcode_check(void)
+{
+	perf_check_microcode();
+	x86_spec_check();
+	cpu_caps_sync_late();
+}
+
 static ssize_t reload_store(struct sys_device *dev,
 			    struct sysdev_attribute *attr,
 			    const char *buf, size_t size)
@@ -324,11 +331,8 @@ static ssize_t reload_store(struct sys_device *dev,
 		if (!ret)
 			ret = tmp_ret;
 	}
-	if (!ret) {
-		perf_check_microcode();
-		x86_spec_check();
-		cpu_caps_sync_late();
-	}
+	if (!ret)
+		microcode_check();
 
 	mutex_unlock(&microcode_mutex);
 	put_online_cpus();
@@ -544,7 +548,8 @@ static int __init microcode_init(void)
 
 	error = sysdev_driver_register(&cpu_sysdev_class, &mc_sysdev_driver);
 	if (!error)
-		perf_check_microcode();
+		microcode_check();
+
 	mutex_unlock(&microcode_mutex);
 	put_online_cpus();
 
