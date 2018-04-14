@@ -228,8 +228,10 @@ __blk_mq_alloc_request(struct blk_mq_alloc_data *data, unsigned int op)
 	if (tag != BLK_MQ_TAG_FAIL) {
 		rq = data->hctx->tags->rqs[tag];
 
+		/* Sanity check; clear stale flags */
+		rq->rq_flags = 0;
 		if (blk_mq_tag_busy(data->hctx)) {
-			rq->rq_flags = RQF_MQ_INFLIGHT;
+			rq->rq_flags |= RQF_MQ_INFLIGHT;
 			atomic_inc(&data->hctx->nr_active);
 		}
 
