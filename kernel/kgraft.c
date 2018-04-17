@@ -764,8 +764,10 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final,
 		bool revert, bool replace_revert)
 {
 	struct ftrace_ops *new_ops = NULL, *unreg_ops = NULL;
-	enum kgr_patch_state next_state;
+	enum kgr_patch_state prev_state, next_state;
 	int err;
+
+	prev_state = patch_fun->state;
 
 	switch (patch_fun->state) {
 	case KGR_PATCH_INIT:
@@ -840,15 +842,23 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final,
 		return -EINVAL;
 	}
 
+
+	/* Slow stub has to see KGR_PATCH_REVERT_SLOW state all the time. */
+	if (next_state == KGR_PATCH_REVERT_SLOW)
+		patch_fun->state = next_state;
+
 	/*
 	 * In case of error the caller can still have a chance to restore the
 	 * previous consistent state.
 	 */
 	err = kgr_switch_fops(patch_fun, new_ops, unreg_ops);
-	if (err)
+	if (err) {
+		patch_fun->state = prev_state;
 		return err;
+	}
 
-	patch_fun->state = next_state;
+	if (next_state != KGR_PATCH_REVERT_SLOW)
+		patch_fun->state = next_state;
 
 	pr_debug("redirection for %s:%s,%lu done\n",
 		kgr_get_objname(patch_fun), patch_fun->name, patch_fun->sympos);

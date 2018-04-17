@@ -268,10 +268,11 @@ static int esp_output(struct xfrm_state *x, struct sk_buff *skb)
 	esph->spi = x->id.spi;
 
 	sg_init_table(sg, nfrags);
-	skb_to_sgvec(skb, sg,
-		     (unsigned char *)esph - skb->data,
-		     assoclen + ivlen + clen + alen);
-
+	err = skb_to_sgvec(skb, sg,
+		           (unsigned char *)esph - skb->data,
+		           assoclen + ivlen + clen + alen);
+	if (unlikely(err < 0))
+		goto error_free;
 	aead_request_set_crypt(req, sg, sg, ivlen + clen, iv);
 	aead_request_set_ad(req, assoclen);
 
@@ -298,8 +299,8 @@ static int esp_output(struct xfrm_state *x, struct sk_buff *skb)
 			esp_output_restore_header(skb);
 	}
 
+error_free:
 	kfree(tmp);
-
 error:
 	return err;
 }
@@ -481,7 +482,11 @@ static int esp_input(struct xfrm_state *x, struct sk_buff *skb)
 	}
 
 	sg_init_table(sg, nfrags);
-	skb_to_sgvec(skb, sg, 0, skb->len);
+	err = skb_to_sgvec(skb, sg, 0, skb->len);
+	if (unlikely(err < 0)) {
+		kfree(tmp);
+		goto out;
+	}
 
 	aead_request_set_crypt(req, sg, sg, elen + ivlen, iv);
 	aead_request_set_ad(req, assoclen);

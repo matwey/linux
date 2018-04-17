@@ -468,9 +468,9 @@ static int
 get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw)
 {
 	unsigned long address = (unsigned long)uaddr;
-	struct address_space *mapping;
 	struct mm_struct *mm = current->mm;
 	struct page *page, *page_head;
+	struct address_space *mapping;
 	int err, ro = 0;
 
 	/*
@@ -567,10 +567,11 @@ again:
 	 * From this point on, mapping will be re-verified if necessary and
 	 * page lock will be acquired only if it is unavoidable
 	 */
+
 	mapping = READ_ONCE(page_head->mapping);
 
 	/*
-	 * If mapping is NULL, then it cannot be a PageAnon
+	 * If page_head->mapping is NULL, then it cannot be a PageAnon
 	 * page; but it might be the ZERO_PAGE or in the gate area or
 	 * in a special mapping (all cases which we are happy to fail);
 	 * or it may have been a good file page when get_user_pages_fast
@@ -592,8 +593,8 @@ again:
 		 * applies. If this is really a shmem page then the page lock
 		 * will prevent unexpected transitions.
 		 */
-		lock_page(page_head);
-		shmem_swizzled = PageSwapCache(page_head) || page_head->mapping;
+		lock_page(page);
+		shmem_swizzled = PageSwapCache(page) || page->mapping;
 		unlock_page(page_head);
 		put_page(page_head);
 
@@ -628,6 +629,7 @@ again:
 		key->private.address = address;
 
 		get_futex_key_refs(key); /* implies smp_mb(); (B) */
+
 	} else {
 		struct inode *inode;
 
@@ -643,6 +645,13 @@ again:
 		 * mapping->host can be safely accessed as being a valid inode.
 		 */
 		rcu_read_lock();
+
+		if (READ_ONCE(page_head->mapping) != mapping) {
+			rcu_read_unlock();
+			put_page(page_head);
+
+			goto again;
+		}
 
 		inode = READ_ONCE(mapping->host);
 		if (!inode) {
