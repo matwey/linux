@@ -45,7 +45,8 @@ struct btrfs_device;
 struct btrfs_fs_devices;
 
 struct extent_buffer *read_tree_block(struct btrfs_root *root, u64 bytenr,
-				      u64 parent_transid);
+				      u64 parent_transid, int level,
+				      struct btrfs_key *first_key);
 void readahead_tree_block(struct btrfs_root *root, u64 bytenr);
 int reada_tree_block_flagged(struct btrfs_root *root, u64 bytenr,
 			 int mirror_num, struct extent_buffer **eb);
@@ -118,7 +119,8 @@ static inline void btrfs_put_fs_root(struct btrfs_root *root)
 void btrfs_mark_buffer_dirty(struct extent_buffer *buf);
 int btrfs_buffer_uptodate(struct extent_buffer *buf, u64 parent_transid,
 			  int atomic);
-int btrfs_read_buffer(struct extent_buffer *buf, u64 parent_transid);
+int btrfs_read_buffer(struct extent_buffer *buf, u64 parent_transid, int level,
+		      struct btrfs_key *first_key);
 u32 btrfs_csum_data(char *data, u32 seed, size_t len);
 void btrfs_csum_final(u32 crc, char *result);
 int btrfs_bio_wq_end_io(struct btrfs_fs_info *info, struct bio *bio,
