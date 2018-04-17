@@ -1417,7 +1417,7 @@ xfs_buf_iorequest(
 		xfs_buf_ioacct_inc(bp);
 
 	_xfs_buf_ioapply(bp);
-	_xfs_buf_ioend(bp, 0);
+	_xfs_buf_ioend(bp, 1);
 
 	xfs_buf_rele(bp);
 }
