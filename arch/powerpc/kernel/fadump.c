@@ -243,8 +243,12 @@ static inline unsigned long fadump_calculate_reserve_size(void)
 	int ret;
 	unsigned long long base, size;
 
+	/*
+	 * 'fadump_reserve_mem=' is being used to reserve memory
+	 * for firmware-assisted dump.
+	 */
 	if (fw_dump.reserve_bootvar)
-		pr_warn("'fadump_reserve_mem=' parameter is deprecated in favor of 'crashkernel=' parameter.\n");
+		return fw_dump.reserve_bootvar;
 
 	/*
 	 * Check if the size is specified through crashkernel= cmdline
@@ -258,12 +262,6 @@ static inline unsigned long fadump_calculate_reserve_size(void)
 			pr_info("Using 'crashkernel=' parameter for memory reservation.\n");
 
 		fw_dump.reserve_bootvar = (unsigned long)size;
-		return fw_dump.reserve_bootvar;
-	} else if (fw_dump.reserve_bootvar) {
-		/*
-		 * 'fadump_reserve_mem=' is being used to reserve memory
-		 * for firmware-assisted dump.
-		 */
 		return fw_dump.reserve_bootvar;
 	}
 
