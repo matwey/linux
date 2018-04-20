@@ -1233,6 +1233,7 @@ cleanup_update:
 	jz	0f
 	stg	%r11,__TI_last_break(%r12)
 0:	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_system_call+8)
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	la	%r12,__LC_RETURN_PSW
 	BR_R13USE_R14
 cleanup_system_call_insn:
