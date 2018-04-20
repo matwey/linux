@@ -48,6 +48,7 @@
 #include <linux/compat.h>
 
 #include <asm/alternative.h>
+#include <asm/nospec-branch.h>
 #include <asm/ipl.h>
 #include <asm/uaccess.h>
 #include <asm/system.h>
@@ -434,6 +435,7 @@ setup_lowcore(void)
 #ifdef CONFIG_SMP
 	lc->spinlock_lockval = arch_spin_lockval(0);
 #endif
+	lc->br_r1_trampoline = 0x07f1;	/* br %r1 */
 
 	set_prefix((u32)(unsigned long) lc);
 	lowcore_ptr[0] = lc;
@@ -1119,6 +1121,9 @@ setup_arch(char **cmdline_p)
 	set_preferred_console();
 
 	apply_alternative_instructions();
+#ifdef CONFIG_EXPOLINE
+	nospec_init_branches();
+#endif
 
 	/* Setup zfcpdump support */
 	setup_zfcpdump(console_devno);

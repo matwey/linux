@@ -31,6 +31,9 @@ obj-y	+= $(if $(CONFIG_64BIT),reipl64.o,reipl.o)
 extra-y				+= head.o init_task.o vmlinux.lds
 extra-y				+= $(if $(CONFIG_64BIT),head64.o,head31.o)
 
+obj-$(CONFIG_EXPOLINE)		+= nospec-branch.o
+CFLAGS_REMOVE_expoline.o	+= $(CC_FLAGS_EXPOLINE)
+
 obj-$(CONFIG_MODULES)		+= s390_ksyms.o module.o
 obj-$(CONFIG_SMP)		+= smp.o topology.o
 obj-$(CONFIG_SMP)		+= $(if $(CONFIG_64BIT),switch_cpu64.o, \
