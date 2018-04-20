@@ -1089,6 +1089,10 @@ setup_arch(char **cmdline_p)
 	else
 		memcpy(&uaccess, &uaccess_std, sizeof(uaccess));
 
+#if defined(CONFIG_EXPOLINE_AUTO)
+	nospec_auto_detect();
+#endif
+
 	parse_early_param();
 
 	os_info_init();
