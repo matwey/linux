@@ -36,6 +36,9 @@ extern void s390_adjust_jiffies(void);
 extern int get_cpu_capability(unsigned int *);
 extern void __bpon(void);
 
+extern int s390_isolate_bp(void);
+extern int s390_isolate_bp_guest(void);
+
 /*
  * User space process size: 2GB for 31 bit, 4TB or 8PT for 64 bit.
  */

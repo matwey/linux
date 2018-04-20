@@ -225,6 +225,40 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	.popsection
 	.endm
 
+	.macro BPENTER tif_ptr,tif_mask
+	.pushsection .altinstr_replacement, "ax"
+662:	.word	0xc004, 0x0000, 0x0000	# 6 byte nop
+	.word	0xc004, 0x0000, 0x0000	# 6 byte nop
+	.popsection
+664:	tm	\tif_ptr,\tif_mask
+	jz	. + 8
+	.long	0xb2e8d000
+	.pushsection .altinstructions, "a"
+	.long 664b - .
+	.long 662b - .
+	.word 82
+	.byte 12
+	.byte 12
+	.popsection
+	.endm
+
+	.macro BPEXIT tif_ptr,tif_mask
+	tm	\tif_ptr,\tif_mask
+	.pushsection .altinstr_replacement, "ax"
+662:	jnz	. + 8
+	.long	0xb2e8d000
+	.popsection
+664:	jz	. + 8
+	.long	0xb2e8c000
+	.pushsection .altinstructions, "a"
+	.long 664b - .
+	.long 662b - .
+	.word 82
+	.byte 8
+	.byte 8
+	.popsection
+	.endm
+
 	.section .kprobes.text, "ax"
 
 ENTRY(__bpon)
@@ -281,6 +315,7 @@ sysc_stime:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 sysc_update:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 sysc_do_svc:
 	# clear user controlled register to prevent speculative use
@@ -314,7 +349,7 @@ sysc_return:
 sysc_tif:
 	tm	__TI_flags+7(%r12),_TIF_WORK_SVC
 	jnz	sysc_work	# there is work to do (signals etc.)
-	BPON
+	BPEXIT	__TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 sysc_restore:
 	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
 	lg	%r14,__LC_VDSO_PER_CPU
@@ -515,6 +550,7 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 	# clear user controlled registers to prevent speculative use
 	xgr	%r0,%r0
@@ -575,6 +611,7 @@ pgm_per_std:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 	# clear user controlled registers to prevent speculative use
 	xgr	%r0,%r0
@@ -628,6 +665,7 @@ pgm_svcper:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 	# clear user controlled registers to prevent speculative use
 	xgr	%r0,%r0
@@ -676,6 +714,7 @@ io_int_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_ASYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 io_no_vtime:
 	# clear user controlled registers to prevent speculative use
@@ -702,14 +741,14 @@ io_restore:
 	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
 	ni	__LC_RETURN_PSW+1,0xfd
 	lg	%r14,__LC_VDSO_PER_CPU
-	lmg	%r0,%r13,SP_R0(%r15)
+	lmg	%r0,%r11,SP_R0(%r15)
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
 	jno	io_exit_kernel
-	BPON
+	BPEXIT	__TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	stpt	__LC_EXIT_TIMER
 	mvc	__VDSO_ECTG_BASE(16,%r14),__LC_EXIT_TIMER
 io_exit_kernel:
-	lmg	%r14,%r15,SP_R14(%r15)
+	lmg	%r12,%r15,SP_R12(%r15)
 	lpswe	__LC_RETURN_PSW
 io_done:
 
@@ -834,6 +873,7 @@ ext_int_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_ASYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 ext_no_vtime:
 	# clear user controlled registers to prevent speculative use
@@ -870,7 +910,7 @@ mcck_int_handler:
 	spt	__LC_CPU_TIMER_SAVE_AREA-4095(%r1)	# revalidate cpu timer
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)# revalidate gprs
 	stmg	%r11,%r15,__LC_SAVE_AREA+80
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	la	%r12,__LC_MCK_OLD_PSW
 	tm	__LC_MCCK_CODE,0x80	# system damage?
@@ -917,6 +957,7 @@ mcck_int_main:
 	jz	mcck_no_vtime
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_MCCK_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_MCCK_ENTER_TIMER
 	LAST_BREAK
 mcck_no_vtime:
@@ -949,12 +990,13 @@ mcck_no_vtime:
 mcck_return:
 	mvc	__LC_RETURN_MCCK_PSW(16),SP_PSW(%r15) # move return PSW
 	ni	__LC_RETURN_MCCK_PSW+1,0xfd # clear wait state bit
-	lmg	%r0,%r15,SP_R0(%r15)	# load gprs 0-15
+	lmg	%r0,%r11,SP_R0(%r15)	# load gprs 0-11
 	tm	__LC_RETURN_MCCK_PSW+1,0x01 # returning to user ?
 	jno	0f
-	BPON
+	BPEXIT	__TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	stpt	__LC_EXIT_TIMER
-0:	lpswe	__LC_RETURN_MCCK_PSW	# back to caller
+0:	lmg	%r12,%r15,SP_R12(%r15)	# load gprs 12-15
+	lpswe	__LC_RETURN_MCCK_PSW	# back to caller
 mcck_done:
 
 /*
@@ -1126,6 +1168,7 @@ cleanup_update:
 	jz	0f
 	stg	%r11,__TI_last_break(%r12)
 0:	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_system_call+8)
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	la	%r12,__LC_RETURN_PSW
 	br	%r14
 cleanup_system_call_insn:
@@ -1204,8 +1247,10 @@ cleanup_io_restore_insn:
 	.globl	sie64a
 sie64a:
 	stmg	%r6,%r14,__SF_GPRS(%r15)	# save kernel registers
+	lg	%r12,__LC_THREAD_INFO
 	stg	%r2,__SF_EMPTY(%r15)		# save control block pointer
 	stg	%r3,__SF_EMPTY+8(%r15)		# save guest register save area
+	mvc	__SF_EMPTY+24(8,%r15),__TI_flags(%r12) # copy thread flags
 	lmg	%r0,%r13,0(%r3)			# load guest gprs 0-13
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	oi	__TI_flags+6(%r14),_TIF_SIE>>8
@@ -1215,10 +1260,11 @@ sie_loop:
 	jnz	sie_exit
 	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
 	SPP	__SF_EMPTY(%r15)		# set guest id
-	BPON
+	BPEXIT	__SF_EMPTY+30(%r15),(_TIF_ISOLATE_BP|_TIF_ISOLATE_BP_GUEST)>>8
 	sie	0(%r14)
 sie_done:
 	BPOFF
+	BPENTER	__SF_EMPTY+30(%r15),(_TIF_ISOLATE_BP|_TIF_ISOLATE_BP_GUEST)>>8
 	SPP	__LC_CMF_HPP			# set host id
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	.globl sie_exit
