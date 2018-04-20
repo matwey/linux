@@ -58,7 +58,7 @@ _TIF_SYSCALL = (_TIF_SYSCALL_TRACE>>8 | _TIF_SYSCALL_AUDIT>>8 | \
 		_TIF_SECCOMP>>8 | _TIF_SYSCALL_TRACEPOINT>>8)
 _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 
-#define BASED(name) name-system_call(%r13)
+#define BASED(name) name-cleanup_critical(%r13)
 
 	.macro SPP newpp
 #if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
@@ -144,13 +144,13 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 #endif
 1:	lg	%r15,__LC_KERNEL_STACK	# problem state -> load ksp
 2:	aghi	%r15,-SP_SIZE		# make room for registers & psw
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	.endm
 
 	.macro	SAVE_ALL_ASYNC psworg,savearea
 	stmg	%r11,%r15,\savearea
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	la	%r12,\psworg
 	tm	\psworg+1,0x01		# test problem state bit
@@ -283,6 +283,8 @@ sysc_update:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
 sysc_do_svc:
+	# clear user controlled register to prevent speculative use
+	xgr	%r0,%r0
 	llgh	%r7,SP_SVCNR(%r15)
 	slag	%r7,%r7,2	# shift and test for svc 0
 	jnz	sysc_nr_ok
@@ -438,7 +440,7 @@ sysc_tracenogo:
 #
 	.globl	ret_from_fork
 ret_from_fork:
-	lg	%r13,__LC_SVC_NEW_PSW+8
+	larl	%r13,cleanup_critical
 	lg	%r12,__LC_THREAD_INFO	# load pointer to thread_info struct
 	tm	SP_PSW+1(%r15),0x01	# forking a kernel thread ?
 	jo	0f
@@ -471,7 +473,7 @@ kernel_execve:
 0:	stnsm	__SF_EMPTY(%r15),0xfc	# disable interrupts
 	lg	%r15,__LC_KERNEL_STACK	# load ksp
 	aghi	%r15,-SP_SIZE		# make room for registers & psw
-	lg	%r13,__LC_SVC_NEW_PSW+8
+	larl	%r13,cleanup_critical
 	mvc	SP_PTREGS(__PT_SIZE,%r15),0(%r12)	# copy pt_regs
 	lg	%r12,__LC_THREAD_INFO
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
@@ -514,6 +516,16 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r9,%r9
 	lg	%r14,__TI_task(%r12)
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
@@ -564,6 +576,16 @@ pgm_per_std:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r9,%r9
 	lg	%r14,__TI_task(%r12)
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
@@ -607,6 +629,16 @@ pgm_svcper:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r9,%r9
 	lg	%r8,__TI_task(%r12)
 	mvc	__THREAD_per_cause(2,%r8),__LC_PER_CAUSE
 	mvc	__THREAD_per_address(8,%r8),__LC_PER_ADDRESS
@@ -646,6 +678,17 @@ io_int_handler:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
 	LAST_BREAK
 io_no_vtime:
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r8,%r8
+	xgr	%r9,%r9
 	TRACE_IRQS_OFF
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	brasl	%r14,do_IRQ		# call standard irq handler
@@ -793,6 +836,17 @@ ext_int_handler:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
 	LAST_BREAK
 ext_no_vtime:
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r8,%r8
+	xgr	%r9,%r9
 	TRACE_IRQS_OFF
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lghi	%r1,4096
@@ -866,6 +920,17 @@ mcck_int_main:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_MCCK_ENTER_TIMER
 	LAST_BREAK
 mcck_no_vtime:
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r8,%r8
+	xgr	%r9,%r9
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
 	brasl	%r14,s390_do_machine_check
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
@@ -982,17 +1047,6 @@ stack_overflow:
 	jg	kernel_stack_overflow
 #endif
 
-cleanup_table_system_call:
-	.quad	system_call, sysc_do_svc
-cleanup_table_sysc_tif:
-	.quad	sysc_tif, sysc_restore
-cleanup_table_sysc_restore:
-	.quad	sysc_restore, sysc_done
-cleanup_table_io_tif:
-	.quad	io_tif, io_restore
-cleanup_table_io_restore:
-	.quad	io_restore, io_done
-
 cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_system_call)
 	jl	0f
@@ -1020,6 +1074,17 @@ cleanup_critical:
 	jl	cleanup_io_restore
 0:
 	br	%r14
+
+cleanup_table_system_call:
+	.quad	system_call, sysc_do_svc
+cleanup_table_sysc_tif:
+	.quad	sysc_tif, sysc_restore
+cleanup_table_sysc_restore:
+	.quad	sysc_restore, sysc_done
+cleanup_table_io_tif:
+	.quad	io_tif, io_restore
+cleanup_table_io_restore:
+	.quad	io_restore, io_done
 
 cleanup_system_call:
 	mvc	__LC_RETURN_PSW(16),0(%r12)
@@ -1161,6 +1226,12 @@ sie_exit:
 	ni	__TI_flags+6(%r14),255-(_TIF_SIE>>8)
 	lg	%r14,__SF_EMPTY+8(%r15)		# load guest register save area
 	stmg	%r0,%r13,0(%r14)		# save guest gprs 0-13
+	xgr	%r0,%r0				# clear guest registers to
+	xgr	%r1,%r1				# prevent speculative use
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
 	lmg	%r6,%r14,__SF_GPRS(%r15)	# restore kernel registers
 	lghi	%r2,0
 	br	%r14
