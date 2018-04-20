@@ -176,7 +176,7 @@ module_frob_arch_sections(Elf_Ehdr *hdr, Elf_Shdr *sechdrs,
 	me->arch.plt_offset = me->core_size;
 	if (me->arch.plt_size) {
 #ifdef CONFIG_EXPOLINE
-		if (!nospec_call_disable)
+		if (!nospec_disable)
 			me->arch.plt_size += PLT_ENTRY_SIZE;
 #endif
 		me->core_size += me->arch.plt_size;
@@ -317,7 +317,7 @@ apply_rela(Elf_Rela *rela, Elf_Addr base, Elf_Sym *symtab,
 			ip[1] = 0x100a0004;	/* lg	1,10(1) */
 			ip[2] = 0x07f10000;	/* br %r1 */
 #ifdef CONFIG_EXPOLINE
-			if (!nospec_call_disable) {
+			if (!nospec_disable) {
 				unsigned int *ij;
 				ij = me->module_core +
 					me->arch.plt_offset +
@@ -432,7 +432,7 @@ int module_finalize(const Elf_Ehdr *hdr,
 	void *aseg;
 
 #ifdef CONFIG_EXPOLINE
-	if (!nospec_call_disable && me->arch.plt_size) {
+	if (!nospec_disable && me->arch.plt_size) {
 		unsigned int *ij;
 
 		ij = me->module_core + me->arch.plt_offset +
@@ -460,10 +460,10 @@ int module_finalize(const Elf_Ehdr *hdr,
 
 #ifdef CONFIG_EXPOLINE
 		if (!strcmp(".nospec_call_table", secname))
-			nospec_call_revert(aseg, aseg + s->sh_size);
+			nospec_revert(aseg, aseg + s->sh_size);
 
 		if (!strcmp(".nospec_return_table", secname))
-			nospec_return_revert(aseg, aseg + s->sh_size);
+			nospec_revert(aseg, aseg + s->sh_size);
 #endif
 	}
 
