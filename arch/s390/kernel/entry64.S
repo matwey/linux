@@ -202,7 +202,7 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 660:	.long	0xb2e8c000
 	.popsection
 661:	.long	0x47000000
-	.pushsection .altnobp, "a"
+	.pushsection .altinstructions, "a"
         .long 661b - .
 	.long 660b - .
 	.word 82
@@ -216,7 +216,7 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 662:	.long	0xb2e8d000
 	.popsection
 663:	.long	0x47000000
-	.pushsection .altnobp, "a"
+	.pushsection .altinstructions, "a"
         .long 663b - .
 	.long 662b - .
 	.word 82
