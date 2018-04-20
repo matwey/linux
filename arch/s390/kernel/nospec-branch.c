@@ -3,6 +3,38 @@
 #include <linux/uaccess.h>
 #include <asm/nospec-branch.h>
 
+static int __init nobp_setup_early(char *str)
+{
+	bool enabled;
+	int rc;
+
+	rc = strtobool(str, &enabled);
+	if (rc)
+		return rc;
+	if (enabled && test_facility(82))
+		__set_facility(82, S390_lowcore.alt_stfle_fac_list);
+	else
+		__clear_facility(82, S390_lowcore.alt_stfle_fac_list);
+	return 0;
+}
+early_param("nobp", nobp_setup_early);
+
+static int __init nospec_setup_early(char *str)
+{
+	__clear_facility(82, S390_lowcore.alt_stfle_fac_list);
+	return 0;
+}
+early_param("nospec", nospec_setup_early);
+
+static int __init nogmb_setup_early(char *str)
+{
+	__clear_facility(81, S390_lowcore.alt_stfle_fac_list);
+	return 0;
+}
+early_param("nogmb", nogmb_setup_early);
+
+#ifdef CONFIG_EXPOLINE
+
 #ifdef CONFIG_EXPOLINE_OFF
 int nospec_call_disable = 1;
 #else
@@ -107,3 +139,5 @@ void __init nospec_init_branches(void)
 	nospec_call_revert(__nospec_call_start, __nospec_call_end);
 	nospec_return_revert(__nospec_return_start, __nospec_return_end);
 }
+
+#endif /* CONFIG_EXPOLINE */
