@@ -394,6 +394,7 @@ static const struct sdhci_pci_fixes sdhci_intel_pch_sdio = {
 
 enum {
 	INTEL_DSM_FNS		=  0,
+	INTEL_DSM_V18_SWITCH	=  3,
 	INTEL_DSM_DRV_STRENGTH	=  9,
 	INTEL_DSM_D3_RETUNE	= 10,
 };
@@ -561,6 +562,19 @@ static void intel_hs400_enhanced_strobe(struct mmc_host *mmc,
 	sdhci_writel(host, val, INTEL_HS400_ES_REG);
 }
 
+static void sdhci_intel_voltage_switch(struct sdhci_host *host)
+{
+	struct sdhci_pci_slot *slot = sdhci_priv(host);
+	struct intel_host *intel_host = sdhci_pci_priv(slot);
+	struct device *dev = &slot->chip->pdev->dev;
+	u32 result = 0;
+	int err;
+
+	err = intel_dsm(intel_host, dev, INTEL_DSM_V18_SWITCH, &result);
+	pr_debug("%s: %s DSM error %d result %u\n",
+		 mmc_hostname(host->mmc), __func__, err, result);
+}
+
 static const struct sdhci_ops sdhci_intel_byt_ops = {
 	.set_clock		= sdhci_set_clock,
 	.set_power		= sdhci_intel_set_power,
@@ -569,6 +583,7 @@ static const struct sdhci_ops sdhci_intel_byt_ops = {
 	.reset			= sdhci_reset,
 	.set_uhs_signaling	= sdhci_set_uhs_signaling,
 	.hw_reset		= sdhci_pci_hw_reset,
+	.voltage_switch		= sdhci_intel_voltage_switch,
 };
 
 static void byt_read_dsm(struct sdhci_pci_slot *slot)
@@ -776,6 +791,8 @@ static int intel_mrfld_mmc_probe_slot(struct sdhci_pci_slot *slot)
 		slot->host->quirks2 |= SDHCI_QUIRK2_NO_1_8_V;
 		break;
 	case INTEL_MRFLD_SDIO:
+		/* Advertise 2.0v for compatibility with the SDIO card's OCR */
+		slot->host->ocr_mask = MMC_VDD_20_21 | MMC_VDD_165_195;
 		slot->host->mmc->caps |= MMC_CAP_NONREMOVABLE |
 					 MMC_CAP_POWER_OFF_CARD;
 		break;
