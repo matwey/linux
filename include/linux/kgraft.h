@@ -142,6 +142,7 @@ extern void kgr_remove_files(void);
 typedef int (*kgr_shadow_ctor_t)(void *obj,
 				 void *shadow_data,
 				 void *ctor_data);
+typedef void (*kgr_shadow_dtor_t)(void *obj, void *shadow_data);
 
 extern void *kgr_shadow_get(void *obj, unsigned long id);
 void *kgr_shadow_alloc(void *obj, unsigned long id,
@@ -150,8 +151,8 @@ void *kgr_shadow_alloc(void *obj, unsigned long id,
 void *kgr_shadow_get_or_alloc(void *obj, unsigned long id,
 			      size_t size, gfp_t gfp_flags,
 			      kgr_shadow_ctor_t ctor, void *ctor_data);
-extern void kgr_shadow_free(void *obj, unsigned long id);
-extern void kgr_shadow_free_all(unsigned long id);
+void kgr_shadow_free(void *obj, unsigned long id, kgr_shadow_dtor_t dtor);
+void kgr_shadow_free_all(unsigned long id, kgr_shadow_dtor_t dtor);
 
 #endif /* IS_ENABLED(CONFIG_KGRAFT) */
 
