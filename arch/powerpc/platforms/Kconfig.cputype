@@ -62,7 +62,7 @@ choice
 	help
 	  There are two families of 64 bit PowerPC chips supported.
 	  The most common ones are the desktop and server CPUs
-	  (POWER4, POWER5, 970, POWER5+, POWER6, POWER7, POWER8 ...)
+	  (POWER5, 970, POWER5+, POWER6, POWER7, POWER8, POWER9 ...)
 
 	  The other are the "embedded" processors compliant with the
 	  "Book 3E" variant of the architecture
@@ -102,10 +102,6 @@ config GENERIC_CPU
 
 config CELL_CPU
 	bool "Cell Broadband Engine"
-	depends on PPC_BOOK3S_64 && !CPU_LITTLE_ENDIAN
-
-config POWER4_CPU
-	bool "POWER4"
 	depends on PPC_BOOK3S_64 && !CPU_LITTLE_ENDIAN
 
 config POWER5_CPU
@@ -308,6 +304,19 @@ config PPC_RADIX_MMU
 	  Enable support for the Power ISA 3.0 Radix style MMU. Currently this
 	  is only implemented by IBM Power9 CPUs, if you don't have one of them
 	  you can probably disable this.
+
+config PPC_RADIX_MMU_DEFAULT
+	bool "Default to using the Radix MMU when possible"
+	depends on PPC_RADIX_MMU
+	default y
+	help
+	  When the hardware supports the Radix MMU, default to using it unless
+	  "disable_radix[=yes]" is specified on the kernel command line.
+
+	  If this option is disabled, the Hash MMU will be used by default,
+	  unless "disable_radix=no" is specified on the kernel command line.
+
+	  If you're unsure, say Y.
 
 config PPC_MMU_NOHASH
 	def_bool y
