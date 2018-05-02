@@ -171,6 +171,7 @@ struct kvm_sync_regs {
 	__u32 fpc;	/* only valid with vector registers */
 #ifndef __GENKSYMS__
 	__u8 bpbc : 1;		/* bp mode */
+	__u8 reserved2 : 7;
 #endif
 };
 
