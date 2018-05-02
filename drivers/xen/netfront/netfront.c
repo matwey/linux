@@ -794,7 +794,7 @@ no_skb:
 
 	/* Is the batch large enough to be worthwhile? */
 	if (i < (np->rx_target/2)) {
-		if (req_prod > np->rx.sring->req_prod)
+		if (req_prod != np->rx.sring->req_prod)
 			goto push;
 		return;
 	}
