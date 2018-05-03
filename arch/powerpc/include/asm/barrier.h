@@ -76,7 +76,7 @@ do {									\
 })
 
 #define smp_mb__before_spinlock()   smp_mb()
-#define gmb() asm volatile("ori 31,31,0");
+#define gmb()
 
 #ifdef CONFIG_PPC_BOOK3S_64
 /*
