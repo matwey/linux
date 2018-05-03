@@ -295,6 +295,8 @@ void ceph_reservation_status(struct ceph_fs_client *fsc,
 {
 	struct ceph_mds_client *mdsc = fsc->mdsc;
 
+	spin_lock(&mdsc->caps_list_lock);
+
 	if (total)
 		*total = mdsc->caps_total_count;
 	if (avail)
@@ -305,6 +307,8 @@ void ceph_reservation_status(struct ceph_fs_client *fsc,
 		*reserved = mdsc->caps_reserve_count;
 	if (min)
 		*min = mdsc->caps_min_count;
+
+	spin_unlock(&mdsc->caps_list_lock);
 }
 
 /*
@@ -593,9 +597,11 @@ void ceph_add_cap(struct inode *inode,
 			}
 
 			spin_lock(&realm->inodes_with_caps_lock);
-			ci->i_snap_realm = realm;
 			list_add(&ci->i_snap_realm_item,
 				 &realm->inodes_with_caps);
+			ci->i_snap_realm = realm;
+			if (realm->ino == ci->i_vino.ino)
+				realm->inode = inode;
 			spin_unlock(&realm->inodes_with_caps_lock);
 
 			if (oldrealm)
