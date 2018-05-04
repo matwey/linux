@@ -48,7 +48,6 @@ void __cpuinit mxcsr_feature_mask_init(void)
 {
 	unsigned long mask = 0;
 
-	clts();
 	if (cpu_has_fxsr) {
 		memset(&fx_scratch, 0, sizeof(struct i387_fxsave_struct));
 		asm volatile("fxsave %0" : "+m" (fx_scratch));
@@ -57,7 +56,6 @@ void __cpuinit mxcsr_feature_mask_init(void)
 			mask = 0x0000ffbf;
 	}
 	mxcsr_feature_mask &= mask;
-	stts();
 }
 
 static void __cpuinit init_thread_xstate(void)
@@ -112,8 +110,8 @@ void __cpuinit fpu_init(void)
 
 	mxcsr_feature_mask_init();
 	/* clean state in init */
-	current_thread_info()->status = 0;
-	clear_used_math();
+	xsave_init();
+	eager_fpu_init();
 }
 
 void fpu_finit(struct fpu *fpu)
@@ -124,12 +122,7 @@ void fpu_finit(struct fpu *fpu)
 	}
 
 	if (cpu_has_fxsr) {
-		struct i387_fxsave_struct *fx = &fpu->state->fxsave;
-
-		memset(fx, 0, xstate_size);
-		fx->cwd = 0x37f;
-		if (cpu_has_xmm)
-			fx->mxcsr = MXCSR_DEFAULT;
+		fx_finit(&fpu->state->fxsave);
 	} else {
 		struct i387_fsave_struct *fp = &fpu->state->fsave;
 		memset(fp, 0, xstate_size);

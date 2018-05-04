@@ -77,6 +77,8 @@ static void __init check_fpu(void)
 		return;
 	}
 
+	kernel_fpu_begin();
+
 	/*
 	 * trap_init() enabled FXSR and company _before_ testing for FP
 	 * problems here.
@@ -94,6 +96,8 @@ static void __init check_fpu(void)
 		"fninit"
 		: "=m" (*&fdiv_bug)
 		: "m" (*&x), "m" (*&y));
+
+	kernel_fpu_end();
 
 #ifndef CONFIG_XEN
 	boot_cpu_data.fdiv_bug = fdiv_bug;
@@ -231,13 +235,17 @@ void __init check_bugs(void)
 
 #ifdef CONFIG_X86_32
 	check_config();
-	check_fpu();
 	check_hlt();
 	check_popad();
 	init_utsname()->machine[1] =
 		'0' + (boot_cpu_data.x86 > 6 ? 6 : boot_cpu_data.x86);
 	alternative_instructions();
 
+	/*
+	 * kernel_fpu_begin/end() in check_fpu() relies on the patched
+	 * alternative instructions.
+	 */
+	check_fpu();
 #else /* CONFIG_X86_64 */
 
 	alternative_instructions();

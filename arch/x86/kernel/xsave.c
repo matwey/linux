@@ -6,6 +6,7 @@
 #include <linux/bootmem.h>
 #include <linux/compat.h>
 #include <asm/i387.h>
+#include <asm/setup.h>
 #ifdef CONFIG_IA32_EMULATION
 #include <asm/sigcontext32.h>
 #endif
@@ -19,7 +20,7 @@ u64 pcntxt_mask;
 /*
  * Represents init state for the supported extended state.
  */
-static struct xsave_struct *init_xstate_buf;
+struct xsave_struct *init_xstate_buf;
 
 struct _fpx_sw_bytes fx_sw_reserved;
 #ifdef CONFIG_IA32_EMULATION
@@ -182,7 +183,7 @@ int save_i387_xstate(void __user *buf)
 			return -1;
 	}
 
-	clear_used_math(); /* trigger finit */
+	drop_init_fpu(tsk);	/* trigger finit */
 
 	if (use_xsave()) {
 		struct _fpstate __user *fx = buf;
@@ -276,9 +277,7 @@ int restore_i387_xstate(void __user *buf)
 	int err = 0;
 
 	if (!buf) {
-		if (used_math())
-			goto clear;
-		return 0;
+		goto clear;
 	} else
 		if (!access_ok(VERIFY_READ, buf, sig_xstate_size))
 			return -EACCES;
@@ -301,8 +300,7 @@ int restore_i387_xstate(void __user *buf)
 		 * user buffer, clear the fpu state.
 		 */
 clear:
-		clear_fpu(tsk);
-		clear_used_math();
+		drop_init_fpu(tsk);
 	}
 	return err;
 }
@@ -380,9 +378,8 @@ static void __init setup_xstate_features(void)
 /*
  * setup the xstate image representing the init state
  */
-static void __init setup_xstate_init(void)
+static void __init setup_init_fpu_buf(void)
 {
-	setup_xstate_features();
 
 	/*
 	 * Setup init_xstate_buf to represent the init state of
@@ -390,9 +387,13 @@ static void __init setup_xstate_init(void)
 	 */
 	init_xstate_buf = alloc_bootmem_align(xstate_size,
 					      __alignof__(struct xsave_struct));
-	init_xstate_buf->i387.mxcsr = MXCSR_DEFAULT;
+	fx_finit(&init_xstate_buf->i387);
 
-	clts();
+	if (!cpu_has_xsave)
+		return;
+
+	setup_xstate_features();
+
 	/*
 	 * Init all the features state with header_bv being 0x0
 	 */
@@ -402,7 +403,19 @@ static void __init setup_xstate_init(void)
 	 * of any feature which is not represented by all zero's.
 	 */
 	xsave_state(init_xstate_buf, -1);
-	stts();
+}
+
+void __init fpu__init_parse_early_param(void)
+{
+	enum { ENABLE, DISABLE } eagerfpu = ENABLE;
+
+	if (strnstr(boot_command_line, "eagerfpu=off", COMMAND_LINE_SIZE))
+		eagerfpu = DISABLE;
+
+	if (eagerfpu == ENABLE)
+		setup_force_cpu_cap(X86_FEATURE_EAGER_FPU);
+
+	printk(KERN_INFO "x86/fpu: Using '%s' FPU context switches.\n", eagerfpu == ENABLE ? "eager" : "lazy");
 }
 
 /*
@@ -442,7 +455,7 @@ static void __init xstate_enable_boot_cpu(void)
 	update_regset_xstate_info(xstate_size, pcntxt_mask);
 	prepare_fx_sw_frame();
 
-	setup_xstate_init();
+	setup_init_fpu_buf();
 
 	printk(KERN_INFO "xsave/xrstor: enabled xstate_bv 0x%llx, "
 	       "cntxt size 0x%x\n",
@@ -467,4 +480,40 @@ void __cpuinit xsave_init(void)
 	this_func = next_func;
 	next_func = xstate_enable;
 	this_func();
+}
+
+static inline void __init eager_fpu_init_bp(void)
+{
+	current->thread.fpu.state =
+	    alloc_bootmem_align(xstate_size, __alignof__(struct xsave_struct));
+	if (!init_xstate_buf)
+		setup_init_fpu_buf();
+}
+
+void __cpuinit eager_fpu_init(void)
+{
+       static __refdata void (*boot_func)(void) = eager_fpu_init_bp;
+
+       clear_used_math();
+       current_thread_info()->status = 0;
+       if (!boot_cpu_has(X86_FEATURE_EAGER_FPU)) {
+               stts();
+               return;
+       }
+
+       if (boot_func) {
+               boot_func();
+               boot_func = NULL;
+       }
+
+       /*
+        * This is same as math_state_restore(). But use_xsave() is
+        * not yet patched to use math_state_restore().
+        */
+       init_fpu(current);
+       __thread_fpu_begin(current);
+       if (cpu_has_xsave)
+               xrstor_state(init_xstate_buf, -1);
+       else
+               fxrstor_checking(&init_xstate_buf->i387);
 }

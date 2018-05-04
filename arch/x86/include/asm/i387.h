@@ -27,10 +27,12 @@
 
 extern unsigned int sig_xstate_size;
 extern void fpu_init(void);
+extern void eager_fpu_init(void);
 extern void mxcsr_feature_mask_init(void);
 extern int init_fpu(struct task_struct *child);
 extern void math_state_restore(void);
 extern int dump_fpu(struct pt_regs *, struct user_i387_struct *);
+void fpu__init_parse_early_param(void);
 
 extern user_regset_active_fn fpregs_active, xfpregs_active;
 extern user_regset_get_fn fpregs_get, xfpregs_get, fpregs_soft_get,
@@ -62,6 +64,11 @@ static inline void finit_soft_fpu(struct i387_soft_struct *soft) {}
 
 #define X87_FSW_ES (1 << 7)	/* Exception Summary */
 
+static __always_inline __pure bool use_eager_fpu(void)
+{
+	return static_cpu_has(X86_FEATURE_EAGER_FPU);
+}
+
 static __always_inline __pure bool use_xsaveopt(void)
 {
 	return static_cpu_has(X86_FEATURE_XSAVEOPT);
@@ -75,6 +82,14 @@ static __always_inline __pure bool use_xsave(void)
 static __always_inline __pure bool use_fxsr(void)
 {
         return static_cpu_has(X86_FEATURE_FXSR);
+}
+
+static inline void fx_finit(struct i387_fxsave_struct *fx)
+{
+	memset(fx, 0, xstate_size);
+	fx->cwd = 0x37f;
+	if (cpu_has_xmm)
+		fx->mxcsr = MXCSR_DEFAULT;
 }
 
 extern void __sanitize_i387_state(struct task_struct *);
@@ -313,13 +328,50 @@ static inline void __thread_set_has_fpu(struct task_struct *tsk)
 static inline void __thread_fpu_end(struct task_struct *tsk)
 {
 	__thread_clear_has_fpu(tsk);
-	stts();
+	if (!use_eager_fpu())
+		stts();
 }
 
 static inline void __thread_fpu_begin(struct task_struct *tsk)
 {
-	clts();
+	if (!use_eager_fpu())
+		clts();
 	__thread_set_has_fpu(tsk);
+}
+
+static inline void __clear_fpu(struct task_struct *tsk)
+{
+	if (__thread_has_fpu(tsk)) {
+		/* Ignore delayed exceptions from user space */
+		asm volatile("1: fwait\n"
+			     "2:\n"
+			     _ASM_EXTABLE(1b, 2b));
+		__thread_fpu_end(tsk);
+	}
+}
+
+static inline void drop_fpu(struct task_struct *tsk)
+{
+	/*
+	 * Forget coprocessor state..
+	 */
+	preempt_disable();
+	tsk->fpu_counter = 0;
+	__clear_fpu(tsk);
+	clear_used_math();
+	preempt_enable();
+}
+
+static inline void drop_init_fpu(struct task_struct *tsk)
+{
+	if (!use_eager_fpu())
+		drop_fpu(tsk);
+	else {
+		if (use_xsave())
+			xrstor_state(init_xstate_buf, -1);
+		else
+			fxrstor_checking(&init_xstate_buf->i387);
+	}
 }
 
 /*
@@ -352,7 +404,8 @@ static inline fpu_switch_t switch_fpu_prepare(struct task_struct *old, struct ta
 {
 	fpu_switch_t fpu;
 
-	fpu.preload = tsk_used_math(new) && new->fpu_counter > 5;
+	fpu.preload = tsk_used_math(new) && (use_eager_fpu() ||
+			new->fpu_counter > 5);
 	if (__thread_has_fpu(old)) {
 		if (__save_init_fpu(old))
 			fpu_lazy_state_intact(old);
@@ -363,12 +416,12 @@ static inline fpu_switch_t switch_fpu_prepare(struct task_struct *old, struct ta
 		if (fpu.preload) {
 			__thread_set_has_fpu(new);
 			prefetch(new->thread.fpu.state);
-		} else
+		} else if (!use_eager_fpu())
 			stts();
 	} else {
 		old->fpu_counter = 0;
 		if (fpu.preload) {
-			if (fpu_lazy_restore(new))
+			if (!use_eager_fpu() && fpu_lazy_restore(new))
 				fpu.preload = 0;
 			else
 				prefetch(new->thread.fpu.state);
@@ -388,7 +441,7 @@ static inline void switch_fpu_finish(struct task_struct *new, fpu_switch_t fpu)
 {
 	if (fpu.preload) {
 		if (unlikely(restore_fpu_checking(new)))
-			__thread_fpu_end(new);
+			drop_init_fpu(new);
 	}
 }
 
@@ -397,17 +450,6 @@ static inline void switch_fpu_finish(struct task_struct *new, fpu_switch_t fpu)
  */
 extern int save_i387_xstate(void __user *buf);
 extern int restore_i387_xstate(void __user *buf);
-
-static inline void __clear_fpu(struct task_struct *tsk)
-{
-	if (__thread_has_fpu(tsk)) {
-		/* Ignore delayed exceptions from user space */
-		asm volatile("1: fwait\n"
-			     "2:\n"
-			     _ASM_EXTABLE(1b, 2b));
-		__thread_fpu_end(tsk);
-	}
-}
 
 /*
  * Were we in an interrupt that interrupted kernel mode?
@@ -420,6 +462,9 @@ static inline void __clear_fpu(struct task_struct *tsk)
  */
 static inline bool interrupted_kernel_fpu_idle(void)
 {
+	if (use_eager_fpu())
+		return 0;
+
 	return !__thread_has_fpu(current) &&
 		(read_cr0() & X86_CR0_TS);
 }
@@ -470,13 +515,16 @@ static inline void __kernel_fpu_begin(void)
 		__save_init_fpu(me);
 		__thread_clear_has_fpu(me);
 		/* We do 'stts()' in kernel_fpu_end() */
-	} else
+	} else if (!use_eager_fpu())
 		clts();
 }
 
 static inline void __kernel_fpu_end(void)
 {
-	stts();
+	if (use_eager_fpu())
+		math_state_restore();
+	else
+		stts();
 }
 
 static inline void kernel_fpu_begin(void)
@@ -562,12 +610,26 @@ static inline void user_fpu_begin(void)
 	preempt_enable();
 }
 
+static inline void __save_fpu(struct task_struct *tsk)
+{
+	if (use_xsave())
+		xsave_state(&tsk->thread.fpu.state->xsave, -1);
+	else
+		fpu_fxsave(&tsk->thread.fpu);
+}
+
 /*
  * These disable preemption on their own and are safe
  */
 static inline void save_init_fpu(struct task_struct *tsk)
 {
 	WARN_ON_ONCE(!__thread_has_fpu(tsk));
+
+	if (use_eager_fpu()) {
+		__save_fpu(tsk);
+		return;
+	}
+
 	preempt_disable();
 	__save_init_fpu(tsk);
 	__thread_fpu_end(tsk);
@@ -646,9 +708,18 @@ static inline void fpu_free(struct fpu *fpu)
 	}
 }
 
-static inline void fpu_copy(struct fpu *dst, struct fpu *src)
+static inline void fpu_copy(struct task_struct *dst, struct task_struct *src)
 {
-	memcpy(dst->state, src->state, xstate_size);
+	if (use_eager_fpu()) {
+		memset(&dst->thread.fpu.state->xsave, 0, xstate_size);
+		__save_fpu(dst);
+	} else {
+		struct fpu *dfpu = &dst->thread.fpu;
+		struct fpu *sfpu = &src->thread.fpu;
+
+		unlazy_fpu(src);
+		memcpy(dfpu->state, sfpu->state, xstate_size);
+	}
 }
 
 extern void fpu_finit(struct fpu *fpu);

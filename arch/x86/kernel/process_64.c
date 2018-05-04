@@ -250,7 +250,6 @@ static inline u32 read_32bit_tls(struct task_struct *t, int tls)
  */
 void prepare_to_copy(struct task_struct *tsk)
 {
-	unlazy_fpu(tsk);
 }
 
 int copy_thread(unsigned long clone_flags, unsigned long sp,
@@ -339,10 +338,6 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 	regs->cs		= _cs;
 	regs->ss		= _ss;
 	regs->flags		= X86_EFLAGS_IF;
-	/*
-	 * Free the old FP and other extended state
-	 */
-	free_thread_xstate(current);
 }
 
 void
