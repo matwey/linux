@@ -1292,7 +1292,6 @@ int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
 				    KVM_SYNC_ARCH0 |
 				    KVM_SYNC_PFAULT;
 	if (test_kvm_facility(vcpu->kvm, 129))
-
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_VRS;
 	if (test_kvm_facility(vcpu->kvm, 82))
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_BPBC;

@@ -77,6 +77,8 @@ void arch_release_task_struct(struct task_struct *tsk);
 #define TIF_UPROBE		3	/* breakpointed or single-stepping */
 #define TIF_KGR_IN_PROGRESS	4	/* This task has not finished patching */
 
+#define TIF_ISOLATE_BP		8	/* Run process with isolated BP */
+#define TIF_ISOLATE_BP_GUEST	9	/* Run KVM guests with isolated BP */
 #define TIF_31BIT		16	/* 32bit process */
 #define TIF_MEMDIE		17	/* is terminating due to OOM killer */
 #define TIF_RESTORE_SIGMASK	18	/* restore signal mask in do_signal() */
@@ -103,6 +105,8 @@ void arch_release_task_struct(struct task_struct *tsk);
 #define _TIF_SYSCALL_AUDIT	_BITUL(TIF_SYSCALL_AUDIT)
 #define _TIF_SECCOMP		_BITUL(TIF_SECCOMP)
 #define _TIF_SYSCALL_TRACEPOINT	_BITUL(TIF_SYSCALL_TRACEPOINT)
+#define _TIF_ISOLATE_BP		_BITUL(TIF_ISOLATE_BP)
+#define _TIF_ISOLATE_BP_GUEST	_BITUL(TIF_ISOLATE_BP_GUEST)
 
 #define is_32bit_task()		(test_thread_flag(TIF_31BIT))
 

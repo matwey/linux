@@ -894,23 +894,14 @@ void rfi_flush_enable(bool enable)
 	rfi_flush = enable;
 }
 
-static bool init_fallback_flush(void)
+static void __ref init_fallback_flush(void)
 {
 	u64 l1d_size, limit;
 	int cpu;
 
+	/* Only allocate the fallback flush area once (at boot time). */
 	if (l1d_flush_fallback_area)
-		return true;
-
-	/*
-	 * Once the slab allocator is up it's too late to allocate the fallback
-	 * flush area, so return an error. This should not really happen
-	 * because we call the init_fallback_flush() early. Doing the
-	 * allocation later might fail due to memory fragmentation so we want
-	 * to avoid that.
-	 */
-	if (slab_is_available())
-		return false;
+		return;
 
 	l1d_size = ppc64_caches.dsize;
 	limit = min(safe_stack_limit(), ppc64_rma_size);
@@ -929,33 +920,20 @@ static bool init_fallback_flush(void)
 		paca_aux->rfi_flush_fallback_area = l1d_flush_fallback_area;
 		paca_aux->l1d_flush_size = l1d_size;
 	}
-
-	return true;
 }
 
 void setup_rfi_flush(enum l1d_flush_type types, bool enable)
 {
-	/*
-	 * Allocate the fallback area early during boot even if the detected
-	 * flush type doe not need it - it might change due to migration.
-	 */
-	if (!no_rfi_flush)
-		init_fallback_flush();
-
 	if (types & L1D_FLUSH_FALLBACK) {
-		if (init_fallback_flush())
-			pr_info("rfi-flush: Using fallback displacement flush\n");
-		else {
-			pr_crit("rfi-flush: Error unable to use fallback displacement flush!\n");
-			types &= ~L1D_FLUSH_FALLBACK;
-		}
+		pr_info("rfi-flush: fallback displacement flush available\n");
+		init_fallback_flush();
 	}
 
 	if (types & L1D_FLUSH_ORI)
-		pr_info("rfi-flush: Using ori type flush\n");
+		pr_info("rfi-flush: ori type flush available\n");
 
 	if (types & L1D_FLUSH_MTTRIG)
-		pr_info("rfi-flush: Using mttrig type flush\n");
+		pr_info("rfi-flush: mttrig type flush available\n");
 
 	enabled_flush_types = types;
 
@@ -997,12 +975,4 @@ static __init int rfi_flush_debugfs_init(void)
 }
 device_initcall(rfi_flush_debugfs_init);
 #endif
-
-ssize_t cpu_show_meltdown(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	if (rfi_flush)
-		return sprintf(buf, "Mitigation: RFI Flush\n");
-
-	return sprintf(buf, "Vulnerable\n");
-}
 #endif /* CONFIG_PPC_BOOK3S_64 */
