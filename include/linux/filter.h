@@ -348,8 +348,24 @@ struct sk_filter {
 	struct bpf_prog	*prog;
 };
 
-#define BPF_PROG_RUN(filter, ctx)  (*filter->bpf_func)(ctx, filter->insnsi)
+static inline void bpf_enter_prog(const struct bpf_prog *fp)
+{
+}
 
+static inline void bpf_leave_prog(const struct bpf_prog *fp)
+{
+}
+
+#define BPF_PROG_RUN(filter, ctx)  ({				\
+	int __ret;						\
+								\
+	bpf_enter_prog(filter);					\
+	__ret = (*(filter)->bpf_func)(ctx, (filter)->insnsi);	\
+	bpf_leave_prog(filter);					\
+								\
+	__ret;							\
+})
+ 
 static inline u32 bpf_prog_run_save_cb(const struct bpf_prog *prog,
 				       struct sk_buff *skb)
 {
