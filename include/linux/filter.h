@@ -353,13 +353,11 @@ DECLARE_PER_CPU(unsigned int, bpf_prog_ran);
 
 static inline void bpf_enter_prog(const struct bpf_prog *fp)
 {
-	int *count = &get_cpu_var(bpf_prog_ran);
-	(*count)++;
 	/*
 	 * Upon the first entry to BPF code, we need to reduce
 	 * memory speculation to mitigate attacks targeting it.
 	 */
-	if (*count == 1)
+	if (this_cpu_inc_return(bpf_prog_ran) == 1)
 		cpu_enter_reduced_memory_speculation();
 }
 
