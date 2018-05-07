@@ -348,12 +348,23 @@ struct sk_filter {
 	struct bpf_prog	*prog;
 };
 
+DECLARE_PER_CPU(unsigned int, bpf_prog_ran);
+
 static inline void bpf_enter_prog(const struct bpf_prog *fp)
 {
+	int *count = &get_cpu_var(bpf_prog_ran);
+	(*count)++;
 }
 
+extern void bpf_leave_prog_deferred(const struct bpf_prog *fp);
 static inline void bpf_leave_prog(const struct bpf_prog *fp)
 {
+	int *count = this_cpu_ptr(&bpf_prog_ran);
+	if (*count == 1)
+		bpf_leave_prog_deferred(fp);
+	else
+		(*count)--;
+	put_cpu_var(bpf_prog_ran);
 }
 
 #define BPF_PROG_RUN(filter, ctx)  ({				\
