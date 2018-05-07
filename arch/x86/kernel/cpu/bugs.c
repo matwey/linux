@@ -150,33 +150,49 @@ u64 x86_spec_ctrl_get_default(void)
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_get_default);
 
-void x86_spec_ctrl_set_guest(u64 guest_spec_ctrl)
+static inline u64 intel_rds_mask(void)
 {
-	u64 host = x86_spec_ctrl_base;
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
+		return 0;
+
+	return rds_tif_to_spec_ctrl(current_thread_info()->flags);
+}
+
+/*
+ * Calculate the SPEC_CTRL MSR value that the kernel
+ * should be using under normal operation.
+ */
+static u64 x86_calculate_kernel_spec_ctrl(void)
+{
+	u64 spec_ctrl;
 
 	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
-		return;
+		return 0;
 
-	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
-		host |= rds_tif_to_spec_ctrl(current_thread_info()->flags);
+	spec_ctrl = x86_spec_ctrl_base;
+	spec_ctrl |= intel_rds_mask();
 
-	if (host != guest_spec_ctrl)
-		wrmsrl(MSR_IA32_SPEC_CTRL, guest_spec_ctrl);
+	return spec_ctrl;
+}
+
+/* We are entering a guest and need to set its MSR value. */
+void x86_spec_ctrl_set_guest(u64 new_spec_ctrl)
+{
+	if (x86_calculate_kernel_spec_ctrl() != new_spec_ctrl)
+		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_set_guest);
 
-void x86_spec_ctrl_restore_host(u64 guest_spec_ctrl)
+/*
+ * We are leaving a guest and need to restore the kernel's MSR
+ * value that it uses for normal operation.
+ */
+void x86_spec_ctrl_restore_host(u64 current_spec_ctrl)
 {
-	u64 host = x86_spec_ctrl_base;
+	u64 new_spec_ctrl = x86_calculate_kernel_spec_ctrl();
 
-	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
-		return;
-
-	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
-		host |= rds_tif_to_spec_ctrl(current_thread_info()->flags);
-
-	if (host != guest_spec_ctrl)
-		wrmsrl(MSR_IA32_SPEC_CTRL, host);
+	if (new_spec_ctrl != current_spec_ctrl)
+		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_restore_host);
 
