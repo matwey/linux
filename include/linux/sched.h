@@ -1383,8 +1383,10 @@ struct task_struct {
 	unsigned sched_reset_on_fork:1;
 	unsigned sched_contributes_to_load:1;
 
+#ifndef __GENKSYMS__
 	unsigned ssb_disable:1;
 	unsigned ssb_force_disable:1;
+#endif
 
 	pid_t pid;
 	pid_t tgid;
