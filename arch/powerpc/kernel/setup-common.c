@@ -63,8 +63,6 @@
 #include <mm/mmu_decl.h>
 #include <asm/fadump.h>
 
-#include "setup.h"
-
 #ifdef DEBUG
 #include <asm/udbg.h>
 #define DBG(fmt...) udbg_printf(fmt)

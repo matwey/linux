@@ -66,8 +66,6 @@
 #include <asm/mmu_context.h>
 #include <asm/code-patching.h>
 
-#include "setup.h"
-
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
 #else
