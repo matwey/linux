@@ -15,6 +15,9 @@
 extern void x86_spec_ctrl_set_guest(u64);
 extern void x86_spec_ctrl_restore_host(u64);
 
+/* Write a new SPEC_CTRL MSR based on current kernel state: */
+extern void x86_sync_spec_ctrl(void);
+
 /* AMD specific Speculative Store Bypass MSR data */
 extern u64 x86_amd_ls_cfg_base;
 extern u64 x86_amd_ls_cfg_rds_mask;

@@ -85,6 +85,8 @@ static inline void cpu_enter_reduced_memory_speculation(void)
 static inline void cpu_leave_reduced_memory_speculation(void)
 {
 }
+#else
+#include <asm/rmspec.h>
 #endif
 
 #endif /* _LINUX_NOSPEC_H */

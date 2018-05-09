@@ -175,13 +175,11 @@ void bpf_leave_prog_deferred(const struct sk_filter *fp);
 
 static inline void bpf_enter_prog(const struct sk_filter *fp)
 {
-	int *count = &get_cpu_var(bpf_prog_ran);
-	(*count)++;
 	/*
 	 * Upon the first entry to BPF code, we need to reduce
 	 * memory speculation to mitigate attacks targeting it.
 	 */
-	if (*count == 1)
+	if (this_cpu_inc_return(bpf_prog_ran) == 1)
 		cpu_enter_reduced_memory_speculation();
 }
 

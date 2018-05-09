@@ -11,6 +11,7 @@
 #include <linux/utsname.h>
 #include <linux/device.h>
 #include <linux/prctl.h>
+#include <linux/filter.h>
 
 #include <asm/nospec-branch.h>
 #include <asm/spec_ctrl.h>
@@ -787,10 +788,23 @@ EXPORT_SYMBOL_GPL(x86_spec_ctrl_get_default);
 
 static inline u64 intel_rds_mask(void)
 {
+	u64 mask;
+
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
 		return 0;
 
-	return rds_tif_to_spec_ctrl(current_thread_info()->flags);
+	mask = rds_tif_to_spec_ctrl(current_thread_info()->flags);
+
+	/*
+	 * BPF programs can be exploited to attack the kernel.
+	 * Leave the RDS bit on when we recently ran one.  This
+	 * bit gets cleared after a BFP program has not run on
+	 * the CPU for a while.
+	 */
+	if (get_cpu_var(bpf_prog_ran))
+		mask |= SPEC_CTRL_RDS;
+
+	return mask;
 }
 
 /*
@@ -829,6 +843,27 @@ void x86_spec_ctrl_restore_host(u64 current_spec_ctrl)
 		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_restore_host);
+
+/*
+ * A condition that may affect the SPEC_CTRL MSR has changed.
+ * Recalculate a new value for this CPU and set it.
+ *
+ * It is not easy to optimize the wrmsrl() away unless the
+ * callers have a full understanding of all the conditions
+ * that affect the output of x86_calculate_kernel_spec_ctrl().
+ *
+ * Try not to call this too often.
+ */
+void x86_sync_spec_ctrl(void)
+{
+	u64 new_spec_ctrl = x86_calculate_kernel_spec_ctrl();
+
+	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+		return;
+
+	wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
+}
+EXPORT_SYMBOL_GPL(x86_sync_spec_ctrl);
 
 static void x86_amd_rds_enable(void)
 {
