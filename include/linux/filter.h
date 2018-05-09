@@ -168,10 +168,18 @@ extern int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
 extern int sk_detach_filter(struct sock *sk);
 extern int sk_chk_filter(struct sock_filter *filter, int flen);
 
+static inline void bpf_enter_prog(const struct sk_filter *fp)
+{
+}
+
+static inline void bpf_leave_prog(const struct sk_filter *fp)
+{
+}
+
 #ifdef CONFIG_BPF_JIT
 extern void bpf_jit_compile(struct sk_filter *fp);
 extern void bpf_jit_free(struct sk_filter *fp);
-#define SK_RUN_FILTER(FILTER, SKB) (*FILTER->bpf_func)(SKB, FILTER->insns)
+#define __SK_RUN_FILTER(FILTER, SKB) (*FILTER->bpf_func)(SKB, FILTER->insns)
 #else
 static inline void bpf_jit_compile(struct sk_filter *fp)
 {
@@ -179,8 +187,18 @@ static inline void bpf_jit_compile(struct sk_filter *fp)
 static inline void bpf_jit_free(struct sk_filter *fp)
 {
 }
-#define SK_RUN_FILTER(FILTER, SKB) sk_run_filter(SKB, FILTER->insns)
+#define __SK_RUN_FILTER(FILTER, SKB) sk_run_filter(SKB, FILTER->insns)
 #endif
+
+#define SK_RUN_FILTER(FILTER, SKB)  ({				\
+	int __ret;						\
+								\
+	bpf_enter_prog(FILTER);					\
+	__ret = __SK_RUN_FILTER(FILTER, SKB);			\
+	bpf_leave_prog(FILTER);					\
+								\
+	__ret;							\
+})
 
 enum {
 	BPF_S_RET_K = 1,
