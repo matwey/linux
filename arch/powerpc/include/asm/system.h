@@ -8,6 +8,7 @@
 #include <linux/irqflags.h>
 
 #include <asm/hw_irq.h>
+#include <asm/feature-fixups.h>
 
 /*
  * Memory barrier.
@@ -73,6 +74,16 @@
  */
 #define data_barrier(x)	\
 	asm volatile("twi 0,%0,0; isync" : : "r" (x) : "memory");
+
+#ifdef CONFIG_PPC_BOOK3S_64
+
+// This also acts as a compiler barrier due to the memory clobber.
+#define barrier_nospec() asm (stringify_in_c(barrier_nospec_asm) ::: "memory")
+
+#else /* !CONFIG_PPC_BOOK3S_64 */
+#define barrier_nospec_asm
+#define barrier_nospec()
+#endif
 
 struct task_struct;
 struct pt_regs;
