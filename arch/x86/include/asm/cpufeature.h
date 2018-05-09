@@ -207,9 +207,9 @@
 #define X86_FEATURE_SPEC_CTRL	( 7*32+20) /* Control Speculation Control */
 #define X86_FEATURE_STIBP		(7*32+21) /* Single Thread Indirect Branch Predictors */
 #define X86_FEATURE_ARCH_CAPABILITIES	(7*32+22) /* IA32_ARCH_CAPABILITIES MSR (Intel) */
-#define X86_FEATURE_RDS			(7*32+23) /* Reduced Data Speculation */
+#define X86_FEATURE_SSBD		(7*32+23) /* Speculative Store Bypass Disable */
 #define X86_FEATURE_SPEC_STORE_BYPASS_DISABLE	( 7*32+24) /* "" Disable Speculative Store Bypass. */
-#define X86_FEATURE_AMD_RDS		(7*32+25)  /* "" AMD RDS implementation */
+#define X86_FEATURE_AMD_SSBD		(7*32+25)  /* "" AMD SSBD implementation */
 
 #define X86_FEATURE_RETPOLINE	( 7*32+29) /* Generic Retpoline mitigation for Spectre variant 2 */
 #define X86_FEATURE_RETPOLINE_AMD ( 7*32+30) /* AMD Retpoline mitigation for Spectre variant 2 */
