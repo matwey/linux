@@ -11,6 +11,7 @@
 #ifdef __KERNEL__
 #include <asm/atomic.h>
 #include <linux/compat.h>
+#include <linux/nospec.h>
 #endif
 
 /*
@@ -176,6 +177,12 @@ static inline void bpf_enter_prog(const struct sk_filter *fp)
 {
 	int *count = &get_cpu_var(bpf_prog_ran);
 	(*count)++;
+	/*
+	 * Upon the first entry to BPF code, we need to reduce
+	 * memory speculation to mitigate attacks targeting it.
+	 */
+	if (*count == 1)
+		cpu_enter_reduced_memory_speculation();
 }
 
 static inline void bpf_leave_prog(const struct sk_filter *fp)

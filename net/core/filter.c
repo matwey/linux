@@ -26,6 +26,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_packet.h>
 #include <linux/gfp.h>
+#include <linux/nospec.h>
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/netlink.h>
@@ -683,17 +684,22 @@ DEFINE_PER_CPU(unsigned int, bpf_prog_ran);
 EXPORT_SYMBOL_GPL(bpf_prog_ran);
 static void bpf_done_on_this_cpu(struct work_struct *work)
 {
-	if (!this_cpu_dec_return(bpf_prog_ran))
-		return;
-
+	if (this_cpu_dec_return(bpf_prog_ran)) {
+		/*
+		 * This is unexpected.  The elevated refcount indicates
+		 * being in the *middle* of a BPF program, which should
+		 * be impossible.  They are executed inside
+		 * rcu_read_lock() where we can not sleep and where
+		 * preemption is disabled.
+		 */
+		WARN_ON_ONCE(1);
+	}
 	/*
-	 * This is unexpected.  The elevated refcount indicates
-	 * being in the *middle* of a BPF program, which should
-	 * be impossible.  They are executed inside
-	 * rcu_read_lock() where we can not sleep and where
-	 * preemption is disabled.
+	 * Unsafe BPF code is no longer running, disable mitigations.
+	 * This must be done after bpf_prog_ran because the mitigation
+	 * code looks at its state.
 	 */
-	WARN_ON_ONCE(1);
+	cpu_leave_reduced_memory_speculation();
 }
 
 DEFINE_PER_CPU(struct delayed_work, bpf_prog_delayed_work);
