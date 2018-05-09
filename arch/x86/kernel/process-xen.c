@@ -193,6 +193,11 @@ int set_tsc_mode(unsigned int val)
 	return 0;
 }
 
+void speculative_store_bypass_update(void)
+{
+	/* Nothing to do for Xen here */
+}
+
 void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p)
 {
 	struct thread_struct *prev, *next;
