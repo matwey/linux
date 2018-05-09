@@ -168,12 +168,24 @@ extern int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
 extern int sk_detach_filter(struct sock *sk);
 extern int sk_chk_filter(struct sock_filter *filter, int flen);
 
+DECLARE_PER_CPU(unsigned int, bpf_prog_ran);
+
+void bpf_leave_prog_deferred(const struct sk_filter *fp);
+
 static inline void bpf_enter_prog(const struct sk_filter *fp)
 {
+	int *count = &get_cpu_var(bpf_prog_ran);
+	(*count)++;
 }
 
 static inline void bpf_leave_prog(const struct sk_filter *fp)
 {
+	int *count = this_cpu_ptr(&bpf_prog_ran);
+	if (*count == 1)
+		bpf_leave_prog_deferred(fp);
+	else
+		(*count)--;
+	put_cpu_var(bpf_prog_ran);
 }
 
 #ifdef CONFIG_BPF_JIT
