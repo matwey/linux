@@ -43,7 +43,7 @@
 
 #define set_mb(var, value)	do { var = value; mb(); } while (0)
 
-#define gmb() asm volatile("ori 31,31,0")
+#define gmb()
 
 #ifdef __KERNEL__
 #define AT_VECTOR_SIZE_ARCH 6 /* entries in ARCH_DLINFO */
