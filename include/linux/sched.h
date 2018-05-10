@@ -1383,6 +1383,11 @@ struct task_struct {
 	unsigned sched_reset_on_fork:1;
 	unsigned sched_contributes_to_load:1;
 
+#ifndef __GENKSYMS__
+	unsigned ssb_disable:1;
+	unsigned ssb_force_disable:1;
+#endif
+
 	pid_t pid;
 	pid_t tgid;
 
@@ -1661,6 +1666,31 @@ struct task_struct {
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
 #define tsk_cpus_allowed(tsk) (&(tsk)->cpus_allowed)
+
+static inline bool task_spec_ssb_disable(struct task_struct *p)
+{
+	return (p->ssb_disable == 1);
+}
+
+static inline void task_set_spec_ssb_disable(struct task_struct *p)
+{
+	p->ssb_disable = 1;
+}
+
+static inline void task_clear_spec_ssb_disable(struct task_struct *p)
+{
+	p->ssb_disable = 0;
+}
+
+static inline bool task_spec_ssb_force_disable(struct task_struct *p)
+{
+	return (p->ssb_force_disable == 1);
+}
+
+static inline void task_set_spec_ssb_force_disable(struct task_struct *p)
+{
+	p->ssb_force_disable = 1;
+}
 
 /*
  * Priority of a process goes from 0..MAX_PRIO-1, valid RT

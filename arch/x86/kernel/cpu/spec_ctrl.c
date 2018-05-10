@@ -79,6 +79,7 @@ void x86_spec_check(void)
 		ibpb_state = 1;
 
 		setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
+		setup_force_cpu_cap(X86_FEATURE_IBRS);
 	}
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {

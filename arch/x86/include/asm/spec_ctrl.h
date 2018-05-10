@@ -10,8 +10,8 @@
 
 .macro __ENABLE_IBRS_CLOBBER
 	movl $MSR_IA32_SPEC_CTRL, %ecx
-	xorl %edx, %edx
-	movl $FEATURE_ENABLE_IBRS, %eax
+	rdmsr
+	orl $FEATURE_ENABLE_IBRS, %eax
 	wrmsr
 .endm
 
@@ -66,8 +66,8 @@
 	pushq %rcx
 	pushq %rdx
 	movl $MSR_IA32_SPEC_CTRL, %ecx
-	xorl %edx, %edx
-	xorl %eax, %eax
+	rdmsr
+	andl $(~FEATURE_ENABLE_IBRS), %eax
 	wrmsr
 	popq %rdx
 	popq %rcx
