@@ -20,19 +20,19 @@ extern void x86_sync_spec_ctrl(void);
 
 /* AMD specific Speculative Store Bypass MSR data */
 extern u64 x86_amd_ls_cfg_base;
-extern u64 x86_amd_ls_cfg_rds_mask;
+extern u64 x86_amd_ls_cfg_ssbd_mask;
 
 /* The Intel SPEC CTRL MSR base value cache */
 extern u64 x86_spec_ctrl_base;
 
-static inline u64 rds_tif_to_spec_ctrl(int rds)
+static inline u64 ssbd_tif_to_spec_ctrl(int rds)
 {
-	return (rds) ? SPEC_CTRL_RDS : 0ULL;
+	return (rds) ? SPEC_CTRL_SSBD : 0ULL;
 }
 
-static inline u64 rds_tif_to_amd_ls_cfg(int rds)
+static inline u64 ssbd_tif_to_amd_ls_cfg(int rds)
 {
-	return (rds) ? x86_amd_ls_cfg_rds_mask : 0ULL;
+	return (rds) ? x86_amd_ls_cfg_ssbd_mask : 0ULL;
 }
 
 extern void speculative_store_bypass_update(void);

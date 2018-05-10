@@ -196,11 +196,11 @@ static __always_inline void __speculative_store_bypass_update(int rds)
 {
 	u64 msr;
 
-	if (static_cpu_has(X86_FEATURE_AMD_RDS)) {
-		msr = x86_amd_ls_cfg_base | rds_tif_to_amd_ls_cfg(rds);
+	if (static_cpu_has(X86_FEATURE_AMD_SSBD)) {
+		msr = x86_amd_ls_cfg_base | ssbd_tif_to_amd_ls_cfg(rds);
 		wrmsrl(MSR_AMD64_LS_CFG, msr);
 	} else {
-		msr = x86_spec_ctrl_base | rds_tif_to_spec_ctrl(rds);
+		msr = x86_spec_ctrl_base | ssbd_tif_to_spec_ctrl(rds);
 		wrmsrl(MSR_IA32_SPEC_CTRL, msr);
 	}
 }
@@ -252,9 +252,9 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 		memset(tss->io_bitmap, 0xff, prev->io_bitmap_max);
 	}
 
-	if (test_tsk_thread_flag(prev_p, TIF_RDS) ^
-	    test_tsk_thread_flag(next_p, TIF_RDS))
-		__speculative_store_bypass_update(test_tsk_thread_flag(next_p, TIF_RDS));
+	if (test_tsk_thread_flag(prev_p, TIF_SSBD) ^
+	    test_tsk_thread_flag(next_p, TIF_SSBD))
+		__speculative_store_bypass_update(test_tsk_thread_flag(next_p, TIF_SSBD));
 
 	propagate_user_return_notify(prev_p, next_p);
 }
