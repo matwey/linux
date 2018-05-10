@@ -34,7 +34,6 @@
  * exception handlers (including pSeries LPAR) and iSeries LPAR
  * implementations as possible.
  */
-#include <asm/bug.h>
 
 /* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
@@ -65,24 +64,10 @@
 	nop;								\
 	nop
 
-#ifdef CONFIG_PPC_DEBUG_RFI
-#define CHECK_TARGET_MSR_PR(srr_reg, expected_pr)			\
-	SET_SCRATCH0(r3);						\
-	mfspr	r3,srr_reg;						\
-	extrdi	r3,r3,1,63-MSR_PR_LG;					\
-666:	tdnei	r3,expected_pr;						\
-	EMIT_BUG_ENTRY 666b,__FILE__,__LINE__,0;			\
-	GET_SCRATCH0(r3);
-#else
-#define CHECK_TARGET_MSR_PR(srr_reg, expected_pr)
-#endif
-
 #define RFI_TO_KERNEL							\
-	CHECK_TARGET_MSR_PR(SPRN_SRR1, 0);				\
 	rfid
 
 #define RFI_TO_USER							\
-	CHECK_TARGET_MSR_PR(SPRN_SRR1, 1);				\
 	RFI_FLUSH_SLOT;							\
 	rfid;								\
 	b	rfi_flush_fallback
@@ -98,11 +83,9 @@
 	b	rfi_flush_fallback
 
 #define HRFI_TO_KERNEL							\
-	CHECK_TARGET_MSR_PR(SPRN_HSRR1, 0);				\
 	hrfid
 
 #define HRFI_TO_USER							\
-	CHECK_TARGET_MSR_PR(SPRN_HSRR1, 1);				\
 	RFI_FLUSH_SLOT;							\
 	hrfid;								\
 	b	hrfi_flush_fallback
