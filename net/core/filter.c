@@ -31,6 +31,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_packet.h>
 #include <linux/gfp.h>
+#include <linux/nospec.h>
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/netlink.h>
@@ -1999,3 +2000,67 @@ out:
 	release_sock(sk);
 	return ret;
 }
+
+/*
+ * 0 when no BPF code has executed on the CPU.
+ * Incremented when running BPF code.
+ * When ==1, work will be scheduled.
+ * When >1, work will not be scheduled because work is already
+ * scheduled.
+ * When work is performed, count will be decremented from 1->0.
+ */
+DEFINE_PER_CPU(unsigned int, bpf_prog_ran);
+EXPORT_SYMBOL_GPL(bpf_prog_ran);
+static void bpf_done_on_this_cpu(struct work_struct *work)
+{
+	if (this_cpu_dec_return(bpf_prog_ran)) {
+		/*
+		 * This is unexpected.  The elevated refcount indicates
+		 * being in the *middle* of a BPF program, which should
+		 * be impossible.  They are executed inside
+		 * rcu_read_lock() where we can not sleep and where
+		 * preemption is disabled.
+		 */
+		WARN_ON_ONCE(1);
+	}
+
+	/*
+	 * Unsafe BPF code is no longer running, disable mitigations.
+	 * This must be done after bpf_prog_ran because the mitigation
+	 * code looks at its state.
+	 */
+	cpu_leave_reduced_memory_speculation();
+}
+
+DEFINE_PER_CPU(struct delayed_work, bpf_prog_delayed_work);
+static __init int bpf_init_delayed_work(void)
+{
+	int i;
+
+	for_each_possible_cpu(i) {
+		struct delayed_work *w = &per_cpu(bpf_prog_delayed_work, i);
+
+		INIT_DELAYED_WORK(w, bpf_done_on_this_cpu);
+	}
+	return 0;
+}
+subsys_initcall(bpf_init_delayed_work);
+
+/*
+ * Must be called with preempt disabled
+ *
+ * The schedule_delayed_work_on() is relatively expensive.  So,
+ * this way, someone doing a bunch of repeated BPF calls will
+ * only pay the cost of scheduling work on the *first* BPF call.
+ * The subsequent calls only pay the cost of incrementing a
+ * per-cpu variable, which is cheap.
+ */
+void bpf_leave_prog_deferred(const struct bpf_prog *fp)
+{
+	int cpu = smp_processor_id();
+	struct delayed_work *w = &per_cpu(bpf_prog_delayed_work, cpu);
+	unsigned long delay_jiffies = msecs_to_jiffies(10);
+
+	schedule_delayed_work_on(cpu, w, delay_jiffies);
+}
+EXPORT_SYMBOL_GPL(bpf_leave_prog_deferred);

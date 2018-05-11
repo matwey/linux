@@ -193,6 +193,7 @@ static void early_init_intel(struct cpuinfo_x86 *c)
 		clear_cpu_cap(c, X86_FEATURE_AMD_SPEC_CTRL);
 		clear_cpu_cap(c, X86_FEATURE_IBPB);
 		clear_cpu_cap(c, X86_FEATURE_AMD_STIBP);
+		setup_clear_cpu_cap(X86_FEATURE_SSBD);
 		nospec("");
 	}
 
