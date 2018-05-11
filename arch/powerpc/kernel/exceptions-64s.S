@@ -131,6 +131,7 @@ data_access_slb_pSeries:
 	std	r12,PACA_EXSLB+EX_R12(r13)
 	GET_SCRATCH0(r10)
 	std	r10,PACA_EXSLB+EX_R13(r13)
+	INTERRUPT_TO_KERNEL
 	mfspr	r12,SPRN_SRR1		/* and SRR1 */
 #ifndef CONFIG_RELOCATABLE
 	b	.slb_miss_realmode
@@ -171,6 +172,7 @@ instruction_access_slb_pSeries:
 	std	r12,PACA_EXSLB+EX_R12(r13)
 	GET_SCRATCH0(r10)
 	std	r10,PACA_EXSLB+EX_R13(r13)
+	INTERRUPT_TO_KERNEL
 	mfspr	r12,SPRN_SRR1		/* and SRR1 */
 #ifndef CONFIG_RELOCATABLE
 	b	.slb_miss_realmode
@@ -217,6 +219,7 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	mr	r9,r13
 	GET_PACA(r13)
+	INTERRUPT_TO_KERNEL
 	mfspr	r11,SPRN_SRR0
 	mfspr	r12,SPRN_SRR1
 	ld	r10,PACAKBASE(r13)
@@ -357,6 +360,22 @@ machine_check_fwnmi:
 	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
 
 #endif /* CONFIG_PPC_PSERIES */
+
+	.globl stf_barrier_fallback
+stf_barrier_fallback:
+	ld	r13,PACA_AUX_PTR(r13) /* r13 now = paca_aux pointer */
+	std	r9,PACA_EXRFI+EX_R9(r13)
+	std	r10,PACA_EXRFI+EX_R10(r13)
+	sync
+	ld	r9,PACA_EXRFI+EX_R9(r13)
+	ld	r10,PACA_EXRFI+EX_R10(r13)
+	ori	31,31,0
+	GET_PACA(r13);
+	.rept 14
+	b	1f
+1:
+	.endr
+	blr
 
 	.globl rfi_flush_fallback
 rfi_flush_fallback:

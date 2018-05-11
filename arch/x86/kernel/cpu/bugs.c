@@ -485,7 +485,7 @@ retpoline_auto:
 		pr_info("Filling RSB on context switch\n");
 	}
 
-	if (!is_skylake_era() && x86_ibrs_enabled()) {
+	if (!is_skylake_era()) {
 		pr_info("Retpolines enabled, force-disabling IBRS due to !SKL-era core\n");
 		ibrs_state = 0;
 	}
