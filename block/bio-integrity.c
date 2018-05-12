@@ -285,6 +285,8 @@ int bio_integrity_prep(struct bio *bio)
 	BUG_ON(bi == NULL);
 	BUG_ON(bio_integrity(bio));
 
+	if (WARN_ON(bi->interval_exp < 9))
+		bi->interval_exp = 9;
 	intervals = bio_integrity_intervals(bi, bio_sectors(bio));
 
 	/* Allocate kernel buffer for protection data */
