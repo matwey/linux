@@ -1846,7 +1846,7 @@ again:
 		old_bytenr = btrfs_node_blockptr(parent, slot);
 		blocksize = dest->nodesize;
 		old_ptr_gen = btrfs_node_ptr_generation(parent, slot);
-		btrfs_node_key_to_cpu(parent, &key, slot);
+		btrfs_node_key_to_cpu(parent, &first_key, slot);
 
 		if (level <= max_level) {
 			eb = path->nodes[level];
