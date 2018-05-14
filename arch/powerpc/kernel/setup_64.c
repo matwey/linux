@@ -70,10 +70,8 @@
 #include <asm/kvm_ppc.h>
 #include <asm/hugetlb.h>
 #include <asm/epapr_hcalls.h>
+#include <asm/security_features.h>
 #include <asm/livepatch.h>
-#ifdef CONFIG_PPC_PSERIES
-#include <asm/plpar_wrappers.h>
-#endif
 
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
@@ -949,10 +947,6 @@ void setup_stf_barrier(void)
 {
 	enum stf_barrier_type type;
 	bool enable, hv;
-#ifdef CONFIG_PPC_PSERIES
-       struct h_cpu_char_result result;
-       long rc;
-#endif
 
 	hv = cpu_has_feature(CPU_FTR_HVMODE);
 
@@ -966,21 +960,9 @@ void setup_stf_barrier(void)
 	else
 		type = STF_BARRIER_NONE;
 
-#if 0
 	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
 		(security_ftr_enabled(SEC_FTR_L1D_FLUSH_PR) ||
 		 (security_ftr_enabled(SEC_FTR_L1D_FLUSH_HV) && hv));
-#else
-	enable = true; /* Enable by default */
-#endif
-#ifdef CONFIG_PPC_PSERIES
-       rc = plpar_get_cpu_characteristics(&result);
-       if (rc == H_SUCCESS) {
-               if ((!(result.behaviour & H_CPU_BEHAV_L1D_FLUSH_PR)) ||
-                   (!(result.behaviour & H_CPU_BEHAV_FAVOUR_SECURITY)))
-                       enable = false;
-       }
-#endif
 
 	if (type == STF_BARRIER_FALLBACK) {
 		pr_info("stf-barrier: fallback barrier available\n");
