@@ -3922,9 +3922,6 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 		);
 
-	if (x86_ibrs_enabled())
-		x86_spec_ctrl_restore_host(svm->spec_ctrl);
-
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();
 
@@ -3938,6 +3935,9 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 
 	reload_tss(vcpu);
+
+	if (x86_ibrs_enabled())
+		x86_spec_ctrl_restore_host(svm->spec_ctrl);
 
 	local_irq_disable();
 
