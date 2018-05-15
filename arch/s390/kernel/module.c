@@ -459,10 +459,10 @@ int module_finalize(const Elf_Ehdr *hdr,
 			apply_alternatives(aseg, aseg + s->sh_size);
 
 #ifdef CONFIG_EXPOLINE
-		if (!strcmp(".nospec_call_table", secname))
+		if (!strncmp(".s390_indirect", secname, 14))
 			nospec_revert(aseg, aseg + s->sh_size);
 
-		if (!strcmp(".nospec_return_table", secname))
+		if (!strncmp(".s390_return", secname, 12))
 			nospec_revert(aseg, aseg + s->sh_size);
 #endif
 	}
