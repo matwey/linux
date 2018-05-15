@@ -391,6 +391,16 @@ out:
 }
 
 /**
+ * list_for_each_entry_from_rcu - iterate over a list continuing from current point
+ * @pos:	the type * to use as a loop cursor.
+ * @head:	the head for your list.
+ * @member:	the name of the list_node within the struct.
+ */
+#define list_for_each_entry_from_rcu(pos, head, member)			\
+	for (; &(pos)->member != (head);					\
+		pos = list_entry_rcu(pos->member.next, typeof(*(pos)), member))
+
+/**
  * nfs_client_return_marked_delegations - return previously marked delegations
  * @clp: nfs_client to process
  *
@@ -403,33 +413,67 @@ out:
 int nfs_client_return_marked_delegations(struct nfs_client *clp)
 {
 	struct nfs_delegation *delegation;
+	struct nfs_delegation *prev;
 	struct nfs_server *server;
 	struct inode *inode;
+	struct inode *place_holder = NULL;
 	int err = 0;
 
 restart:
 	rcu_read_lock();
-	list_for_each_entry_rcu(server, &clp->cl_superblocks, client_link) {
-		list_for_each_entry_rcu(delegation, &server->delegations,
-								super_list) {
+	prev = NULL;
+	if (place_holder)
+		server = NFS_SERVER(place_holder);
+	else
+		server = list_first_entry_rcu(&clp->cl_superblocks,
+					      struct nfs_server, client_link);
+	list_for_each_entry_from_rcu(server, &clp->cl_superblocks, client_link) {
+		delegation = NULL;
+		if (place_holder && server == NFS_SERVER(place_holder))
+			delegation = rcu_dereference(NFS_I(place_holder)->delegation);
+		if (!delegation)
+			delegation = list_first_entry_rcu(&server->delegations,
+							  struct nfs_delegation, super_list);
+		list_for_each_entry_from_rcu(delegation, &server->delegations, super_list) {
+			struct inode *to_put;
+
 			if (!test_and_clear_bit(NFS_DELEGATION_RETURN,
-							&delegation->flags))
+						&delegation->flags)) {
+				prev = delegation;
 				continue;
+			}
 			inode = nfs_delegation_grab_inode(delegation);
 			if (inode == NULL)
 				continue;
+			to_put = place_holder;
+			place_holder = NULL;
+			if (prev)
+				place_holder = nfs_delegation_grab_inode(prev);
+			if (!place_holder && to_put && NFS_I(to_put)->delegation) {
+				place_holder = to_put;
+				to_put = NULL;
+			}
 			delegation = nfs_start_delegation_return_locked(NFS_I(inode));
 			rcu_read_unlock();
+			if (to_put) {
+				iput(to_put);
+				to_put = NULL;
+			}
 
 			err = nfs_end_delegation_return(inode, delegation, 0);
 			iput(inode);
+			cond_resched();
 			if (!err)
 				goto restart;
 			set_bit(NFS4CLNT_DELEGRETURN, &clp->cl_state);
+			if (place_holder)
+				iput(place_holder);
 			return err;
 		}
 	}
 	rcu_read_unlock();
+	if (place_holder)
+		iput(place_holder);
 	return 0;
 }
 
