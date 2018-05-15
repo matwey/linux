@@ -146,7 +146,7 @@ struct thread_info {
 
 /* work to do on any return to user space */
 #define _TIF_ALLWORK_MASK						\
-	((0x0000FFFF & ~_TIF_SECCOMP) | _TIF_SYSCALL_TRACEPOINT |	\
+	((0x0000FFFF & ~(_TIF_SECCOMP | _TIF_SSBD)) | _TIF_SYSCALL_TRACEPOINT |	\
 	_TIF_NOHZ | _TIF_KGR_IN_PROGRESS)
 
 /* flags to check in __switch_to() */
