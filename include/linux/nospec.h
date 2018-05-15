@@ -6,6 +6,8 @@
 #ifndef _LINUX_NOSPEC_H
 #define _LINUX_NOSPEC_H
 
+struct task_struct;
+
 /**
  * array_index_mask_nospec() - generate a ~0 mask when index < size, 0 otherwise
  * @index: array element index
@@ -69,4 +71,22 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
 	_i &= _mask;							\
 	_i;								\
 })
+
+int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which);
+int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
+			     unsigned long ctrl);
+/* Speculation control for seccomp enforced mitigation */
+void arch_seccomp_spec_mitigate(struct task_struct *task);
+
+#ifndef CONFIG_ARCH_HAS_REDUCED_MEMORY_SPECULATION
+static inline void cpu_enter_reduced_memory_speculation(void)
+{
+}
+static inline void cpu_leave_reduced_memory_speculation(void)
+{
+}
+#else
+#include <asm/rmspec.h>
+#endif
+
 #endif /* _LINUX_NOSPEC_H */

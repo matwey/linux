@@ -95,6 +95,7 @@ struct thread_info {
 #define TIF_BLOCKSTEP		25	/* set when we want DEBUGCTLMSR_BTF */
 #define TIF_LAZY_MMU_UPDATES	27	/* task is updating the mmu lazily */
 #define TIF_SYSCALL_TRACEPOINT	28	/* syscall tracepoint instrumentation */
+#define TIF_SSBD		29	/* Speculative Store Bypass Disable */
 #if defined(CONFIG_X86_XEN) && defined(CONFIG_CPU_SUP_AMD)
 #define TIF_CSTAR		31      /* cstar-based syscall (special handling) */
 #endif
@@ -120,6 +121,7 @@ struct thread_info {
 #define _TIF_BLOCKSTEP		(1 << TIF_BLOCKSTEP)
 #define _TIF_LAZY_MMU_UPDATES	(1 << TIF_LAZY_MMU_UPDATES)
 #define _TIF_SYSCALL_TRACEPOINT	(1 << TIF_SYSCALL_TRACEPOINT)
+#define _TIF_SSBD		(1 << TIF_SSBD)
 #define _TIF_CSTAR		(1 << TIF_CSTAR)
 
 /* work to do in syscall_trace_enter() */
@@ -150,7 +152,7 @@ struct thread_info {
 /* flags to check in __switch_to() */
 #ifndef CONFIG_XEN
 #define _TIF_WORK_CTXSW							\
-	(_TIF_IO_BITMAP|_TIF_NOTSC|_TIF_BLOCKSTEP)
+	(_TIF_IO_BITMAP|_TIF_NOTSC|_TIF_BLOCKSTEP|_TIF_SSBD)
 
 #else
 #define _TIF_WORK_CTXSW (_TIF_NOTSC /*todo | _TIF_BLOCKSTEP */)

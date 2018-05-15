@@ -37,6 +37,7 @@
 #include <asm/nospec-branch.h>
 
 #include <asm/virtext.h>
+#include <asm/spec-ctrl.h>
 #include "trace.h"
 
 #define __ex(x) __kvm_handle_fault_on_reboot(x)
@@ -3831,8 +3832,8 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	local_irq_enable();
 
-	if (x86_ibrs_enabled() && (svm->spec_ctrl != FEATURE_ENABLE_IBRS))
-		wrmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
+	if (x86_ibrs_enabled())
+		x86_spec_ctrl_set_guest(svm->spec_ctrl);
 
 	asm volatile (
 		"push %%"R"bp; \n\t"
@@ -3921,12 +3922,6 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 		);
 
-	if (x86_ibrs_enabled()) {
-		rdmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
-		if (svm->spec_ctrl != FEATURE_ENABLE_IBRS)
-			wrmsrl(MSR_IA32_SPEC_CTRL, FEATURE_ENABLE_IBRS);
-	}
-
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();
 
@@ -3940,6 +3935,9 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 
 	reload_tss(vcpu);
+
+	if (x86_ibrs_enabled())
+		x86_spec_ctrl_restore_host(svm->spec_ctrl);
 
 	local_irq_disable();
 

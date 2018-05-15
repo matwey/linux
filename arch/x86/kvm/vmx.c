@@ -41,7 +41,7 @@
 #include <asm/xcr.h>
 #include <asm/msr-index.h>
 #include <asm/spec_ctrl.h>
-#include <asm/nospec-branch.h>
+#include <asm/spec-ctrl.h>
 
 #include "trace.h"
 
@@ -6749,8 +6749,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		vmx_set_interrupt_shadow(vcpu, 0);
 
 	if (x86_ibrs_enabled())
-		add_atomic_switch_msr(vmx, MSR_IA32_SPEC_CTRL,
-				      vmx->spec_ctrl, FEATURE_ENABLE_IBRS);
+		x86_spec_ctrl_set_guest(vmx->spec_ctrl);
 
 	vmx->__launched = vmx->loaded_vmcs->launched;
 	asm(
@@ -6851,6 +6850,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 #endif
 	      );
+
+	if (x86_ibrs_enabled())
+		x86_spec_ctrl_restore_host(vmx->spec_ctrl);
 
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();
