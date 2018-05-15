@@ -58,7 +58,7 @@ _TIF_SYSCALL = (_TIF_SYSCALL_TRACE>>8 | _TIF_SYSCALL_AUDIT>>8 | \
 		_TIF_SECCOMP>>8 | _TIF_SYSCALL_TRACEPOINT>>8)
 _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 
-#define BASED(name) name-system_call(%r13)
+#define BASED(name) name-cleanup_critical(%r13)
 
 	.macro SPP newpp
 #if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
@@ -144,13 +144,13 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 #endif
 1:	lg	%r15,__LC_KERNEL_STACK	# problem state -> load ksp
 2:	aghi	%r15,-SP_SIZE		# make room for registers & psw
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	.endm
 
 	.macro	SAVE_ALL_ASYNC psworg,savearea
 	stmg	%r11,%r15,\savearea
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	la	%r12,\psworg
 	tm	\psworg+1,0x01		# test problem state bit
@@ -160,6 +160,7 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	clc	\psworg+8(8),BASED(.Lcritical_start)
 	jl	0f
 	brasl	%r14,cleanup_critical
+	larl	%r13,cleanup_critical
 	tm	1(%r12),0x01		# retest problem state after cleanup
 	jnz	1f
 0:	lg	%r14,__LC_ASYNC_STACK	# are we already on the async. stack ?
@@ -202,7 +203,7 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 660:	.long	0xb2e8c000
 	.popsection
 661:	.long	0x47000000
-	.pushsection .altnobp, "a"
+	.pushsection .altinstructions, "a"
         .long 661b - .
 	.long 660b - .
 	.word 82
@@ -216,7 +217,7 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 662:	.long	0xb2e8d000
 	.popsection
 663:	.long	0x47000000
-	.pushsection .altnobp, "a"
+	.pushsection .altinstructions, "a"
         .long 663b - .
 	.long 662b - .
 	.word 82
@@ -225,12 +226,108 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	.popsection
 	.endm
 
+	.macro BPENTER tif_ptr,tif_mask
+	.pushsection .altinstr_replacement, "ax"
+662:	.word	0xc004, 0x0000, 0x0000	# 6 byte nop
+	.word	0xc004, 0x0000, 0x0000	# 6 byte nop
+	.popsection
+664:	tm	\tif_ptr,\tif_mask
+	jz	. + 8
+	.long	0xb2e8d000
+	.pushsection .altinstructions, "a"
+	.long 664b - .
+	.long 662b - .
+	.word 82
+	.byte 12
+	.byte 12
+	.popsection
+	.endm
+
+	.macro BPEXIT tif_ptr,tif_mask
+	tm	\tif_ptr,\tif_mask
+	.pushsection .altinstr_replacement, "ax"
+662:	jnz	. + 8
+	.long	0xb2e8d000
+	.popsection
+664:	jz	. + 8
+	.long	0xb2e8c000
+	.pushsection .altinstructions, "a"
+	.long 664b - .
+	.long 662b - .
+	.word 82
+	.byte 8
+	.byte 8
+	.popsection
+	.endm
+
+#ifdef CONFIG_EXPOLINE
+
+	.macro GEN_BR_THUNK name,reg,tmp
+	.section .text.\name,"axG",@progbits,\name,comdat
+	.globl \name
+	.hidden \name
+	.type \name,@function
+\name:
+	.cfi_startproc
+#ifdef CONFIG_HAVE_MARCH_Z10_FEATURES
+	exrl	0,0f
+#else
+	larl	\tmp,0f
+	ex	0,0(\tmp)
+#endif
+	j	.
+0:	br	\reg
+	.cfi_endproc
+	.endm
+
+	GEN_BR_THUNK __s390x_indirect_jump_r1use_r9,%r9,%r1
+	GEN_BR_THUNK __s390x_indirect_jump_r1use_r14,%r14,%r1
+	GEN_BR_THUNK __s390x_indirect_jump_r13use_r14,%r14,%r13
+
+	.macro BASR_R14_R9
+0:	brasl	%r14,__s390x_indirect_jump_r1use_r9
+	.pushsection .s390_indirect_branches,"a",@progbits
+	.long	0b-.
+	.popsection
+	.endm
+
+	.macro BR_R1USE_R14
+0:	jg	__s390x_indirect_jump_r1use_r14
+	.pushsection .s390_indirect_branches,"a",@progbits
+	.long	0b-.
+	.popsection
+	.endm
+
+	.macro BR_R13USE_R14
+0:	jg	__s390x_indirect_jump_r13use_r14
+	.pushsection .s390_indirect_branches,"a",@progbits
+	.long	0b-.
+	.popsection
+	.endm
+
+#else	/* CONFIG_EXPOLINE */
+
+	.macro BASR_R14_R9
+	basr	%r14,%r9
+	.endm
+
+	.macro BR_R1USE_R14
+	br	%r14
+	.endm
+
+	.macro BR_R13USE_R14
+	br	%r14
+	.endm
+
+#endif /* CONFIG_EXPOLINE */
+
+
 	.section .kprobes.text, "ax"
 
 ENTRY(__bpon)
 	.globl __bpon
 	BPON
-	br	%r14
+	BR_R1USE_R14
 
 /*
  * Scheduler resume function, called by switch_to
@@ -257,7 +354,7 @@ __switch_to:
 	stg	%r5,__LC_THREAD_INFO		# store thread info of next
 	aghi	%r5,STACK_SIZE			# end of kernel stack of next
 	stg	%r5,__LC_KERNEL_STACK		# store end of kernel stack
-	br	%r14
+	BR_R1USE_R14
 
 __critical_start:
 /*
@@ -281,8 +378,11 @@ sysc_stime:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 sysc_update:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 sysc_do_svc:
+	# clear user controlled register to prevent speculative use
+	xgr	%r0,%r0
 	llgh	%r7,SP_SVCNR(%r15)
 	slag	%r7,%r7,2	# shift and test for svc 0
 	jnz	sysc_nr_ok
@@ -302,9 +402,9 @@ sysc_noemu:
 #endif
 	tm	__TI_flags+6(%r12),_TIF_SYSCALL
 	mvc	SP_ARGS(8,%r15),SP_R7(%r15)
-	lgf	%r8,0(%r7,%r10) # load address of system call routine
+	lgf	%r9,0(%r7,%r10) # load address of system call routine
 	jnz	sysc_tracesys
-	basr	%r14,%r8	# call sys_xxxx
+	BASR_R14_R9				# call sys_xxxx
 	stg	%r2,SP_R2(%r15) # store return value (change R2 on stack)
 
 sysc_return:
@@ -312,7 +412,7 @@ sysc_return:
 sysc_tif:
 	tm	__TI_flags+7(%r12),_TIF_WORK_SVC
 	jnz	sysc_work	# there is work to do (signals etc.)
-	BPON
+	BPEXIT	__TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 sysc_restore:
 	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
 	lg	%r14,__LC_VDSO_PER_CPU
@@ -419,12 +519,12 @@ sysc_tracesys:
 	clgr	%r0,%r2
 	jnh	sysc_tracenogo
 	sllg	%r7,%r2,2		# svc number *4
-	lgf	%r8,0(%r7,%r10)
+	lgf	%r9,0(%r7,%r10)
 sysc_tracego:
 	lmg	%r3,%r6,SP_R3(%r15)
 	mvc	SP_ARGS(8,%r15),SP_R7(%r15)
 	lg	%r2,SP_ORIG_R2(%r15)
-	basr	%r14,%r8		# call sys_xxx
+	BASR_R14_R9			# call sys_xxx
 	stg	%r2,SP_R2(%r15)		# store return value
 sysc_tracenogo:
 	tm	__TI_flags+6(%r12),_TIF_SYSCALL
@@ -438,7 +538,7 @@ sysc_tracenogo:
 #
 	.globl	ret_from_fork
 ret_from_fork:
-	lg	%r13,__LC_SVC_NEW_PSW+8
+	larl	%r13,cleanup_critical
 	lg	%r12,__LC_THREAD_INFO	# load pointer to thread_info struct
 	tm	SP_PSW+1(%r15),0x01	# forking a kernel thread ?
 	jo	0f
@@ -463,15 +563,16 @@ kernel_execve:
 	lgr	%r5,%r12
 	brasl	%r14,do_execve
 	ltgfr	%r2,%r2
-	je	0f
+	je	kernel_execve_ok
 	aghi	%r15,SP_SIZE
 	lmg	%r12,%r15,96(%r15)
-	br	%r14
+	BR_R1USE_R14
 	# execve succeeded.
-0:	stnsm	__SF_EMPTY(%r15),0xfc	# disable interrupts
+kernel_execve_ok:
+	stnsm	__SF_EMPTY(%r15),0xfc	# disable interrupts
 	lg	%r15,__LC_KERNEL_STACK	# load ksp
 	aghi	%r15,-SP_SIZE		# make room for registers & psw
-	lg	%r13,__LC_SVC_NEW_PSW+8
+	larl	%r13,cleanup_critical
 	mvc	SP_PTREGS(__PT_SIZE,%r15),0(%r12)	# copy pt_regs
 	lg	%r12,__LC_THREAD_INFO
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
@@ -513,7 +614,18 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r9,%r9
 	lg	%r14,__TI_task(%r12)
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
@@ -528,9 +640,9 @@ pgm_no_vtime:
 	ngr	%r8,%r3
 	sll	%r8,3
 	larl	%r1,pgm_check_table
-	lg	%r1,0(%r8,%r1)		# load address of handler routine
+	lg	%r9,0(%r8,%r1)		# load address of handler routine
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
-	basr	%r14,%r1		# branch to interrupt-handler
+	BASR_R14_R9			# branch to interrupt-handler
 pgm_exit:
 	LOCKDEP_SYS_EXIT
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
@@ -563,7 +675,18 @@ pgm_per_std:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r9,%r9
 	lg	%r14,__TI_task(%r12)
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
@@ -585,9 +708,9 @@ pgm_no_vtime2:
 	je	pgm_exit2
 	sll	%r8,3
 	larl	%r1,pgm_check_table
-	lg	%r1,0(%r8,%r1)		# load address of handler routine
+	lg	%r9,0(%r8,%r1)		# load address of handler routine
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
-	basr	%r14,%r1		# branch to interrupt-handler
+	BASR_R14_R9			# branch to interrupt-handler
 pgm_exit2:
 	LOCKDEP_SYS_EXIT
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
@@ -606,7 +729,18 @@ pgm_svcper:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r9,%r9
 	lg	%r8,__TI_task(%r12)
 	mvc	__THREAD_per_cause(2,%r8),__LC_PER_CAUSE
 	mvc	__THREAD_per_address(8,%r8),__LC_PER_ADDRESS
@@ -644,8 +778,20 @@ io_int_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_ASYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 io_no_vtime:
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r8,%r8
+	xgr	%r9,%r9
 	TRACE_IRQS_OFF
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	brasl	%r14,do_IRQ		# call standard irq handler
@@ -659,14 +805,14 @@ io_restore:
 	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
 	ni	__LC_RETURN_PSW+1,0xfd
 	lg	%r14,__LC_VDSO_PER_CPU
-	lmg	%r0,%r13,SP_R0(%r15)
+	lmg	%r0,%r11,SP_R0(%r15)
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
 	jno	io_exit_kernel
-	BPON
+	BPEXIT	__TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	stpt	__LC_EXIT_TIMER
 	mvc	__VDSO_ECTG_BASE(16,%r14),__LC_EXIT_TIMER
 io_exit_kernel:
-	lmg	%r14,%r15,SP_R14(%r15)
+	lmg	%r12,%r15,SP_R12(%r15)
 	lpswe	__LC_RETURN_PSW
 io_done:
 
@@ -791,8 +937,20 @@ ext_int_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_ASYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	LAST_BREAK
 ext_no_vtime:
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r8,%r8
+	xgr	%r9,%r9
 	TRACE_IRQS_OFF
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lghi	%r1,4096
@@ -816,7 +974,7 @@ mcck_int_handler:
 	spt	__LC_CPU_TIMER_SAVE_AREA-4095(%r1)	# revalidate cpu timer
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)# revalidate gprs
 	stmg	%r11,%r15,__LC_SAVE_AREA+80
-	larl	%r13,system_call
+	larl	%r13,cleanup_critical
 	lg	%r11,__LC_LAST_BREAK
 	la	%r12,__LC_MCK_OLD_PSW
 	tm	__LC_MCCK_CODE,0x80	# system damage?
@@ -846,6 +1004,7 @@ mcck_int_handler:
 	clc	__LC_MCK_OLD_PSW+8(8),BASED(.Lcritical_start)
 	jl	mcck_int_main
 	brasl	%r14,cleanup_critical
+	larl	%r13,cleanup_critical
 mcck_int_main:
 	lg	%r14,__LC_PANIC_STACK	# are we already on the panic stack?
 	slgr	%r14,%r15
@@ -863,9 +1022,21 @@ mcck_int_main:
 	jz	mcck_no_vtime
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_MCCK_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_MCCK_ENTER_TIMER
 	LAST_BREAK
 mcck_no_vtime:
+	# clear user controlled registers to prevent speculative use
+	xgr	%r0,%r0
+	xgr	%r1,%r1
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
+	xgr	%r6,%r6
+	xgr	%r7,%r7
+	xgr	%r8,%r8
+	xgr	%r9,%r9
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
 	brasl	%r14,s390_do_machine_check
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
@@ -884,12 +1055,13 @@ mcck_no_vtime:
 mcck_return:
 	mvc	__LC_RETURN_MCCK_PSW(16),SP_PSW(%r15) # move return PSW
 	ni	__LC_RETURN_MCCK_PSW+1,0xfd # clear wait state bit
-	lmg	%r0,%r15,SP_R0(%r15)	# load gprs 0-15
+	lmg	%r0,%r11,SP_R0(%r15)	# load gprs 0-11
 	tm	__LC_RETURN_MCCK_PSW+1,0x01 # returning to user ?
 	jno	0f
-	BPON
+	BPEXIT	__TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	stpt	__LC_EXIT_TIMER
-0:	lpswe	__LC_RETURN_MCCK_PSW	# back to caller
+0:	lmg	%r12,%r15,SP_R12(%r15)	# load gprs 12-15
+	lpswe	__LC_RETURN_MCCK_PSW	# back to caller
 mcck_done:
 
 /*
@@ -982,17 +1154,6 @@ stack_overflow:
 	jg	kernel_stack_overflow
 #endif
 
-cleanup_table_system_call:
-	.quad	system_call, sysc_do_svc
-cleanup_table_sysc_tif:
-	.quad	sysc_tif, sysc_restore
-cleanup_table_sysc_restore:
-	.quad	sysc_restore, sysc_done
-cleanup_table_io_tif:
-	.quad	io_tif, io_restore
-cleanup_table_io_restore:
-	.quad	io_restore, io_done
-
 cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_system_call)
 	jl	0f
@@ -1019,7 +1180,18 @@ cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_io_restore+8)
 	jl	cleanup_io_restore
 0:
-	br	%r14
+	BR_R13USE_R14
+
+cleanup_table_system_call:
+	.quad	system_call, sysc_do_svc
+cleanup_table_sysc_tif:
+	.quad	sysc_tif, sysc_restore
+cleanup_table_sysc_restore:
+	.quad	sysc_restore, sysc_done
+cleanup_table_io_tif:
+	.quad	io_tif, io_restore
+cleanup_table_io_restore:
+	.quad	io_restore, io_done
 
 cleanup_system_call:
 	mvc	__LC_RETURN_PSW(16),0(%r12)
@@ -1061,8 +1233,9 @@ cleanup_update:
 	jz	0f
 	stg	%r11,__TI_last_break(%r12)
 0:	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_system_call+8)
+	BPENTER __TI_flags+6(%r12),_TIF_ISOLATE_BP>>8
 	la	%r12,__LC_RETURN_PSW
-	br	%r14
+	BR_R13USE_R14
 cleanup_system_call_insn:
 	.quad	sysc_saveall
 	.quad	system_call
@@ -1074,7 +1247,7 @@ cleanup_sysc_tif:
 	mvc	__LC_RETURN_PSW(8),0(%r12)
 	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_sysc_tif)
 	la	%r12,__LC_RETURN_PSW
-	br	%r14
+	BR_R13USE_R14
 
 cleanup_sysc_restore:
 	clc	8(8,%r12),BASED(cleanup_sysc_restore_insn)
@@ -1094,7 +1267,7 @@ cleanup_sysc_restore:
 	lmg	%r0,%r10,SP_R0(%r15)
 	lg	%r15,SP_R15(%r15)
 2:	la	%r12,__LC_RETURN_PSW
-	br	%r14
+	BR_R13USE_R14
 cleanup_sysc_restore_insn:
 	.quad	sysc_done - 4
 	.quad	sysc_done - 16
@@ -1103,7 +1276,7 @@ cleanup_io_tif:
 	mvc	__LC_RETURN_PSW(8),0(%r12)
 	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_io_tif)
 	la	%r12,__LC_RETURN_PSW
-	br	%r14
+	BR_R13USE_R14
 
 cleanup_io_restore:
 	clc	8(8,%r12),BASED(cleanup_io_restore_insn)
@@ -1116,7 +1289,7 @@ cleanup_io_restore:
 	lmg	%r0,%r10,SP_R0(%r15)
 	lg	%r15,SP_R15(%r15)
 1:	la	%r12,__LC_RETURN_PSW
-	br	%r14
+	BR_R13USE_R14
 cleanup_io_restore_insn:
 	.quad	io_done - 4
 	.quad	io_done - 16
@@ -1139,8 +1312,10 @@ cleanup_io_restore_insn:
 	.globl	sie64a
 sie64a:
 	stmg	%r6,%r14,__SF_GPRS(%r15)	# save kernel registers
+	lg	%r12,__LC_THREAD_INFO
 	stg	%r2,__SF_EMPTY(%r15)		# save control block pointer
 	stg	%r3,__SF_EMPTY+8(%r15)		# save guest register save area
+	mvc	__SF_EMPTY+24(8,%r15),__TI_flags(%r12) # copy thread flags
 	lmg	%r0,%r13,0(%r3)			# load guest gprs 0-13
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	oi	__TI_flags+6(%r14),_TIF_SIE>>8
@@ -1150,10 +1325,11 @@ sie_loop:
 	jnz	sie_exit
 	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
 	SPP	__SF_EMPTY(%r15)		# set guest id
-	BPON
+	BPEXIT	__SF_EMPTY+30(%r15),(_TIF_ISOLATE_BP|_TIF_ISOLATE_BP_GUEST)>>8
 	sie	0(%r14)
 sie_done:
 	BPOFF
+	BPENTER	__SF_EMPTY+30(%r15),(_TIF_ISOLATE_BP|_TIF_ISOLATE_BP_GUEST)>>8
 	SPP	__LC_CMF_HPP			# set host id
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	.globl sie_exit
@@ -1161,6 +1337,12 @@ sie_exit:
 	ni	__TI_flags+6(%r14),255-(_TIF_SIE>>8)
 	lg	%r14,__SF_EMPTY+8(%r15)		# load guest register save area
 	stmg	%r0,%r13,0(%r14)		# save guest gprs 0-13
+	xgr	%r0,%r0				# clear guest registers to
+	xgr	%r1,%r1				# prevent speculative use
+	xgr	%r2,%r2
+	xgr	%r3,%r3
+	xgr	%r4,%r4
+	xgr	%r5,%r5
 	lmg	%r6,%r14,__SF_GPRS(%r15)	# restore kernel registers
 	lghi	%r2,0
 	br	%r14
@@ -1171,7 +1353,7 @@ sie_fault:
 	stmg	%r0,%r13,0(%r14)		# save guest gprs 0-13
 	lmg	%r6,%r14,__SF_GPRS(%r15)	# restore kernel registers
 	lghi	%r2,-EFAULT
-	br	%r14
+	BR_R1USE_R14
 
 	.align	8
 .Lsie_loop:

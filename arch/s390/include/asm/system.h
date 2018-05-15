@@ -185,6 +185,30 @@ static inline void gmb(void)
 }
 #define gmb gmb
 
+/**
+ * array_index_mask_nospec - generate a mask for array_idx() that is
+ * ~0UL when the bounds check succeeds and 0 otherwise
+ * @index: array element index
+ * @size: number of elements in array
+ */
+#define array_index_mask_nospec array_index_mask_nospec
+static inline unsigned long array_index_mask_nospec(unsigned long index,
+						    unsigned long size)
+{
+	unsigned long mask;
+
+	if (__builtin_constant_p(size) && size > 0) {
+		asm("	clgr	%2,%1\n"
+		    "	slbgr	%0,%0\n"
+		    :"=d" (mask) : "d" (size-1), "d" (index) :"cc");
+		return mask;
+	}
+	asm("	clgr	%1,%2\n"
+	    "	slbgr	%0,%0\n"
+	    :"=d" (mask) : "d" (size), "d" (index) :"cc");
+	return ~mask;
+}
+
 #define eieio()	asm volatile("bcr 15,0" : : : "memory")
 #define SYNC_OTHER_CORES(x)   eieio()
 #define mb()    eieio()
@@ -282,6 +306,34 @@ extern void smp_ctl_clear_bit(int cr, int bit);
 
 #define MAX_FACILITY_BIT (256*8)	/* stfle_fac_list has 256 bytes */
 
+static inline void __set_facility(unsigned long nr, void *facilities)
+{
+	unsigned char *ptr = (unsigned char *) facilities;
+
+	if (nr >= MAX_FACILITY_BIT)
+		return;
+	ptr[nr >> 3] |= 0x80 >> (nr & 7);
+}
+
+static inline void __clear_facility(unsigned long nr, void *facilities)
+{
+	unsigned char *ptr = (unsigned char *) facilities;
+
+	if (nr >= MAX_FACILITY_BIT)
+		return;
+	ptr[nr >> 3] &= ~(0x80 >> (nr & 7));
+}
+
+static inline int __test_facility(unsigned long nr, void *facilities)
+{
+	unsigned char *ptr;
+
+	if (nr >= MAX_FACILITY_BIT)
+		return 0;
+	ptr = (unsigned char *) facilities + (nr >> 3);
+	return (*ptr & (0x80 >> (nr & 7))) != 0;
+}
+
 /*
  * The test_facility function uses the bit odering where the MSB is bit 0.
  * That makes it easier to query facility bits with the bit number as
@@ -289,12 +341,7 @@ extern void smp_ctl_clear_bit(int cr, int bit);
  */
 static inline int test_facility(unsigned long nr)
 {
-	unsigned char *ptr;
-
-	if (nr >= MAX_FACILITY_BIT)
-		return 0;
-	ptr = (unsigned char *) &S390_lowcore.stfle_fac_list + (nr >> 3);
-	return (*ptr & (0x80 >> (nr & 7))) != 0;
+	return __test_facility(nr, &S390_lowcore.stfle_fac_list);
 }
 
 /**
