@@ -23,6 +23,7 @@
 
 #if defined(__i386__) || defined(__x86_64__)
 #include <asm/pci_x86.h>
+#include <asm/spec_ctrl.h>
 /* TBD: Dom0 should propagate the determined value to Xen. */
 bool port_cf9_safe = false;
 
@@ -259,7 +260,9 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 		}
 
 		local_irq_disable();
+		x86_disable_ibrs();
 		err = take_machine_down(&suspend);
+		x86_enable_ibrs();
 		local_irq_enable();
 	}
 

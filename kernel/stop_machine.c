@@ -20,6 +20,9 @@
 #include <linux/kallsyms.h>
 
 #include <asm/atomic.h>
+#if defined(CONFIG_X86) && defined(CONFIG_XEN)
+#include <asm/spec_ctrl.h>
+#endif
 
 /*
  * Structure to determine completion condition and record errors.  May
@@ -277,9 +280,17 @@ repeat:
 		/* cpu stop callbacks are not allowed to sleep */
 		preempt_disable();
 
+#if defined(CONFIG_X86) && defined(CONFIG_XEN)
+		x86_disable_ibrs();
+#endif
+
 		ret = fn(arg);
 		if (ret)
 			done->ret = ret;
+
+#if defined(CONFIG_X86) && defined(CONFIG_XEN)
+		x86_enable_ibrs();
+#endif
 
 		/* restore preemption and check it's still balanced */
 		preempt_enable();
