@@ -4952,8 +4952,6 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 		);
 
-	x86_spec_ctrl_restore_host(svm->spec_ctrl);
-
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();
 
@@ -4965,6 +4963,8 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(gs, svm->host.gs);
 #endif
 #endif
+
+	x86_spec_ctrl_restore_host(svm->spec_ctrl);
 
 	reload_tss(vcpu);
 
