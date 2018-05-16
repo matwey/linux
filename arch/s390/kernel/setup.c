@@ -435,7 +435,10 @@ setup_lowcore(void)
 #ifdef CONFIG_SMP
 	lc->spinlock_lockval = arch_spin_lockval(0);
 #endif
+
+#ifdef CONFIG_64BIT
 	lc->br_r1_trampoline = 0x07f1;	/* br %r1 */
+#endif
 
 	set_prefix((u32)(unsigned long) lc);
 	lowcore_ptr[0] = lc;
