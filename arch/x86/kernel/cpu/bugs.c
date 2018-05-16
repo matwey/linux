@@ -284,41 +284,45 @@ static inline bool match_option(const char *arg, int arglen, const char *opt)
 
 static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 {
+	enum spectre_v2_mitigation_cmd cmd = SPECTRE_V2_CMD_AUTO;
 	char arg[20];
 	int ret;
 
-	ret = cmdline_find_option(boot_command_line, "spectre_v2", arg,
-				  sizeof(arg));
+	ret = cmdline_find_option(boot_command_line, "spectre_v2", arg, sizeof(arg));
 	if (ret > 0)  {
 		if (match_option(arg, ret, "off")) {
-			goto disable;
+			spec2_print_if_insecure("disabled on command line.");
+			cmd = SPECTRE_V2_CMD_NONE;
 		} else if (match_option(arg, ret, "on")) {
 			spec2_print_if_secure("force enabled on command line.");
-			return SPECTRE_V2_CMD_FORCE;
+			cmd = SPECTRE_V2_CMD_FORCE;
 		} else if (match_option(arg, ret, "retpoline")) {
 			spec2_print_if_insecure("retpoline selected on command line.");
-			return SPECTRE_V2_CMD_RETPOLINE;
+			cmd = SPECTRE_V2_CMD_RETPOLINE;
 		} else if (match_option(arg, ret, "retpoline,amd")) {
 			if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD) {
 				pr_err("retpoline,amd selected but CPU is not AMD. Switching to AUTO select\n");
-				return SPECTRE_V2_CMD_AUTO;
+				cmd = SPECTRE_V2_CMD_AUTO;
 			}
 			spec2_print_if_insecure("AMD retpoline selected on command line.");
-			return SPECTRE_V2_CMD_RETPOLINE_AMD;
+			cmd = SPECTRE_V2_CMD_RETPOLINE_AMD;
 		} else if (match_option(arg, ret, "retpoline,generic")) {
 			spec2_print_if_insecure("generic retpoline selected on command line.");
-			return SPECTRE_V2_CMD_RETPOLINE_GENERIC;
+			cmd = SPECTRE_V2_CMD_RETPOLINE_GENERIC;
 		} else if (match_option(arg, ret, "auto")) {
-			return SPECTRE_V2_CMD_AUTO;
+			cmd = SPECTRE_V2_CMD_AUTO;
 		}
 	}
 
-	if (!cmdline_find_option_bool(boot_command_line, "nospectre_v2"))
-		return SPECTRE_V2_CMD_AUTO;
-disable:
-	nospec("");
-	spec2_print_if_insecure("disabled on command line.");
-	return SPECTRE_V2_CMD_NONE;
+	if (cmdline_find_option_bool(boot_command_line, "nospectre_v2"))
+		cmd = SPECTRE_V2_CMD_NONE;
+
+	if (cmd == SPECTRE_V2_CMD_NONE ||
+	    cmd == SPECTRE_V2_CMD_RETPOLINE ||
+	    cmd == SPECTRE_V2_CMD_RETPOLINE_GENERIC)
+		nospec("");
+
+	return cmd;
 }
 
 /* Check for Skylake-like CPUs (for RSB handling) */
