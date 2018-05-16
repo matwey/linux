@@ -185,6 +185,7 @@ static inline void gmb(void)
 }
 #define gmb gmb
 
+#ifdef CONFIG_64BIT
 /**
  * array_index_mask_nospec - generate a mask for array_idx() that is
  * ~0UL when the bounds check succeeds and 0 otherwise
@@ -208,6 +209,7 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
 	    :"=d" (mask) : "d" (size), "d" (index) :"cc");
 	return ~mask;
 }
+#endif
 
 #define eieio()	asm volatile("bcr 15,0" : : : "memory")
 #define SYNC_OTHER_CORES(x)   eieio()
