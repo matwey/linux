@@ -705,7 +705,9 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	cpu_lowcore->current_task = (unsigned long) idle;
 	cpu_lowcore->cpu_nr = cpu;
 	cpu_lowcore->spinlock_lockval = arch_spin_lockval(cpu);
+#ifdef CONFIG_64BIT
 	cpu_lowcore->br_r1_trampoline = 0x07f1;	/* br %r1 */
+#endif
 	cpu_lowcore->kernel_asce = S390_lowcore.kernel_asce;
 	cpu_lowcore->machine_flags = S390_lowcore.machine_flags;
 	cpu_lowcore->ftrace_func = S390_lowcore.ftrace_func;
