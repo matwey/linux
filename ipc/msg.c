@@ -528,7 +528,7 @@ SYSCALL_DEFINE3(msgctl, int, msqid, int, cmd, struct msqid_ds __user *, buf)
 		if (!buf)
 			return -EFAULT;
 
-		if (cmd == MSG_STAT || MSG_STAT_ANY) {
+		if (cmd == MSG_STAT || cmd == MSG_STAT_ANY) {
 			msq = msg_lock(ns, msqid);
 			if (IS_ERR(msq))
 				return PTR_ERR(msq);
