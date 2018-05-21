@@ -6,6 +6,7 @@
 #include <asm/msr.h>
 #include <asm/processor.h>
 #include <asm/spec_ctrl.h>
+#include <asm/nospec-branch.h>
 
 /*
  * Keep it open for more flags in case needed.
@@ -33,14 +34,14 @@ EXPORT_SYMBOL_GPL(x86_ibpb_enabled);
 void x86_disable_ibrs(void)
 {
 	if (x86_ibrs_enabled())
-		native_wrmsrl(MSR_IA32_SPEC_CTRL, 0);
+		x86_spec_ctrl_set(x86_spec_ctrl_base);
 }
 EXPORT_SYMBOL_GPL(x86_disable_ibrs);
 
 void x86_enable_ibrs(void)
 {
 	if (x86_ibrs_enabled())
-		native_wrmsrl(MSR_IA32_SPEC_CTRL, FEATURE_ENABLE_IBRS);
+		x86_spec_ctrl_set(SPEC_CTRL_IBRS);
 }
 EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 
@@ -49,7 +50,6 @@ EXPORT_SYMBOL_GPL(x86_enable_ibrs);
  */
 void x86_spec_check(void)
 {
-
 	if (ibpb_state == 0) {
 		printk_once(KERN_INFO "IBRS/IBPB: disabled\n");
 		return;
