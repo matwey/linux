@@ -4858,8 +4858,7 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	local_irq_enable();
 
-	if (x86_ibrs_enabled() && (svm->spec_ctrl != FEATURE_ENABLE_IBRS))
-		wrmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
+	x86_spec_ctrl_set_guest(svm->spec_ctrl);
 
 	asm volatile (
 		"push %%" _ASM_BP "; \n\t"
@@ -4953,12 +4952,6 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 		);
 
-	if (x86_ibrs_enabled()) {
-		rdmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
-		if (svm->spec_ctrl != FEATURE_ENABLE_IBRS)
-			wrmsrl(MSR_IA32_SPEC_CTRL, FEATURE_ENABLE_IBRS);
-	}
-
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();
 
@@ -4970,6 +4963,8 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(gs, svm->host.gs);
 #endif
 #endif
+
+	x86_spec_ctrl_restore_host(svm->spec_ctrl);
 
 	reload_tss(vcpu);
 
