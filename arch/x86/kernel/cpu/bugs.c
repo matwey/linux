@@ -793,6 +793,9 @@ static inline u64 intel_rds_mask(void)
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
 		return 0;
 
+	if (!boot_cpu_has(X86_FEATURE_SSBD))
+		return 0;
+
 	mask = ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
 
 	/*
@@ -814,7 +817,7 @@ static inline u64 intel_rds_mask(void)
 static u64 x86_calculate_kernel_spec_ctrl(void)
 {
 	u64 spec_ctrl;
-	if (!boot_cpu_has(X86_FEATURE_IBRS))
+	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
 		return 0;
 
 	spec_ctrl = x86_spec_ctrl_base;
