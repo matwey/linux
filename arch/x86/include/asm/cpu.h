@@ -34,4 +34,6 @@ DECLARE_PER_CPU(int, cpu_state);
 
 int mwait_usable(const struct cpuinfo_x86 *);
 
+extern void x86_spec_ctrl_setup_ap(void);
+
 #endif /* _ASM_X86_CPU_H */

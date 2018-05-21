@@ -29,6 +29,8 @@
 #include <linux/slab.h>
 #include <linux/tracehook.h>
 #include <linux/uaccess.h>
+#include <linux/nospec.h>
+#include <linux/prctl.h>
 
 /**
  * struct seccomp_filter - container for seccomp BPF programs
@@ -453,6 +455,8 @@ long prctl_get_seccomp(void)
 	return current->seccomp.mode;
 }
 
+void __weak arch_seccomp_spec_mitigate(struct task_struct *task) { }
+
 /**
  * prctl_set_seccomp: configures current->seccomp.mode
  * @seccomp_mode: requested mode to use
@@ -481,12 +485,16 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 #ifdef TIF_NOTSC
 		disable_TSC();
 #endif
+		/* Assume seccomp processes want speculation flaw mitigation. */
+		arch_seccomp_spec_mitigate(current);
 		break;
 #ifdef CONFIG_SECCOMP_FILTER
 	case SECCOMP_MODE_FILTER:
 		ret = seccomp_attach_user_filter(filter);
 		if (ret)
 			goto out;
+		/* Assume seccomp processes want speculation flaw mitigation. */
+		arch_seccomp_spec_mitigate(current);
 		break;
 #endif
 	default:

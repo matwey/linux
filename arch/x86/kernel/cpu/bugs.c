@@ -10,6 +10,8 @@
 #include <linux/init.h>
 #include <linux/utsname.h>
 #include <linux/device.h>
+#include <linux/prctl.h>
+#include <linux/filter.h>
 
 #include <asm/nospec-branch.h>
 #include <asm/spec_ctrl.h>
@@ -24,6 +26,9 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/intel-family.h>
+#include <asm/cpu_device_id.h>
+#include <asm/nospec-branch.h>
+#include <asm/spec-ctrl.h>
 
 #ifdef CONFIG_X86_32
 #ifndef CONFIG_XEN
@@ -169,6 +174,27 @@ static void __init check_config(void)
 #endif /* CONFIG_X86_32 */
 
 static void __init spectre_v2_select_mitigation(void);
+static void __init ssb_select_mitigation(void);
+static void x86_amd_ssbd_disable(void);
+
+/*
+ * Our boot-time value of the SPEC_CTRL MSR. We read it once so that any
+ * writes to SPEC_CTRL contain whatever reserved bits have been set.
+ */
+u64 x86_spec_ctrl_base;
+
+/*
+ * The vendor and possibly platform specific bits which can be modified in
+ * x86_spec_ctrl_base.
+ */
+static u64 x86_spec_ctrl_mask = ~SPEC_CTRL_IBRS;
+
+/*
+ * AMD specific MSR info for Speculative Store Bypass control.
+ * x86_amd_ls_cfg_ssbd_mask is initialized in identify_boot_cpu().
+ */
+u64 x86_amd_ls_cfg_base;
+u64 x86_amd_ls_cfg_ssbd_mask;
 
 void __init check_bugs(void)
 {
@@ -187,9 +213,22 @@ void __init check_bugs(void)
 	print_cpu_info(&boot_cpu_data);
 #endif
 
+	/*
+	 * Read the SPEC_CTRL MSR to account for reserved bits which may
+	 * have unknown values. AMD64_LS_CFG MSR is cached in the early AMD
+	 * init code as it is not enumerated and depends on the family.
+	 */
+	if (boot_cpu_has(X86_FEATURE_IBRS))
+		rdmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+
 	/* Select the proper spectre mitigation before patching alternatives */
 	spectre_v2_select_mitigation();
 
+	/*
+	 * Select proper mitigation for any exposure to the Speculative Store
+	 * Bypass vulnerability.
+	 */
+	ssb_select_mitigation();
 
 #ifdef CONFIG_X86_32
 	check_config();
@@ -241,12 +280,40 @@ static const char *spectre_v2_strings[] = {
 
 static enum spectre_v2_mitigation spectre_v2_enabled = SPECTRE_V2_NONE;
 
+static const __initconst struct x86_cpu_id cpu_no_spec_store_bypass[] = {
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PINEVIEW	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_LINCROFT	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PENWELL		},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_CLOVERVIEW	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_CEDARVIEW	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD1	},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_CORE_YONAH		},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
+        { X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
+        { X86_VENDOR_CENTAUR,	5,					},
+        { X86_VENDOR_INTEL,	5,					},
+        { X86_VENDOR_NSC,	5,					},
+        { X86_VENDOR_AMD,	0x12,					},
+        { X86_VENDOR_AMD,	0x11,					},
+        { X86_VENDOR_AMD,	0x10,					},
+        { X86_VENDOR_AMD,	0xf,					},
+        { X86_VENDOR_ANY,	4,					},
+        {}
+};
+
 static bool x86_bug_spectre_v1, x86_bug_spectre_v2, x86_bug_meltdown;
+static bool x86_bug_spec_store_bypass;
 
 void setup_force_cpu_bugs(unsigned long __unused)
 {
 	x86_bug_spectre_v1 = true;
 	x86_bug_spectre_v2 = true;
+
+	if (!x86_match_cpu(cpu_no_spec_store_bypass))
+		x86_bug_spec_store_bypass = true;
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD)
 		x86_bug_meltdown = false;
@@ -429,6 +496,238 @@ retpoline_auto:
 }
 
 #undef pr_fmt
+#define pr_fmt(fmt)    "Speculative Store Bypass: " fmt
+
+static enum ssb_mitigation ssb_mode = SPEC_STORE_BYPASS_NONE;
+
+/* The kernel command line selection */
+enum ssb_mitigation_cmd {
+	SPEC_STORE_BYPASS_CMD_NONE,
+	SPEC_STORE_BYPASS_CMD_AUTO,
+	SPEC_STORE_BYPASS_CMD_ON,
+	SPEC_STORE_BYPASS_CMD_PRCTL,
+	SPEC_STORE_BYPASS_CMD_SECCOMP,
+};
+
+static const char *ssb_strings[] = {
+	[SPEC_STORE_BYPASS_NONE]        = "Vulnerable",
+	[SPEC_STORE_BYPASS_DISABLE]     = "Mitigation: Speculative Store Bypass disabled",
+	[SPEC_STORE_BYPASS_PRCTL]	= "Mitigation: Speculative Store Bypass disabled via prctl",
+	[SPEC_STORE_BYPASS_SECCOMP]	= "Mitigation: Speculative Store Bypass disabled via prctl and seccomp",
+};
+
+static const struct {
+	const char *option;
+	enum ssb_mitigation_cmd cmd;
+} ssb_mitigation_options[] = {
+	{ "auto",	SPEC_STORE_BYPASS_CMD_AUTO },    /* Platform decides */
+	{ "on",		SPEC_STORE_BYPASS_CMD_ON },      /* Disable Speculative Store Bypass */
+	{ "off",	SPEC_STORE_BYPASS_CMD_NONE },    /* Don't touch Speculative Store Bypass */
+	{ "prctl",	SPEC_STORE_BYPASS_CMD_PRCTL },   /* Disable Speculative Store Bypass via prctl */
+	{ "seccomp",	SPEC_STORE_BYPASS_CMD_SECCOMP }, /* Disable Speculative Store Bypass via prctl and seccomp */
+};
+
+static enum ssb_mitigation_cmd __init ssb_parse_cmdline(void)
+{
+	enum ssb_mitigation_cmd cmd = SPEC_STORE_BYPASS_CMD_AUTO;
+	char arg[20];
+	int ret, i;
+
+	if (cmdline_find_option_bool(boot_command_line, "nospec_store_bypass_disable")) {
+		return SPEC_STORE_BYPASS_CMD_NONE;
+	} else {
+		ret = cmdline_find_option(boot_command_line, "spec_store_bypass_disable",
+				arg, sizeof(arg));
+		if (ret < 0)
+			return SPEC_STORE_BYPASS_CMD_AUTO;
+
+		for (i = 0; i < ARRAY_SIZE(ssb_mitigation_options); i++) {
+			if (!match_option(arg, ret, ssb_mitigation_options[i].option))
+				continue;
+
+			cmd = ssb_mitigation_options[i].cmd;
+			break;
+		}
+
+		if (i >= ARRAY_SIZE(ssb_mitigation_options)) {
+			pr_err("unknown option (%s). Switching to AUTO select\n", arg);
+			return SPEC_STORE_BYPASS_CMD_AUTO;
+		}
+	}
+
+	return cmd;
+}
+
+static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
+{
+	enum ssb_mitigation mode = SPEC_STORE_BYPASS_NONE;
+	enum ssb_mitigation_cmd cmd;
+
+	if (!boot_cpu_has(X86_FEATURE_SSBD))
+		return mode;
+
+	cmd = ssb_parse_cmdline();
+	if (!x86_bug_spec_store_bypass &&
+			(cmd == SPEC_STORE_BYPASS_CMD_NONE ||
+			 cmd == SPEC_STORE_BYPASS_CMD_AUTO))
+		return mode;
+
+	switch (cmd) {
+	case SPEC_STORE_BYPASS_CMD_AUTO:
+	case SPEC_STORE_BYPASS_CMD_SECCOMP:
+		/*
+		 * Choose prctl+seccomp as the default mode if seccomp is
+		 * enabled.
+		 */
+#ifdef CONFIG_SECCOMP
+		mode = SPEC_STORE_BYPASS_SECCOMP;
+#else
+		mode = SPEC_STORE_BYPASS_PRCTL;
+#endif
+		break;
+	case SPEC_STORE_BYPASS_CMD_ON:
+		mode = SPEC_STORE_BYPASS_DISABLE;
+		break;
+	case SPEC_STORE_BYPASS_CMD_PRCTL:
+		mode = SPEC_STORE_BYPASS_PRCTL;
+		break;
+	case SPEC_STORE_BYPASS_CMD_NONE:
+		break;
+	}
+
+	/*
+	 * We have three CPU feature flags that are in play here:
+	 *  - X86_BUG_SPEC_STORE_BYPASS - CPU is susceptible.
+	 *  - X86_FEATURE_SSBD - CPU is able to turn off speculative store bypass
+	 *  - X86_FEATURE_SPEC_STORE_BYPASS_DISABLE - engage the mitigation
+         */
+	if (mode == SPEC_STORE_BYPASS_DISABLE) {
+		setup_force_cpu_cap(X86_FEATURE_SPEC_STORE_BYPASS_DISABLE);
+		/*
+		 * Intel uses the SPEC CTRL MSR Bit(2) for this, while AMD uses
+		 * a completely different MSR and bit dependent on family.
+		 */
+		switch (boot_cpu_data.x86_vendor) {
+			case X86_VENDOR_INTEL:
+				x86_spec_ctrl_base |= SPEC_CTRL_SSBD;
+				x86_spec_ctrl_mask &= ~SPEC_CTRL_SSBD;
+				x86_spec_ctrl_set(SPEC_CTRL_SSBD);
+				break;
+			case X86_VENDOR_AMD:
+				x86_amd_ssbd_disable();
+				break;
+		}
+	}
+
+	return mode;
+}
+
+static void ssb_select_mitigation()
+{
+	ssb_mode = __ssb_select_mitigation();
+
+	if (x86_bug_spec_store_bypass)
+		pr_info("%s\n", ssb_strings[ssb_mode]);
+}
+
+#undef pr_fmt
+#define pr_fmt(fmt)     "Speculation prctl: " fmt
+
+static int ssb_prctl_set(struct task_struct *task, unsigned long ctrl)
+{
+	bool update;
+
+	if (ssb_mode != SPEC_STORE_BYPASS_PRCTL &&
+	    ssb_mode != SPEC_STORE_BYPASS_SECCOMP)
+		return -ENXIO;
+
+	switch (ctrl) {
+	case PR_SPEC_ENABLE:
+		/* If speculation is force disabled, enable is not allowed */
+		if (task_spec_ssb_force_disable(task))
+			return -EPERM;
+		task_clear_spec_ssb_disable(task);
+		update = test_and_clear_tsk_thread_flag(task, TIF_SSBD);
+		break;
+	case PR_SPEC_DISABLE:
+		task_set_spec_ssb_disable(task);
+		update = !test_and_set_tsk_thread_flag(task, TIF_SSBD);
+		break;
+	case PR_SPEC_FORCE_DISABLE:
+		task_set_spec_ssb_disable(task);
+		task_set_spec_ssb_force_disable(task);
+		update = !test_and_set_tsk_thread_flag(task, TIF_SSBD);
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	/*
+	 * If being set on non-current task, delay setting the CPU
+	 * mitigation until it is next scheduled.
+	 */
+	if (task == current && update)
+		speculative_store_bypass_update();
+
+	return 0;
+}
+
+static int ssb_prctl_get(struct task_struct *task)
+{
+	switch (ssb_mode) {
+	case SPEC_STORE_BYPASS_DISABLE:
+		return PR_SPEC_DISABLE;
+	case SPEC_STORE_BYPASS_SECCOMP:
+	case SPEC_STORE_BYPASS_PRCTL:
+		if (task_spec_ssb_force_disable(task))
+			return PR_SPEC_PRCTL | PR_SPEC_FORCE_DISABLE;
+		if (task_spec_ssb_disable(task))
+			return PR_SPEC_PRCTL | PR_SPEC_DISABLE;
+		return PR_SPEC_PRCTL | PR_SPEC_ENABLE;
+	default:
+		if (x86_bug_spec_store_bypass)
+			return PR_SPEC_ENABLE;
+		return PR_SPEC_NOT_AFFECTED;
+	}
+}
+
+int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
+			     unsigned long ctrl)
+{
+	switch (which) {
+	case PR_SPEC_STORE_BYPASS:
+		return ssb_prctl_set(task, ctrl);
+	default:
+		return -ENODEV;
+	}
+}
+
+#ifdef CONFIG_SECCOMP
+void arch_seccomp_spec_mitigate(struct task_struct *task)
+{
+	if (ssb_mode == SPEC_STORE_BYPASS_SECCOMP)
+		ssb_prctl_set(task, PR_SPEC_FORCE_DISABLE);
+}
+#endif
+
+int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which)
+{
+	switch (which) {
+		case PR_SPEC_STORE_BYPASS:
+			return ssb_prctl_get(task);
+		default:
+			return -ENODEV;
+	}
+}
+
+void x86_spec_ctrl_setup_ap(void)
+{
+	if (boot_cpu_has(X86_FEATURE_IBRS))
+		x86_spec_ctrl_set(x86_spec_ctrl_base & ~x86_spec_ctrl_mask);
+
+       if (ssb_mode == SPEC_STORE_BYPASS_DISABLE)
+               x86_amd_ssbd_disable();
+}
 
 #ifdef CONFIG_SYSFS
 ssize_t cpu_show_meltdown(struct device *dev,
@@ -464,4 +763,119 @@ ssize_t cpu_show_spectre_v2(struct device *dev,
 	else
 		return sprintf(buf, "%s\n", spectre_v2_strings[spectre_v2_enabled]);
 }
+
+ssize_t __weak cpu_show_spec_store_bypass(struct device *dev,
+                                          struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", ssb_strings[ssb_mode]);
+}
 #endif
+
+void x86_spec_ctrl_set(u64 val)
+{
+	if (val & x86_spec_ctrl_mask)
+		WARN_ONCE(1, "SPEC_CTRL MSR value 0x%16llx is unknown.\n", val);
+	else
+		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base | val);
+}
+EXPORT_SYMBOL_GPL(x86_spec_ctrl_set);
+
+u64 x86_spec_ctrl_get_default(void)
+{
+	u64 msrval = x86_spec_ctrl_base;
+
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
+		msrval |= ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
+	return msrval;
+}
+EXPORT_SYMBOL_GPL(x86_spec_ctrl_get_default);
+
+static inline u64 intel_rds_mask(void)
+{
+	u64 mask;
+
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
+		return 0;
+
+	if (!boot_cpu_has(X86_FEATURE_SSBD))
+		return 0;
+
+	mask = ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
+
+	/*
+	 * BPF programs can be exploited to attack the kernel.
+	 * Leave the RDS bit on when we recently ran one.  This
+	 * bit gets cleared after a BFP program has not run on
+	 * the CPU for a while.
+	 */
+	if (get_cpu_var(bpf_prog_ran))
+		mask |= SPEC_CTRL_SSBD;
+
+	return mask;
+}
+
+/*
+ * Calculate the SPEC_CTRL MSR value that the kernel
+ * should be using under normal operation.
+ */
+static u64 x86_calculate_kernel_spec_ctrl(void)
+{
+	u64 spec_ctrl;
+	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+		return 0;
+
+	spec_ctrl = x86_spec_ctrl_base;
+	spec_ctrl |= intel_rds_mask();
+
+	return spec_ctrl;
+}
+
+/* We are entering a guest and need to set its MSR value. */
+void x86_spec_ctrl_set_guest(u64 new_spec_ctrl)
+{
+	if (x86_calculate_kernel_spec_ctrl() != new_spec_ctrl)
+		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
+}
+EXPORT_SYMBOL_GPL(x86_spec_ctrl_set_guest);
+
+/*
+ * We are leaving a guest and need to restore the kernel's MSR
+ * value that it uses for normal operation.
+ */
+void x86_spec_ctrl_restore_host(u64 current_spec_ctrl)
+{
+	u64 new_spec_ctrl = x86_calculate_kernel_spec_ctrl();
+
+	if (new_spec_ctrl != current_spec_ctrl)
+		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
+}
+EXPORT_SYMBOL_GPL(x86_spec_ctrl_restore_host);
+
+/*
+ * A condition that may affect the SPEC_CTRL MSR has changed.
+ * Recalculate a new value for this CPU and set it.
+ *
+ * It is not easy to optimize the wrmsrl() away unless the
+ * callers have a full understanding of all the conditions
+ * that affect the output of x86_calculate_kernel_spec_ctrl().
+ *
+ * Try not to call this too often.
+ */
+void x86_sync_spec_ctrl(void)
+{
+	u64 new_spec_ctrl = x86_calculate_kernel_spec_ctrl();
+
+	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+		return;
+
+	wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
+}
+EXPORT_SYMBOL_GPL(x86_sync_spec_ctrl);
+
+static void x86_amd_ssbd_disable(void)
+{
+	u64 msrval = x86_amd_ls_cfg_base | x86_amd_ls_cfg_ssbd_mask;
+
+	if (boot_cpu_has(X86_FEATURE_AMD_SSBD))
+		wrmsrl(MSR_AMD64_LS_CFG, msrval);
+}
