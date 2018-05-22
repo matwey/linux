@@ -2256,6 +2256,14 @@ int ceph_getattr(struct vfsmount *mnt, struct dentry *dentry,
 				stat->size = ci->i_files + ci->i_subdirs;
 			stat->blocks = 0;
 			stat->blksize = 65536;
+			/*
+			 * Some applications rely on the number of st_nlink
+			 * value on directories to be either 0 (if unlinked)
+			 * or 2 + number of subdirectories.
+			 */
+			if (stat->nlink == 1)
+				/* '.' + '..' + subdirs */
+				stat->nlink = 1 + 1 + ci->i_subdirs;
 		}
 	}
 	return err;
