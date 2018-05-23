@@ -13,7 +13,6 @@
 #include <linux/printk.h>
 #include <linux/workqueue.h>
 #include <linux/sched.h>
-#include <linux/nospec.h>
 #include <net/sch_generic.h>
 
 #include <asm/cacheflush.h>
@@ -349,39 +348,8 @@ struct sk_filter {
 	struct bpf_prog	*prog;
 };
 
-DECLARE_PER_CPU(unsigned int, bpf_prog_ran);
+#define BPF_PROG_RUN(filter, ctx)  (*filter->bpf_func)(ctx, filter->insnsi)
 
-static inline void bpf_enter_prog(const struct bpf_prog *fp)
-{
-	/*
-	 * Upon the first entry to BPF code, we need to reduce
-	 * memory speculation to mitigate attacks targeting it.
-	 */
-	if (this_cpu_inc_return(bpf_prog_ran) == 1)
-		cpu_enter_reduced_memory_speculation();
-}
-
-extern void bpf_leave_prog_deferred(const struct bpf_prog *fp);
-static inline void bpf_leave_prog(const struct bpf_prog *fp)
-{
-	int *count = this_cpu_ptr(&bpf_prog_ran);
-	if (*count == 1)
-		bpf_leave_prog_deferred(fp);
-	else
-		(*count)--;
-	put_cpu_var(bpf_prog_ran);
-}
-
-#define BPF_PROG_RUN(filter, ctx)  ({				\
-	int __ret;						\
-								\
-	bpf_enter_prog(filter);					\
-	__ret = (*(filter)->bpf_func)(ctx, (filter)->insnsi);	\
-	bpf_leave_prog(filter);					\
-								\
-	__ret;							\
-})
- 
 static inline u32 bpf_prog_run_save_cb(const struct bpf_prog *prog,
 				       struct sk_buff *skb)
 {

@@ -65,15 +65,4 @@ int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
 /* Speculation control for seccomp enforced mitigation */
 void arch_seccomp_spec_mitigate(struct task_struct *task);
 
-#ifndef CONFIG_ARCH_HAS_REDUCED_MEMORY_SPECULATION
-static inline void cpu_enter_reduced_memory_speculation(void)
-{
-}
-static inline void cpu_leave_reduced_memory_speculation(void)
-{
-}
-#else
-#include <asm/rmspec.h>
-#endif
-
 #endif /* _LINUX_NOSPEC_H */
