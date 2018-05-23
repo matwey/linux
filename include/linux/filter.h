@@ -11,7 +11,6 @@
 #ifdef __KERNEL__
 #include <asm/atomic.h>
 #include <linux/compat.h>
-#include <linux/nospec.h>
 #endif
 
 /*
@@ -169,34 +168,10 @@ extern int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
 extern int sk_detach_filter(struct sock *sk);
 extern int sk_chk_filter(struct sock_filter *filter, int flen);
 
-DECLARE_PER_CPU(unsigned int, bpf_prog_ran);
-
-void bpf_leave_prog_deferred(const struct sk_filter *fp);
-
-static inline void bpf_enter_prog(const struct sk_filter *fp)
-{
-	/*
-	 * Upon the first entry to BPF code, we need to reduce
-	 * memory speculation to mitigate attacks targeting it.
-	 */
-	if (this_cpu_inc_return(bpf_prog_ran) == 1)
-		cpu_enter_reduced_memory_speculation();
-}
-
-static inline void bpf_leave_prog(const struct sk_filter *fp)
-{
-	int *count = this_cpu_ptr(&bpf_prog_ran);
-	if (*count == 1)
-		bpf_leave_prog_deferred(fp);
-	else
-		(*count)--;
-	put_cpu_var(bpf_prog_ran);
-}
-
 #ifdef CONFIG_BPF_JIT
 extern void bpf_jit_compile(struct sk_filter *fp);
 extern void bpf_jit_free(struct sk_filter *fp);
-#define __SK_RUN_FILTER(FILTER, SKB) (*FILTER->bpf_func)(SKB, FILTER->insns)
+#define SK_RUN_FILTER(FILTER, SKB) (*FILTER->bpf_func)(SKB, FILTER->insns)
 #else
 static inline void bpf_jit_compile(struct sk_filter *fp)
 {
@@ -204,18 +179,8 @@ static inline void bpf_jit_compile(struct sk_filter *fp)
 static inline void bpf_jit_free(struct sk_filter *fp)
 {
 }
-#define __SK_RUN_FILTER(FILTER, SKB) sk_run_filter(SKB, FILTER->insns)
+#define SK_RUN_FILTER(FILTER, SKB) sk_run_filter(SKB, FILTER->insns)
 #endif
-
-#define SK_RUN_FILTER(FILTER, SKB)  ({				\
-	int __ret;						\
-								\
-	bpf_enter_prog(FILTER);					\
-	__ret = __SK_RUN_FILTER(FILTER, SKB);			\
-	bpf_leave_prog(FILTER);					\
-								\
-	__ret;							\
-})
 
 enum {
 	BPF_S_RET_K = 1,

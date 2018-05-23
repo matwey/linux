@@ -11,7 +11,6 @@
 #include <linux/utsname.h>
 #include <linux/device.h>
 #include <linux/prctl.h>
-#include <linux/filter.h>
 
 #include <asm/nospec-branch.h>
 #include <asm/spec_ctrl.h>
@@ -790,87 +789,35 @@ u64 x86_spec_ctrl_get_default(void)
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_get_default);
 
-static inline u64 intel_rds_mask(void)
+void x86_spec_ctrl_set_guest(u64 guest_spec_ctrl)
 {
-	u64 mask;
+	u64 host = x86_spec_ctrl_base;
 
-	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
-		return 0;
+	if (!boot_cpu_has(X86_FEATURE_IBRS))
+		return;
 
-	if (!boot_cpu_has(X86_FEATURE_SSBD))
-		return 0;
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
+		host |= ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
 
-	mask = ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
-
-	/*
-	 * BPF programs can be exploited to attack the kernel.
-	 * Leave the RDS bit on when we recently ran one.  This
-	 * bit gets cleared after a BFP program has not run on
-	 * the CPU for a while.
-	 */
-	if (get_cpu_var(bpf_prog_ran))
-		mask |= SPEC_CTRL_SSBD;
-
-	return mask;
-}
-
-/*
- * Calculate the SPEC_CTRL MSR value that the kernel
- * should be using under normal operation.
- */
-static u64 x86_calculate_kernel_spec_ctrl(void)
-{
-	u64 spec_ctrl;
-	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
-		return 0;
-
-	spec_ctrl = x86_spec_ctrl_base;
-	spec_ctrl |= intel_rds_mask();
-
-	return spec_ctrl;
-}
-
-/* We are entering a guest and need to set its MSR value. */
-void x86_spec_ctrl_set_guest(u64 new_spec_ctrl)
-{
-	if (x86_calculate_kernel_spec_ctrl() != new_spec_ctrl)
-		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
+	if (host != guest_spec_ctrl)
+		wrmsrl(MSR_IA32_SPEC_CTRL, guest_spec_ctrl);
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_set_guest);
 
-/*
- * We are leaving a guest and need to restore the kernel's MSR
- * value that it uses for normal operation.
- */
-void x86_spec_ctrl_restore_host(u64 current_spec_ctrl)
+void x86_spec_ctrl_restore_host(u64 guest_spec_ctrl)
 {
-	u64 new_spec_ctrl = x86_calculate_kernel_spec_ctrl();
+	u64 host = x86_spec_ctrl_base;
 
-	if (new_spec_ctrl != current_spec_ctrl)
-		wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
-}
-EXPORT_SYMBOL_GPL(x86_spec_ctrl_restore_host);
-
-/*
- * A condition that may affect the SPEC_CTRL MSR has changed.
- * Recalculate a new value for this CPU and set it.
- *
- * It is not easy to optimize the wrmsrl() away unless the
- * callers have a full understanding of all the conditions
- * that affect the output of x86_calculate_kernel_spec_ctrl().
- *
- * Try not to call this too often.
- */
-void x86_sync_spec_ctrl(void)
-{
-	u64 new_spec_ctrl = x86_calculate_kernel_spec_ctrl();
-
-	if (!boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+	if (!boot_cpu_has(X86_FEATURE_IBRS))
 		return;
 
-	wrmsrl(MSR_IA32_SPEC_CTRL, new_spec_ctrl);
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
+		host |= ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
+
+	if (host != guest_spec_ctrl)
+		wrmsrl(MSR_IA32_SPEC_CTRL, host);
 }
-EXPORT_SYMBOL_GPL(x86_sync_spec_ctrl);
+EXPORT_SYMBOL_GPL(x86_spec_ctrl_restore_host);
 
 static void x86_amd_ssbd_disable(void)
 {
