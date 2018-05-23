@@ -2164,8 +2164,11 @@ static int find_first_non_hole(struct inode *inode, u64 *start, u64 *len)
 {
 	struct extent_map *em;
 	int ret = 0;
+	u32 sectorsize = BTRFS_I(inode)->root->sectorsize;
 
-	em = btrfs_get_extent(inode, NULL, 0, *start, *len, 0);
+	em = btrfs_get_extent(inode, NULL, 0,
+			      round_down(*start, sectorsize),
+			      round_up(*len, sectorsize), 0);
 	if (IS_ERR_OR_NULL(em)) {
 		if (!em)
 			ret = -ENOMEM;
