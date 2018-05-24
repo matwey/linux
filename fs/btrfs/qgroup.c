@@ -1470,7 +1470,6 @@ int btrfs_qgroup_account_ref(struct btrfs_trans_handle *trans,
 
 unlock:
 	spin_unlock(&fs_info->qgroup_lock);
-	mutex_unlock(&fs_info->qgroup_rescan_lock);
 	ulist_free(roots);
 
 	return ret;
