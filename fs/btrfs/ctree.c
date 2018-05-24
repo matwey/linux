@@ -1318,8 +1318,9 @@ get_old_root(struct btrfs_root *root, u64 time_seq)
 		btrfs_tree_read_unlock(eb_root);
 		free_extent_buffer(eb_root);
 		old = read_tree_block(root, logical, 0);
-		if (!old || !extent_buffer_uptodate(old)) {
-			free_extent_buffer(old);
+		if (IS_ERR(old) || !extent_buffer_uptodate(old)) {
+			if (!IS_ERR(old))
+				free_extent_buffer(old);
 			pr_warn("btrfs: failed to read tree block %llu from get_old_root\n",
 				logical);
 			WARN_ON(1);
@@ -1564,7 +1565,9 @@ int btrfs_realloc_node(struct btrfs_trans_handle *trans,
 		if (!cur || !uptodate) {
 			if (!cur) {
 				cur = read_tree_block(root, blocknr, gen);
-				if (!cur || !extent_buffer_uptodate(cur)) {
+				if (IS_ERR(cur)) {
+					return PTR_ERR(cur);
+				} else if (!extent_buffer_uptodate(cur)) {
 					free_extent_buffer(cur);
 					return -EIO;
 				}
@@ -1743,8 +1746,9 @@ static noinline struct extent_buffer *read_node_slot(struct btrfs_root *root,
 
 	eb = read_tree_block(root, btrfs_node_blockptr(parent, slot),
 			     btrfs_node_ptr_generation(parent, slot));
-	if (eb && !extent_buffer_uptodate(eb)) {
-		free_extent_buffer(eb);
+	if (IS_ERR(eb) || !extent_buffer_uptodate(eb)) {
+		if (!IS_ERR(eb))
+			free_extent_buffer(eb);
 		eb = NULL;
 	}
 
@@ -2236,11 +2240,13 @@ static noinline int reada_for_balance(struct btrfs_root *root,
 
 		if (block1) {
 			eb = read_tree_block(root, block1, 0);
-			free_extent_buffer(eb);
+			if (!IS_ERR(eb))
+				free_extent_buffer(eb);
 		}
 		if (block2) {
 			eb = read_tree_block(root, block2, 0);
-			free_extent_buffer(eb);
+			if (!IS_ERR(eb))
+				free_extent_buffer(eb);
 		}
 	}
 	return ret;
@@ -2406,7 +2412,7 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 
 	ret = -EAGAIN;
 	tmp = read_tree_block(root, blocknr, 0);
-	if (tmp) {
+	if (!IS_ERR(tmp)) {
 		/*
 		 * If the read above didn't mark this buffer up to date,
 		 * it will never end up being up to date.  Set ret to EIO now
