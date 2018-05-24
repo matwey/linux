@@ -8688,11 +8688,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	atomic_switch_perf_msrs(vmx);
 
-	if (x86_ibrs_enabled())
-		add_atomic_switch_msr(vmx, MSR_IA32_SPEC_CTRL,
-				      vmx->spec_ctrl, FEATURE_ENABLE_IBRS);
-
 	debugctlmsr = get_debugctlmsr();
+
+	x86_spec_ctrl_set_guest(vmx->spec_ctrl);
 
 	vmx->__launched = vmx->loaded_vmcs->launched;
 	asm(
@@ -8811,6 +8809,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		, "eax", "ebx", "edi", "esi"
 #endif
 	      );
+
+	x86_spec_ctrl_restore_host(vmx->spec_ctrl);
 
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();

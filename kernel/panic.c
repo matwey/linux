@@ -69,6 +69,7 @@ void __weak nmi_panic_self_stop(struct pt_regs *regs)
 {
 	panic_smp_self_stop();
 }
+EXPORT_SYMBOL(nmi_panic_self_stop);
 
 /*
  * Stop other CPUs in panic.  Architecture dependent code may override this
@@ -97,6 +98,7 @@ void __weak crash_smp_send_stop(void)
 }
 
 atomic_t panic_cpu = ATOMIC_INIT(PANIC_CPU_INVALID);
+EXPORT_SYMBOL(panic_cpu);
 
 /**
  *	panic - halt the system
