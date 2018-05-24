@@ -1299,7 +1299,6 @@ get_old_root(struct btrfs_root *root, u64 time_seq)
 	struct tree_mod_root *old_root = NULL;
 	u64 old_generation = 0;
 	u64 logical;
-	u32 blocksize;
 
 	eb_root = btrfs_read_lock_root_node(root);
 	tm = __tree_mod_log_oldest_root(root->fs_info, eb_root, time_seq);
@@ -1318,8 +1317,7 @@ get_old_root(struct btrfs_root *root, u64 time_seq)
 	if (old_root && tm && tm->op != MOD_LOG_KEY_REMOVE_WHILE_FREEING) {
 		btrfs_tree_read_unlock(eb_root);
 		free_extent_buffer(eb_root);
-		blocksize = root->nodesize;
-		old = read_tree_block(root, logical, blocksize, 0);
+		old = read_tree_block(root, logical, 0);
 		if (!old || !extent_buffer_uptodate(old)) {
 			free_extent_buffer(old);
 			pr_warn("btrfs: failed to read tree block %llu from get_old_root\n",
@@ -1565,8 +1563,7 @@ int btrfs_realloc_node(struct btrfs_trans_handle *trans,
 			uptodate = 0;
 		if (!cur || !uptodate) {
 			if (!cur) {
-				cur = read_tree_block(root, blocknr,
-							 blocksize, gen);
+				cur = read_tree_block(root, blocknr, gen);
 				if (!cur || !extent_buffer_uptodate(cur)) {
 					free_extent_buffer(cur);
 					return -EIO;
@@ -1745,7 +1742,6 @@ static noinline struct extent_buffer *read_node_slot(struct btrfs_root *root,
 	BUG_ON(level == 0);
 
 	eb = read_tree_block(root, btrfs_node_blockptr(parent, slot),
-			     root->nodesize,
 			     btrfs_node_ptr_generation(parent, slot));
 	if (eb && !extent_buffer_uptodate(eb)) {
 		free_extent_buffer(eb);
@@ -2239,11 +2235,11 @@ static noinline int reada_for_balance(struct btrfs_root *root,
 			readahead_tree_block(root, block2, blocksize, 0);
 
 		if (block1) {
-			eb = read_tree_block(root, block1, blocksize, 0);
+			eb = read_tree_block(root, block1, 0);
 			free_extent_buffer(eb);
 		}
 		if (block2) {
-			eb = read_tree_block(root, block2, blocksize, 0);
+			eb = read_tree_block(root, block2, 0);
 			free_extent_buffer(eb);
 		}
 	}
@@ -2381,7 +2377,7 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 			btrfs_set_path_blocking(p);
 
 			/* now we're allowed to do a blocking uptodate check */
-			tmp = read_tree_block(root, blocknr, blocksize, gen);
+			tmp = read_tree_block(root, blocknr, gen);
 			if (tmp && btrfs_buffer_uptodate(tmp, gen, 0) > 0) {
 				*eb_ret = tmp;
 				return 0;
@@ -2409,7 +2405,7 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 	btrfs_release_path(p);
 
 	ret = -EAGAIN;
-	tmp = read_tree_block(root, blocknr, blocksize, 0);
+	tmp = read_tree_block(root, blocknr, 0);
 	if (tmp) {
 		/*
 		 * If the read above didn't mark this buffer up to date,
