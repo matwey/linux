@@ -136,7 +136,6 @@ struct scrub_ctx {
 	int			pages_per_rd_bio;
 	u32			sectorsize;
 	u32			nodesize;
-	u32			leafsize;
 
 	int			is_dev_replace;
 	struct scrub_wr_ctx	wr_ctx;
@@ -404,7 +403,6 @@ struct scrub_ctx *scrub_setup_ctx(struct btrfs_device *dev, int is_dev_replace)
 	}
 	sctx->first_free = 0;
 	sctx->nodesize = dev->dev_root->nodesize;
-	sctx->leafsize = dev->dev_root->leafsize;
 	sctx->sectorsize = dev->dev_root->sectorsize;
 	atomic_set(&sctx->bios_in_flight, 0);
 	atomic_set(&sctx->workers_pending, 0);
@@ -1754,7 +1752,6 @@ static int scrub_checksum_tree_block(struct scrub_block *sblock)
 		   BTRFS_UUID_SIZE))
 		++fail;
 
-	WARN_ON(sctx->nodesize != sctx->leafsize);
 	len = sctx->nodesize - BTRFS_CSUM_SIZE;
 	mapped_size = PAGE_SIZE - BTRFS_CSUM_SIZE;
 	p = ((u8 *)mapped_buffer) + BTRFS_CSUM_SIZE;
@@ -2211,7 +2208,6 @@ static int scrub_extent(struct scrub_ctx *sctx, u64 logical, u64 len,
 		sctx->stat.data_bytes_scrubbed += len;
 		spin_unlock(&sctx->stat_lock);
 	} else if (flags & BTRFS_EXTENT_FLAG_TREE_BLOCK) {
-		WARN_ON(sctx->nodesize != sctx->leafsize);
 		blocksize = sctx->nodesize;
 		spin_lock(&sctx->stat_lock);
 		sctx->stat.tree_extents_scrubbed++;
@@ -2468,7 +2464,7 @@ static noinline_for_stack int scrub_stripe(struct scrub_ctx *sctx,
 				goto next;
 
 			if (key.type == BTRFS_METADATA_ITEM_KEY)
-				bytes = root->leafsize;
+				bytes = root->nodesize;
 			else
 				bytes = key.offset;
 
@@ -2839,17 +2835,6 @@ int btrfs_scrub_dev(struct btrfs_fs_info *fs_info, u64 devid, u64 start,
 
 	if (btrfs_fs_closing(fs_info))
 		return -EINVAL;
-
-	/*
-	 * check some assumptions
-	 */
-	if (fs_info->chunk_root->nodesize != fs_info->chunk_root->leafsize) {
-		printk(KERN_ERR
-		       "btrfs_scrub: size assumption nodesize == leafsize (%d == %d) fails\n",
-		       fs_info->chunk_root->nodesize,
-		       fs_info->chunk_root->leafsize);
-		return -EINVAL;
-	}
 
 	if (fs_info->chunk_root->nodesize > BTRFS_STRIPE_LEN) {
 		/*

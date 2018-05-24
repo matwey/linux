@@ -474,7 +474,7 @@ again:
 							  key.objectid);
 			if (key.type == BTRFS_METADATA_ITEM_KEY)
 				last = key.objectid +
-					fs_info->tree_root->leafsize;
+					fs_info->tree_root->nodesize;
 			else
 				last = key.objectid + key.offset;
 
@@ -741,7 +741,7 @@ int btrfs_lookup_extent_info(struct btrfs_trans_handle *trans,
 	 * different
 	 */
 	if (metadata && !btrfs_fs_incompat(root->fs_info, SKINNY_METADATA)) {
-		offset = root->leafsize;
+		offset = root->nodesize;
 		metadata = 0;
 	}
 
@@ -774,7 +774,7 @@ search_again:
 					      path->slots[0]);
 			if (key.objectid == bytenr &&
 			    key.type == BTRFS_EXTENT_ITEM_KEY &&
-			    key.offset == root->leafsize)
+			    key.offset == root->nodesize)
 				ret = 0;
 		}
 	}
@@ -2558,7 +2558,7 @@ int btrfs_should_throttle_delayed_refs(struct btrfs_trans_handle *trans,
 	num_bytes = btrfs_calc_trans_metadata_size(root, 1);
 	num_heads = heads_to_leaves(root, num_heads);
 	if (num_heads > 1)
-		num_bytes += (num_heads - 1) * root->leafsize;
+		num_bytes += (num_heads - 1) * root->nodesize;
 	num_bytes <<= 1;
 	global_rsv = &root->fs_info->global_block_rsv;
 
@@ -3025,7 +3025,7 @@ static int __btrfs_mod_ref(struct btrfs_trans_handle *trans,
 				goto fail;
 		} else {
 			bytenr = btrfs_node_blockptr(buf, i);
-			num_bytes = btrfs_level_size(root, level - 1);
+			num_bytes = root->nodesize;
 			ret = process_func(trans, root, bytenr, num_bytes,
 					   parent, ref_root, level - 1, 0,
 					   for_cow);
@@ -4608,7 +4608,7 @@ static u64 calc_global_metadata_size(struct btrfs_fs_info *fs_info)
 	if (num_bytes * 3 > meta_used)
 		num_bytes = div64_u64(meta_used, 3);
 
-	return ALIGN(num_bytes, fs_info->extent_root->leafsize << 10);
+	return ALIGN(num_bytes, fs_info->extent_root->nodesize << 10);
 }
 
 static void update_global_block_rsv(struct btrfs_fs_info *fs_info)
@@ -4758,7 +4758,7 @@ int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
 
 	if (root->fs_info->quota_enabled) {
 		/* One for parent inode, two for dir entries */
-		num_bytes = 3 * root->leafsize;
+		num_bytes = 3 * root->nodesize;
 		ret = btrfs_qgroup_reserve(root, num_bytes);
 		if (ret)
 			return ret;
@@ -4946,7 +4946,7 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 
 	if (root->fs_info->quota_enabled) {
 		ret = btrfs_qgroup_reserve(root, num_bytes +
-					   nr_extents * root->leafsize);
+					   nr_extents * root->nodesize);
 		if (ret)
 			goto out_fail;
 	}
@@ -4955,7 +4955,7 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	if (unlikely(ret)) {
 		if (root->fs_info->quota_enabled)
 			btrfs_qgroup_free(root, num_bytes +
-						nr_extents * root->leafsize);
+						nr_extents * root->nodesize);
 		goto out_fail;
 	}
 
@@ -5071,7 +5071,7 @@ void btrfs_delalloc_release_metadata(struct inode *inode, u64 num_bytes)
 				      btrfs_ino(inode), to_free, 0);
 	if (root->fs_info->quota_enabled) {
 		btrfs_qgroup_free(root, num_bytes +
-					dropped * root->leafsize);
+					dropped * root->nodesize);
 	}
 
 	btrfs_block_rsv_release(root, &root->fs_info->delalloc_block_rsv,
@@ -6703,7 +6703,7 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_free_path(path);
 
-	ret = update_block_group(root, ins->objectid, root->leafsize, 1);
+	ret = update_block_group(root, ins->objectid, root->nodesize, 1);
 	if (ret) { /* -ENOENT, logic error */
 		printk(KERN_ERR "btrfs update block group failed for %llu "
 		       "%llu\n", (unsigned long long)ins->objectid,
@@ -6981,7 +6981,7 @@ static noinline void reada_walk_down(struct btrfs_trans_handle *trans,
 
 	eb = path->nodes[wc->level];
 	nritems = btrfs_header_nritems(eb);
-	blocksize = btrfs_level_size(root, wc->level - 1);
+	blocksize = root->nodesize;
 
 	for (slot = path->slots[wc->level]; slot < nritems; slot++) {
 		if (nread >= wc->reada_count)
@@ -7155,7 +7155,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
 	}
 
 	bytenr = btrfs_node_blockptr(path->nodes[level], path->slots[level]);
-	blocksize = btrfs_level_size(root, level - 1);
+	blocksize = root->nodesize;
 
 	next = btrfs_find_tree_block(root, bytenr, blocksize);
 	if (!next) {

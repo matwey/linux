@@ -1318,7 +1318,7 @@ get_old_root(struct btrfs_root *root, u64 time_seq)
 	if (old_root && tm && tm->op != MOD_LOG_KEY_REMOVE_WHILE_FREEING) {
 		btrfs_tree_read_unlock(eb_root);
 		free_extent_buffer(eb_root);
-		blocksize = btrfs_level_size(root, old_root->level);
+		blocksize = root->nodesize;
 		old = read_tree_block(root, logical, blocksize, 0);
 		if (!old || !extent_buffer_uptodate(old)) {
 			free_extent_buffer(old);
@@ -1524,7 +1524,7 @@ int btrfs_realloc_node(struct btrfs_trans_handle *trans,
 	WARN_ON(trans->transid != root->fs_info->generation);
 
 	parent_nritems = btrfs_header_nritems(parent);
-	blocksize = btrfs_level_size(root, parent_level - 1);
+	blocksize = root->nodesize;
 	end_slot = parent_nritems;
 
 	if (parent_nritems == 1)
@@ -1745,7 +1745,7 @@ static noinline struct extent_buffer *read_node_slot(struct btrfs_root *root,
 	BUG_ON(level == 0);
 
 	eb = read_tree_block(root, btrfs_node_blockptr(parent, slot),
-			     btrfs_level_size(root, level - 1),
+			     root->nodesize,
 			     btrfs_node_ptr_generation(parent, slot));
 	if (eb && !extent_buffer_uptodate(eb)) {
 		free_extent_buffer(eb);
@@ -2140,7 +2140,7 @@ static void reada_for_search(struct btrfs_root *root,
 	node = path->nodes[level];
 
 	search = btrfs_node_blockptr(node, slot);
-	blocksize = btrfs_level_size(root, level - 1);
+	blocksize = root->nodesize;
 	eb = btrfs_find_tree_block(root, search, blocksize);
 	if (eb) {
 		free_extent_buffer(eb);
@@ -2203,7 +2203,7 @@ static noinline int reada_for_balance(struct btrfs_root *root,
 
 	nritems = btrfs_header_nritems(parent);
 	slot = path->slots[level + 1];
-	blocksize = btrfs_level_size(root, level);
+	blocksize = root->nodesize;
 
 	if (slot > 0) {
 		block1 = btrfs_node_blockptr(parent, slot - 1);
@@ -2356,7 +2356,7 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 
 	blocknr = btrfs_node_blockptr(b, slot);
 	gen = btrfs_node_ptr_generation(b, slot);
-	blocksize = btrfs_level_size(root, level - 1);
+	blocksize = root->nodesize;
 
 	tmp = btrfs_find_tree_block(root, blocknr, blocksize);
 	if (tmp) {
@@ -4064,13 +4064,13 @@ again:
 	else
 		btrfs_item_key(l, &disk_key, mid);
 
-	right = btrfs_alloc_free_block(trans, root, root->leafsize, 0,
+	right = btrfs_alloc_free_block(trans, root, root->nodesize, 0,
 					root->root_key.objectid,
 					&disk_key, 0, l->start, 0);
 	if (IS_ERR(right))
 		return PTR_ERR(right);
 
-	root_add_used(root, root->leafsize);
+	root_add_used(root, root->nodesize);
 
 	memset_extent_buffer(right, 0, 0, sizeof(struct btrfs_header));
 	btrfs_set_header_bytenr(right, right->start);
@@ -5158,7 +5158,7 @@ int btrfs_compare_trees(struct btrfs_root *left_root,
 		goto out;
 	}
 
-	tmp_buf = kmalloc(left_root->leafsize, GFP_NOFS);
+	tmp_buf = kmalloc(left_root->nodesize, GFP_NOFS);
 	if (!tmp_buf) {
 		ret = -ENOMEM;
 		goto out;
