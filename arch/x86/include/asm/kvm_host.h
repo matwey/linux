@@ -813,7 +813,7 @@ struct kvm_x86_ops {
 	int (*hardware_setup)(void);               /* __init */
 	void (*hardware_unsetup)(void);            /* __exit */
 	bool (*cpu_has_accelerated_tpr)(void);
-	bool (*has_emulated_msr)(int index);
+	bool (*cpu_has_high_real_mode_segbase)(void);
 	void (*cpuid_update)(struct kvm_vcpu *vcpu);
 
 	int (*vm_init)(struct kvm *kvm);
@@ -975,6 +975,7 @@ struct kvm_x86_ops {
 #ifndef __GENKSYMS__
 	void (*set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
 	bool (*get_enable_apicv_new)(struct kvm_vcpu *vcpu);
+	bool (*has_emulated_msr)(int index);
 #endif
 };
 
