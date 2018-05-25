@@ -32,6 +32,7 @@
 #include <asm/mce.h>
 #include <asm/vm86.h>
 #include <asm/spec_ctrl.h>
+#include <asm/nospec-branch.h>
 
 /*
  * per-CPU TSS segments. Threads are completely 'soft' on Linux,
