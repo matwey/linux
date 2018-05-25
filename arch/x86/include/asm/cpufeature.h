@@ -68,9 +68,15 @@
 #define X86_FEATURE_3DNOW	( 1*32+31) /* 3DNow! */
 
 /* Transmeta-defined CPU features, CPUID level 0x80860001, word 2 */
-#define X86_FEATURE_RECOVERY	( 2*32+ 0) /* CPU in recovery mode */
 #define X86_FEATURE_LONGRUN	( 2*32+ 1) /* Longrun power control */
+
 #define X86_FEATURE_LRTI	( 2*32+ 3) /* LongRun table interface */
+
+/*
+ * bp: Reuse that leaf for synthetic CPU feature bits due to the exhaustion of
+ * word 7 und we not even attempting to do a nasty kABI breakage.
+ */
+#define X86_FEATURE_ZEN		( 2*32+ 4) /* "" CPU is AMD family 0x17 (Zen) */
 
 /* Other features, Linux-defined mapping, word 3 */
 /* This range is used for feature bits which conflict or are synthesized */
