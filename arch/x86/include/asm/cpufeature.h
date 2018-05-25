@@ -203,6 +203,7 @@
 #define X86_FEATURE_INTEL_PT	( 7*32+15) /* Intel Processor Trace */
 #define X86_FEATURE_AVX512_4VNNIW (7*32+16) /* AVX-512 Neural Network Instructions */
 #define X86_FEATURE_AVX512_4FMAPS (7*32+17) /* AVX-512 Multiply Accumulation Single precision */
+#define X86_FEATURE_MSR_SPEC_CTRL ( 7*32+18) /* "" MSR SPEC_CTRL is implemented */
 #define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* Fill RSB on context switches */
 #define X86_FEATURE_SPEC_CTRL	( 7*32+20) /* Control Speculation Control */
 #define X86_FEATURE_INTEL_STIBP		(7*32+21) /* "" Intel Single Thread Indirect Branch Predictors */
