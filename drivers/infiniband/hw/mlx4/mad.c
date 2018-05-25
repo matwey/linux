@@ -1241,11 +1241,14 @@ static void mlx4_ib_multiplex_mad(struct mlx4_ib_demux_pv_ctx *ctx, struct ib_wc
 	 * stadard address handle by decoding the tunnelled mlx4_ah fields */
 	memcpy(&ah.av, &tunnel->hdr.av, sizeof (struct mlx4_av));
 	ah.ibah.device = ctx->ib_dev;
-	mlx4_ib_query_ah(&ah.ibah, &ah_attr);
-	port = mlx4_slave_convert_port(dev->dev, slave, ah_attr.port_num);
+
+	port = be32_to_cpu(ah.av.ib.port_pd) >> 24;
+	port = mlx4_slave_convert_port(dev->dev, slave, port);
 	if (port < 0)
 		return;
-	ah_attr.port_num = port;
+	ah.av.ib.port_pd = cpu_to_be32(port << 24 | (be32_to_cpu(ah.av.ib.port_pd) & 0xffffff));
+
+	mlx4_ib_query_ah(&ah.ibah, &ah_attr);
 
 	mlx4_ib_send_to_wire(dev, slave, ctx->port,
 			     is_proxy_qp0(dev, wc->src_qp, slave) ?
