@@ -826,3 +826,10 @@ static void x86_amd_ssbd_disable(void)
 	if (boot_cpu_has(X86_FEATURE_AMD_SSBD))
 		wrmsrl(MSR_AMD64_LS_CFG, msrval);
 }
+
+#ifdef __GENKSYMS__
+void x86_sync_spec_ctrl(void)
+{
+}
+EXPORT_SYMBOL_GPL(x86_sync_spec_ctrl);
+#endif

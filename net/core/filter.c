@@ -26,6 +26,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_packet.h>
 #include <linux/gfp.h>
+#include <linux/nospec.h>
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/netlink.h>
@@ -670,3 +671,12 @@ int sk_detach_filter(struct sock *sk)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(sk_detach_filter);
+
+#ifdef __GENKSYMS__
+DEFINE_PER_CPU(unsigned int, bpf_prog_ran);
+EXPORT_SYMBOL_GPL(bpf_prog_ran);
+void bpf_leave_prog_deferred(const struct sk_filter *fp)
+{
+}
+EXPORT_SYMBOL_GPL(bpf_leave_prog_deferred);
+#endif
