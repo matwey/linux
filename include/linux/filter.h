@@ -469,6 +469,8 @@ bool bpf_helper_changes_skb_data(void *func);
 struct bpf_prog *bpf_patch_insn_single(struct bpf_prog *prog, u32 off,
 				       const struct bpf_insn *patch, u32 len);
 
+DECLARE_PER_CPU(unsigned int, bpf_prog_ran);
+
 #ifdef CONFIG_BPF_JIT
 typedef void (*bpf_jit_fill_hole_t)(void *area, unsigned int size);
 

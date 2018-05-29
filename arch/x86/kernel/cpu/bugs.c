@@ -180,6 +180,13 @@ void x86_spec_ctrl_restore_host(u64 guest_spec_ctrl)
 }
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_restore_host);
 
+#ifdef __GENKSYMS__
+void x86_sync_spec_ctrl(void)
+{
+}
+EXPORT_SYMBOL_GPL(x86_sync_spec_ctrl);
+#endif
+
 static void x86_amd_ssb_disable(void)
 {
 	u64 msrval = x86_amd_ls_cfg_base | x86_amd_ls_cfg_ssbd_mask;
