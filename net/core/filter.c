@@ -2001,11 +2001,9 @@ out:
 	return ret;
 }
 
-#ifdef __GENKSYMS__
 DEFINE_PER_CPU(unsigned int, bpf_prog_ran);
 EXPORT_SYMBOL_GPL(bpf_prog_ran);
 void bpf_leave_prog_deferred(const struct bpf_prog *fp)
 {
 }
 EXPORT_SYMBOL_GPL(bpf_leave_prog_deferred);
-#endif
