@@ -827,9 +827,7 @@ static void x86_amd_ssbd_disable(void)
 		wrmsrl(MSR_AMD64_LS_CFG, msrval);
 }
 
-#ifdef __GENKSYMS__
 void x86_sync_spec_ctrl(void)
 {
 }
 EXPORT_SYMBOL_GPL(x86_sync_spec_ctrl);
-#endif

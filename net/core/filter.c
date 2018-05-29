@@ -672,11 +672,9 @@ int sk_detach_filter(struct sock *sk)
 }
 EXPORT_SYMBOL_GPL(sk_detach_filter);
 
-#ifdef __GENKSYMS__
 DEFINE_PER_CPU(unsigned int, bpf_prog_ran);
 EXPORT_SYMBOL_GPL(bpf_prog_ran);
 void bpf_leave_prog_deferred(const struct sk_filter *fp)
 {
 }
 EXPORT_SYMBOL_GPL(bpf_leave_prog_deferred);
-#endif
