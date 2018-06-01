@@ -34,14 +34,14 @@ EXPORT_SYMBOL_GPL(x86_ibpb_enabled);
 void x86_disable_ibrs(void)
 {
 	if (x86_ibrs_enabled())
-		x86_spec_ctrl_set(x86_spec_ctrl_base);
+		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
 }
 EXPORT_SYMBOL_GPL(x86_disable_ibrs);
 
 void x86_enable_ibrs(void)
 {
 	if (x86_ibrs_enabled())
-		x86_spec_ctrl_set(SPEC_CTRL_IBRS);
+		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base | SPEC_CTRL_IBRS);
 }
 EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 
