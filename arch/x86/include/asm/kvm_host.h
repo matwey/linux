@@ -973,6 +973,7 @@ struct kvm_x86_ops {
 #ifndef __GENKSYMS__
 	void (*set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
 	bool (*get_enable_apicv_new)(struct kvm_vcpu *vcpu);
+	bool (*has_emulated_msr)(int index);
 #endif
 };
 
