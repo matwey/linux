@@ -619,7 +619,6 @@ struct pipe_inode_info *alloc_pipe_info(void)
 		if (pipe_bufs * PAGE_SIZE > pipe_max_size && !capable(CAP_SYS_RESOURCE))
 			pipe_bufs = pipe_max_size >> PAGE_SHIFT;
 
-
 		if (!too_many_pipe_buffers_hard(user)) {
 			if (too_many_pipe_buffers_soft(user))
 				pipe_bufs = 1;
