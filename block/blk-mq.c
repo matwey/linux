@@ -75,6 +75,14 @@ EXPORT_SYMBOL_GPL(blk_mq_freeze_queue_start);
 
 void blk_mq_freeze_queue_wait(struct request_queue *q)
 {
+	struct blk_mq_hw_ctx *hctx;
+	unsigned int i;
+
+	queue_for_each_hw_ctx(q, hctx, i) {
+		cancel_work_sync(&hctx->run_work);
+		cancel_delayed_work_sync(&hctx->delay_work);
+		cancel_delayed_work_sync(&hctx->delayed_run_work);
+	}
 	wait_event(q->mq_freeze_wq, percpu_ref_is_zero(&q->q_usage_counter));
 }
 EXPORT_SYMBOL_GPL(blk_mq_freeze_queue_wait);
@@ -124,6 +132,7 @@ void blk_mq_unfreeze_queue(struct request_queue *q)
 	if (!freeze_depth) {
 		percpu_ref_reinit(&q->q_usage_counter);
 		wake_up_all(&q->mq_freeze_wq);
+		blk_mq_run_hw_queues(q, true);
 	}
 }
 EXPORT_SYMBOL_GPL(blk_mq_unfreeze_queue);
