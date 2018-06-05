@@ -47,6 +47,11 @@ struct btrfs_transaction {
 	atomic_t num_writers;
 	atomic_t use_count;
 
+	/*
+	 * true if there is free bgs operations in this transaction
+	 */
+	int have_free_bgs;
+
 	unsigned long num_joined;
 
 	/* Be protected by fs_info->trans_lock when we want to change it. */
@@ -58,6 +63,10 @@ struct btrfs_transaction {
 	wait_queue_head_t commit_wait;
 	struct list_head pending_snapshots;
 	struct list_head ordered_operations;
+	struct list_head pending_chunks;
+	struct list_head switch_commits;
+	/* Protected by spin lock fs_info->unused_bgs_lock. */
+	struct list_head deleted_bgs;
 	struct btrfs_delayed_ref_root delayed_refs;
 	int aborted;
 };
@@ -82,6 +91,7 @@ struct btrfs_transaction {
 struct btrfs_trans_handle {
 	u64 transid;
 	u64 bytes_reserved;
+	u64 chunk_bytes_reserved;
 	u64 qgroup_reserved;
 	unsigned long use_count;
 	unsigned long blocks_reserved;
@@ -123,15 +133,21 @@ struct btrfs_pending_snapshot {
 static inline void btrfs_set_inode_last_trans(struct btrfs_trans_handle *trans,
 					      struct inode *inode)
 {
+	spin_lock(&BTRFS_I(inode)->lock);
 	BTRFS_I(inode)->last_trans = trans->transaction->transid;
 	BTRFS_I(inode)->last_sub_trans = BTRFS_I(inode)->root->log_transid;
 	BTRFS_I(inode)->last_log_commit = BTRFS_I(inode)->root->last_log_commit;
+	spin_unlock(&BTRFS_I(inode)->lock);
 }
 
 int btrfs_end_transaction(struct btrfs_trans_handle *trans,
 			  struct btrfs_root *root);
 struct btrfs_trans_handle *btrfs_start_transaction(struct btrfs_root *root,
 						   int num_items);
+struct btrfs_trans_handle *btrfs_start_transaction_fallback_global_rsv(
+					struct btrfs_root *root,
+					unsigned int num_items,
+					int min_factor);
 struct btrfs_trans_handle *btrfs_start_transaction_lflush(
 					struct btrfs_root *root, int num_items);
 struct btrfs_trans_handle *btrfs_join_transaction(struct btrfs_root *root);

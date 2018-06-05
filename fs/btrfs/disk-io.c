@@ -1112,19 +1112,19 @@ int btrfs_wait_tree_block_writeback(struct extent_buffer *buf)
 }
 
 struct extent_buffer *read_tree_block(struct btrfs_root *root, u64 bytenr,
-				      u32 blocksize, u64 parent_transid)
+				      u64 parent_transid)
 {
 	struct extent_buffer *buf = NULL;
 	int ret;
 
-	buf = btrfs_find_create_tree_block(root, bytenr, blocksize);
+	buf = btrfs_find_create_tree_block(root, bytenr, root->nodesize);
 	if (!buf)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	ret = btree_read_extent_buffer_pages(root, buf, 0, parent_transid);
 	if (ret) {
 		free_extent_buffer(buf);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 	return buf;
 
@@ -1150,16 +1150,14 @@ void clean_tree_block(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	}
 }
 
-static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
-			 u32 stripesize, struct btrfs_root *root,
-			 struct btrfs_fs_info *fs_info,
+static void __setup_root(u32 nodesize, u32 sectorsize, u32 stripesize,
+			 struct btrfs_root *root, struct btrfs_fs_info *fs_info,
 			 u64 objectid)
 {
 	root->node = NULL;
 	root->commit_root = NULL;
 	root->sectorsize = sectorsize;
 	root->nodesize = nodesize;
-	root->leafsize = leafsize;
 	root->stripesize = stripesize;
 	root->ref_cows = 0;
 	root->track_dirty = 0;
@@ -1190,6 +1188,8 @@ static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
 	init_waitqueue_head(&root->log_writer_wait);
 	init_waitqueue_head(&root->log_commit_wait[0]);
 	init_waitqueue_head(&root->log_commit_wait[1]);
+	INIT_LIST_HEAD(&root->log_ctxs[0]);
+	INIT_LIST_HEAD(&root->log_ctxs[1]);
 	atomic_set(&root->log_commit[0], 0);
 	atomic_set(&root->log_commit[1], 0);
 	atomic_set(&root->log_writers, 0);
@@ -1219,12 +1219,10 @@ static int __must_check find_and_setup_root(struct btrfs_root *tree_root,
 					    struct btrfs_root *root)
 {
 	int ret;
-	u32 blocksize;
 	u64 generation;
 
-	__setup_root(tree_root->nodesize, tree_root->leafsize,
-		     tree_root->sectorsize, tree_root->stripesize,
-		     root, fs_info, objectid);
+	__setup_root(tree_root->nodesize, tree_root->sectorsize,
+		     tree_root->stripesize, root, fs_info, objectid);
 	ret = btrfs_find_last_root(tree_root, objectid,
 				   &root->root_item, &root->root_key);
 	if (ret > 0)
@@ -1233,11 +1231,14 @@ static int __must_check find_and_setup_root(struct btrfs_root *tree_root,
 		return ret;
 
 	generation = btrfs_root_generation(&root->root_item);
-	blocksize = btrfs_level_size(root, btrfs_root_level(&root->root_item));
 	root->commit_root = NULL;
 	root->node = read_tree_block(root, btrfs_root_bytenr(&root->root_item),
-				     blocksize, generation);
-	if (!root->node || !btrfs_buffer_uptodate(root->node, generation, 0)) {
+				     generation);
+	if (IS_ERR(root->node)) {
+		ret = PTR_ERR(root->node);
+		root->node = NULL;
+		return ret;
+	} else if (!btrfs_buffer_uptodate(root->node, generation, 0)) {
 		free_extent_buffer(root->node);
 		root->node = NULL;
 		return -EIO;
@@ -1270,14 +1271,13 @@ struct btrfs_root *btrfs_create_tree(struct btrfs_trans_handle *trans,
 	if (!root)
 		return ERR_PTR(-ENOMEM);
 
-	__setup_root(tree_root->nodesize, tree_root->leafsize,
-		     tree_root->sectorsize, tree_root->stripesize,
-		     root, fs_info, objectid);
+	__setup_root(tree_root->nodesize, tree_root->sectorsize,
+		tree_root->stripesize, root, fs_info, objectid);
 	root->root_key.objectid = objectid;
 	root->root_key.type = BTRFS_ROOT_ITEM_KEY;
 	root->root_key.offset = 0;
 
-	leaf = btrfs_alloc_free_block(trans, root, root->leafsize,
+	leaf = btrfs_alloc_free_block(trans, root, root->nodesize,
 				      0, objectid, NULL, 0, 0, 0);
 	if (IS_ERR(leaf)) {
 		ret = PTR_ERR(leaf);
@@ -1351,9 +1351,9 @@ static struct btrfs_root *alloc_log_tree(struct btrfs_trans_handle *trans,
 	if (!root)
 		return ERR_PTR(-ENOMEM);
 
-	__setup_root(tree_root->nodesize, tree_root->leafsize,
-		     tree_root->sectorsize, tree_root->stripesize,
-		     root, fs_info, BTRFS_TREE_LOG_OBJECTID);
+	__setup_root(tree_root->nodesize, tree_root->sectorsize,
+		     tree_root->stripesize, root, fs_info,
+		     BTRFS_TREE_LOG_OBJECTID);
 
 	root->root_key.objectid = BTRFS_TREE_LOG_OBJECTID;
 	root->root_key.type = BTRFS_ROOT_ITEM_KEY;
@@ -1366,7 +1366,7 @@ static struct btrfs_root *alloc_log_tree(struct btrfs_trans_handle *trans,
 	 */
 	root->ref_cows = 0;
 
-	leaf = btrfs_alloc_free_block(trans, root, root->leafsize, 0,
+	leaf = btrfs_alloc_free_block(trans, root, root->nodesize, 0,
 				      BTRFS_TREE_LOG_OBJECTID, NULL,
 				      0, 0, 0);
 	if (IS_ERR(leaf)) {
@@ -1419,7 +1419,7 @@ int btrfs_add_log_tree(struct btrfs_trans_handle *trans,
 	inode_item->generation = cpu_to_le64(1);
 	inode_item->size = cpu_to_le64(3);
 	inode_item->nlink = cpu_to_le32(1);
-	inode_item->nbytes = cpu_to_le64(root->leafsize);
+	inode_item->nbytes = cpu_to_le64(root->nodesize);
 	inode_item->mode = cpu_to_le32(S_IFDIR | 0755);
 
 	btrfs_set_root_node(&log_root->root_item, log_root->node);
@@ -1439,7 +1439,6 @@ struct btrfs_root *btrfs_read_fs_root_no_radix(struct btrfs_root *tree_root,
 	struct btrfs_path *path;
 	struct extent_buffer *l;
 	u64 generation;
-	u32 blocksize;
 	int ret = 0;
 	int slot;
 
@@ -1456,9 +1455,8 @@ struct btrfs_root *btrfs_read_fs_root_no_radix(struct btrfs_root *tree_root,
 		goto out;
 	}
 
-	__setup_root(tree_root->nodesize, tree_root->leafsize,
-		     tree_root->sectorsize, tree_root->stripesize,
-		     root, fs_info, location->objectid);
+	__setup_root(tree_root->nodesize, tree_root->sectorsize,
+		     tree_root->stripesize, root, fs_info, location->objectid);
 
 	path = btrfs_alloc_path();
 	if (!path) {
@@ -1481,15 +1479,16 @@ struct btrfs_root *btrfs_read_fs_root_no_radix(struct btrfs_root *tree_root,
 	}
 
 	generation = btrfs_root_generation(&root->root_item);
-	blocksize = btrfs_level_size(root, btrfs_root_level(&root->root_item));
 	root->node = read_tree_block(root, btrfs_root_bytenr(&root->root_item),
-				     blocksize, generation);
-	if (!root->node || !extent_buffer_uptodate(root->node)) {
-		ret = (!root->node) ? -ENOMEM : -EIO;
-
-		free_extent_buffer(root->node);
+				     generation);
+	if (IS_ERR(root->node)) {
+		ret = PTR_ERR(root->node);
 		kfree(root);
 		return ERR_PTR(ret);
+	} else if (!extent_buffer_uptodate(root->node)) {
+		free_extent_buffer(root->node);
+		kfree(root);
+		return ERR_PTR(-EIO);
 	}
 
 	root->commit_root = btrfs_root_node(root);
@@ -1542,7 +1541,6 @@ again:
 	}
 
 	btrfs_init_free_ino_ctl(root);
-	mutex_init(&root->fs_commit_mutex);
 	spin_lock_init(&root->cache_lock);
 	init_waitqueue_head(&root->cache_wait);
 
@@ -1687,6 +1685,16 @@ static int cleaner_kthread(void *arg)
 		 * needn't do anything special here.
 		 */
 		btrfs_run_defrag_inodes(root->fs_info);
+
+		/*
+		 * Acquires fs_info->delete_unused_bgs_mutex to avoid racing
+		 * with relocation (btrfs_relocate_chunk) and relocation
+		 * acquires fs_info->cleaner_mutex (btrfs_relocate_block_group)
+		 * after acquiring fs_info->delete_unused_bgs_mutex. So we
+		 * can't hold, nor need to, fs_info->cleaner_mutex when deleting
+		 * unused block groups.
+		 */
+		btrfs_delete_unused_bgs(root->fs_info);
 sleep:
 		if (freezing(current)) {
 			refrigerator();
@@ -2059,8 +2067,6 @@ int open_ctree(struct super_block *sb,
 {
 	u32 sectorsize;
 	u32 nodesize;
-	u32 leafsize;
-	u32 blocksize;
 	u32 stripesize;
 	u64 generation;
 	u64 features;
@@ -2143,7 +2149,10 @@ int open_ctree(struct super_block *sb,
 	spin_lock_init(&fs_info->tree_mod_seq_lock);
 	spin_lock_init(&fs_info->super_lock);
 	spin_lock_init(&fs_info->buffer_lock);
+	spin_lock_init(&fs_info->unused_bgs_lock);
+	mutex_init(&fs_info->unused_bg_unpin_mutex);
 	rwlock_init(&fs_info->tree_mod_log_lock);
+	mutex_init(&fs_info->delete_unused_bgs_mutex);
 	mutex_init(&fs_info->reloc_mutex);
 	seqlock_init(&fs_info->profiles_lock);
 
@@ -2151,6 +2160,7 @@ int open_ctree(struct super_block *sb,
 	INIT_LIST_HEAD(&fs_info->dirty_cowonly_roots);
 	INIT_LIST_HEAD(&fs_info->space_info);
 	INIT_LIST_HEAD(&fs_info->tree_mod_seq_list);
+	INIT_LIST_HEAD(&fs_info->unused_bgs);
 	btrfs_mapping_init(&fs_info->mapping_tree);
 	btrfs_init_block_rsv(&fs_info->global_block_rsv,
 			     BTRFS_BLOCK_RSV_GLOBAL);
@@ -2259,7 +2269,7 @@ int open_ctree(struct super_block *sb,
 	mutex_init(&fs_info->transaction_kthread_mutex);
 	mutex_init(&fs_info->cleaner_mutex);
 	mutex_init(&fs_info->volume_mutex);
-	init_rwsem(&fs_info->extent_commit_sem);
+	init_rwsem(&fs_info->commit_root_sem);
 	init_rwsem(&fs_info->cleanup_work_sem);
 	init_rwsem(&fs_info->subvol_sem);
 	fs_info->dev_replace.lock_owner = 0;
@@ -2286,7 +2296,9 @@ int open_ctree(struct super_block *sb,
 	init_waitqueue_head(&fs_info->transaction_blocked_wait);
 	init_waitqueue_head(&fs_info->async_submit_wait);
 
-	__setup_root(4096, 4096, 4096, 4096, tree_root,
+	INIT_LIST_HEAD(&fs_info->pinned_chunks);
+
+	__setup_root(4096, 4096, 4096, tree_root,
 		     fs_info, BTRFS_ROOT_TREE_OBJECTID);
 
 	invalidate_bdev(fs_devices->latest_bdev);
@@ -2374,19 +2386,22 @@ int open_ctree(struct super_block *sb,
 		goto fail_alloc;
 	}
 
-	if (btrfs_super_leafsize(disk_super) !=
+	/*
+	 * Leafsize and nodesize were always equal, this is only a sanity check.
+	 */
+	if (le32_to_cpu(disk_super->__unused_leafsize) !=
 	    btrfs_super_nodesize(disk_super)) {
 		printk(KERN_ERR "BTRFS: couldn't mount because metadata "
 		       "blocksizes don't match.  node %d leaf %d\n",
 		       btrfs_super_nodesize(disk_super),
-		       btrfs_super_leafsize(disk_super));
+		       le32_to_cpu(disk_super->__unused_leafsize));
 		err = -EINVAL;
 		goto fail_alloc;
 	}
-	if (btrfs_super_leafsize(disk_super) > BTRFS_MAX_METADATA_BLOCKSIZE) {
+	if (btrfs_super_nodesize(disk_super) > BTRFS_MAX_METADATA_BLOCKSIZE) {
 		printk(KERN_ERR "BTRFS: couldn't mount because metadata "
 		       "blocksize (%d) was too large\n",
-		       btrfs_super_leafsize(disk_super));
+		       btrfs_super_nodesize(disk_super));
 		err = -EINVAL;
 		goto fail_alloc;
 	}
@@ -2403,7 +2418,7 @@ int open_ctree(struct super_block *sb,
 	 * flag our filesystem as having big metadata blocks if
 	 * they are bigger than the page size
 	 */
-	if (btrfs_super_leafsize(disk_super) > PAGE_CACHE_SIZE) {
+	if (btrfs_super_nodesize(disk_super) > PAGE_CACHE_SIZE) {
 		if (!(features & BTRFS_FEATURE_INCOMPAT_BIG_METADATA))
 			printk(KERN_INFO "btrfs flagging fs with big metadata feature\n");
 		features |= BTRFS_FEATURE_INCOMPAT_BIG_METADATA;
@@ -2424,10 +2439,9 @@ int open_ctree(struct super_block *sb,
 	}
 
 	nodesize = btrfs_super_nodesize(disk_super);
-	leafsize = btrfs_super_leafsize(disk_super);
 	sectorsize = btrfs_super_sectorsize(disk_super);
 	stripesize = btrfs_super_stripesize(disk_super);
-	fs_info->dirty_metadata_batch = leafsize * (1 + ilog2(nr_cpu_ids));
+	fs_info->dirty_metadata_batch = nodesize * (1 + ilog2(nr_cpu_ids));
 	fs_info->delalloc_batch = sectorsize * 512 * (1 + ilog2(nr_cpu_ids));
 
 	/*
@@ -2435,7 +2449,7 @@ int open_ctree(struct super_block *sb,
 	 * extent buffers for the same range.  It leads to corruptions
 	 */
 	if ((features & BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS) &&
-	    (sectorsize != leafsize)) {
+	    (sectorsize != nodesize)) {
 		printk(KERN_WARNING "btrfs: unequal leaf/node/sector sizes "
 				"are not allowed for mixed block groups on %s\n",
 				sb->s_id);
@@ -2558,7 +2572,6 @@ int open_ctree(struct super_block *sb,
 				    4 * 1024 * 1024 / PAGE_CACHE_SIZE);
 
 	tree_root->nodesize = nodesize;
-	tree_root->leafsize = leafsize;
 	tree_root->sectorsize = sectorsize;
 	tree_root->stripesize = stripesize;
 
@@ -2587,20 +2600,21 @@ int open_ctree(struct super_block *sb,
 		goto fail_sb_buffer;
 	}
 
-	blocksize = btrfs_level_size(tree_root,
-				     btrfs_super_chunk_root_level(disk_super));
 	generation = btrfs_super_chunk_root_generation(disk_super);
 
-	__setup_root(nodesize, leafsize, sectorsize, stripesize,
-		     chunk_root, fs_info, BTRFS_CHUNK_TREE_OBJECTID);
+	__setup_root(nodesize, sectorsize, stripesize, chunk_root,
+		     fs_info, BTRFS_CHUNK_TREE_OBJECTID);
 
 	chunk_root->node = read_tree_block(chunk_root,
 					   btrfs_super_chunk_root(disk_super),
-					   blocksize, generation);
-	if (!chunk_root->node ||
+					   generation);
+	if (IS_ERR(chunk_root->node) ||
 	    !test_bit(EXTENT_BUFFER_UPTODATE, &chunk_root->node->bflags)) {
 		printk(KERN_WARNING "btrfs: failed to read chunk root on %s\n",
 		       sb->s_id);
+		if (!IS_ERR(chunk_root->node))
+			free_extent_buffer(chunk_root->node);
+		chunk_root->node = NULL;
 		goto fail_tree_roots;
 	}
 	btrfs_set_root_node(&chunk_root->root_item, chunk_root->node);
@@ -2630,18 +2644,18 @@ int open_ctree(struct super_block *sb,
 	}
 
 retry_root_backup:
-	blocksize = btrfs_level_size(tree_root,
-				     btrfs_super_root_level(disk_super));
 	generation = btrfs_super_generation(disk_super);
 
 	tree_root->node = read_tree_block(tree_root,
 					  btrfs_super_root(disk_super),
-					  blocksize, generation);
-	if (!tree_root->node ||
+					  generation);
+	if (IS_ERR(tree_root->node) ||
 	    !test_bit(EXTENT_BUFFER_UPTODATE, &tree_root->node->bflags)) {
 		printk(KERN_WARNING "btrfs: failed to read tree root on %s\n",
 		       sb->s_id);
-
+		if (!IS_ERR(tree_root->node))
+			free_extent_buffer(tree_root->node);
+		tree_root->node = NULL;
 		goto recovery_tree_root;
 	}
 
@@ -2767,9 +2781,6 @@ retry_root_backup:
 			err = -EIO;
 			goto fail_qgroup;
 		}
-		blocksize =
-		     btrfs_level_size(tree_root,
-				      btrfs_super_log_root_level(disk_super));
 
 		log_tree_root = btrfs_alloc_root(fs_info);
 		if (!log_tree_root) {
@@ -2777,16 +2788,16 @@ retry_root_backup:
 			goto fail_qgroup;
 		}
 
-		__setup_root(nodesize, leafsize, sectorsize, stripesize,
+		__setup_root(nodesize, sectorsize, stripesize,
 			     log_tree_root, fs_info, BTRFS_TREE_LOG_OBJECTID);
 
 		log_tree_root->node = read_tree_block(tree_root, bytenr,
-						      blocksize,
 						      generation + 1);
-		if (!log_tree_root->node ||
+		if (IS_ERR(log_tree_root->node) ||
 		    !extent_buffer_uptodate(log_tree_root->node)) {
 			printk(KERN_ERR "btrfs: failed to read log tree\n");
-			free_extent_buffer(log_tree_root->node);
+			if (!IS_ERR(log_tree_root->node))
+				free_extent_buffer(log_tree_root->node);
 			kfree(log_tree_root);
 			goto fail_trans_kthread;
 		}
@@ -2866,6 +2877,8 @@ retry_root_backup:
 	}
 
 	btrfs_qgroup_rescan_resume(fs_info);
+
+	fs_info->open = 1;
 
 	return 0;
 
@@ -3018,7 +3031,8 @@ static int write_dev_supers(struct btrfs_device *device,
 
 	for (i = 0; i < max_mirrors; i++) {
 		bytenr = btrfs_sb_offset(i);
-		if (bytenr + BTRFS_SUPER_INFO_SIZE >= device->total_bytes)
+		if (bytenr + BTRFS_SUPER_INFO_SIZE >=
+		    device->commit_total_bytes)
 			break;
 
 		if (wait) {
@@ -3323,8 +3337,9 @@ static int write_all_supers(struct btrfs_root *root, int max_mirrors)
 		btrfs_set_stack_device_type(dev_item, dev->type);
 		btrfs_set_stack_device_id(dev_item, dev->devid);
 		btrfs_set_stack_device_total_bytes(dev_item,
-						   dev->disk_total_bytes);
-		btrfs_set_stack_device_bytes_used(dev_item, dev->bytes_used);
+						   dev->commit_total_bytes);
+		btrfs_set_stack_device_bytes_used(dev_item,
+						  dev->commit_bytes_used);
 		btrfs_set_stack_device_io_align(dev_item, dev->io_align);
 		btrfs_set_stack_device_io_width(dev_item, dev->io_width);
 		btrfs_set_stack_device_sector_size(dev_item, dev->sector_size);
@@ -3503,6 +3518,13 @@ int close_ctree(struct btrfs_root *root)
 	btrfs_cleanup_defrag_inodes(fs_info);
 
 	if (!(fs_info->sb->s_flags & MS_RDONLY)) {
+		/*
+		 * If the cleaner thread is stopped and there are
+		 * block groups queued for removal, the deletion will be
+		 * skipped when we quit the cleaner thread.
+		 */
+		btrfs_delete_unused_bgs(root->fs_info);
+
 		ret = btrfs_commit_super(root);
 		if (ret)
 			printk(KERN_ERR "btrfs: commit super ret %d\n", ret);
@@ -3537,6 +3559,7 @@ int close_ctree(struct btrfs_root *root)
 
 	del_fs_roots(fs_info);
 
+	fs_info->open = 0;
 	free_root_pointers(fs_info, 1);
 
 	iput(fs_info->btree_inode);
@@ -3556,6 +3579,17 @@ int close_ctree(struct btrfs_root *root)
 
 	btrfs_free_block_rsv(root, root->orphan_block_rsv);
 	root->orphan_block_rsv = NULL;
+
+	lock_chunks(root);
+	while (!list_empty(&fs_info->pinned_chunks)) {
+		struct extent_map *em;
+
+		em = list_first_entry(&fs_info->pinned_chunks,
+				      struct extent_map, list);
+		list_del_init(&em->list);
+		free_extent_map(em);
+	}
+	unlock_chunks(root);
 
 	return 0;
 }
@@ -3923,8 +3957,8 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 		clear_extent_bits(dirty_pages, start, end, mark, GFP_NOFS);
 		while (start <= end) {
 			eb = btrfs_find_tree_block(root, start,
-						   root->leafsize);
-			start += root->leafsize;
+						   root->nodesize);
+			start += root->nodesize;
 			if (!eb)
 				continue;
 			wait_on_extent_buffer_writeback(eb);

@@ -3703,9 +3703,7 @@ int btrfs_unlink_inode(struct btrfs_trans_handle *trans,
  */
 static struct btrfs_trans_handle *__unlink_start_trans(struct inode *dir)
 {
-	struct btrfs_trans_handle *trans;
 	struct btrfs_root *root = BTRFS_I(dir)->root;
-	int ret;
 
 	/*
 	 * 1 for the possible orphan item
@@ -3714,27 +3712,7 @@ static struct btrfs_trans_handle *__unlink_start_trans(struct inode *dir)
 	 * 1 for the inode ref
 	 * 1 for the inode
 	 */
-	trans = btrfs_start_transaction(root, 5);
-	if (!IS_ERR(trans) || PTR_ERR(trans) != -ENOSPC)
-		return trans;
-
-	if (PTR_ERR(trans) == -ENOSPC) {
-		u64 num_bytes = btrfs_calc_trans_metadata_size(root, 5);
-
-		trans = btrfs_start_transaction(root, 0);
-		if (IS_ERR(trans))
-			return trans;
-		ret = btrfs_cond_migrate_bytes(root->fs_info,
-					       &root->fs_info->trans_block_rsv,
-					       num_bytes, 5);
-		if (ret) {
-			btrfs_end_transaction(trans, root);
-			return ERR_PTR(ret);
-		}
-		trans->block_rsv = &root->fs_info->trans_block_rsv;
-		trans->bytes_reserved = num_bytes;
-	}
-	return trans;
+	return btrfs_start_transaction_fallback_global_rsv(root, 5, 5);
 }
 
 static int btrfs_unlink(struct inode *dir, struct dentry *dentry)
@@ -3912,6 +3890,7 @@ int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 	u64 extent_num_bytes = 0;
 	u64 extent_offset = 0;
 	u64 item_end = 0;
+	u64 last_size = (u64)-1;
 	u32 found_type = (u8)-1;
 	int found_extent;
 	int del_item;
@@ -4008,6 +3987,11 @@ search_again:
 		/* FIXME, shrink the extent if the ref count is only 1 */
 		if (found_type != BTRFS_EXTENT_DATA_KEY)
 			goto delete;
+
+		if (del_item)
+			last_size = found_key.offset;
+		else
+			last_size = new_size;
 
 		if (extent_type != BTRFS_FILE_EXTENT_INLINE) {
 			u64 num_dec;
@@ -4126,6 +4110,8 @@ out:
 			btrfs_abort_transaction(trans, root, ret);
 	}
 error:
+	if (last_size != (u64)-1)
+		btrfs_ordered_update_i_size(inode, last_size, NULL);
 	btrfs_free_path(path);
 	return err;
 }
@@ -4264,6 +4250,15 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 	u64 cur_offset;
 	u64 hole_size;
 	int err = 0;
+
+	/*
+	 * If our size started in the middle of a page we need to zero out the
+	 * rest of the page before we expand the i_size, otherwise we could
+	 * expose stale data.
+	 */
+	err = btrfs_truncate_page(inode, oldsize, 0, 0);
+	if (err)
+		return err;
 
 	if (size <= hole_start)
 		return 0;
@@ -4439,8 +4434,26 @@ static int btrfs_setsize(struct inode *inode, struct iattr *attr)
 		/* we don't support swapfiles, so vmtruncate shouldn't fail */
 		truncate_setsize(inode, newsize);
 		ret = btrfs_truncate(inode);
-		if (ret && inode->i_nlink)
-			btrfs_orphan_del(NULL, inode);
+		if (ret && inode->i_nlink) {
+			int err;
+
+			/*
+			 * failed to truncate, disk_i_size is only adjusted down
+			 * as we remove extents, so it should represent the true
+			 * size of the inode, so reset the in memory size and
+			 * delete our orphan entry.
+			 */
+			trans = btrfs_join_transaction(root);
+			if (IS_ERR(trans)) {
+				btrfs_orphan_del(NULL, inode);
+				return ret;
+			}
+			i_size_write(inode, BTRFS_I(inode)->disk_i_size);
+			err = btrfs_orphan_del(trans, inode);
+			if (err)
+				btrfs_abort_transaction(trans, root, err);
+			btrfs_end_transaction(trans, root);
+		}
 	}
 
 	return ret;
@@ -7316,8 +7329,18 @@ static ssize_t btrfs_direct_IO(int rw, struct kiocb *iocb,
 			    offset, nr_segs))
 		return 0;
 
+	/*
+	 * The generic stuff only does filemap_write_and_wait_range, which isn't
+	 * enough if we've written compressed pages to this area, so we need to
+	 * call btrfs_wait_ordered_range to make absolutely sure that any
+	 * outstanding dirty pages are on disk.
+	 */
+	count = iov_length(iov, nr_segs);
+	ret = btrfs_wait_ordered_range(inode, offset, count);
+	if (ret)
+		return ret;
+
 	if (rw & WRITE) {
-		count = iov_length(iov, nr_segs);
 		ret = btrfs_delalloc_reserve_space(inode, count);
 		if (ret)
 			return ret;
@@ -7614,18 +7637,16 @@ static int btrfs_truncate(struct inode *inode)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_block_rsv *rsv;
-	int ret;
+	int ret = 0;
 	int err = 0;
 	struct btrfs_trans_handle *trans;
 	u64 mask = root->sectorsize - 1;
 	u64 min_size = btrfs_calc_trunc_metadata_size(root, 1);
 
-	ret = btrfs_truncate_page(inode, inode->i_size, 0, 0);
+	ret = btrfs_wait_ordered_range(inode, inode->i_size & (~mask),
+				       (u64)-1);
 	if (ret)
 		return ret;
-
-	btrfs_wait_ordered_range(inode, inode->i_size & (~mask), (u64)-1);
-	btrfs_ordered_update_i_size(inode, inode->i_size, NULL);
 
 	/*
 	 * Yes ladies and gentelment, this is indeed ugly.  The fact is we have

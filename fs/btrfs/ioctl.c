@@ -57,6 +57,7 @@
 #include "rcu-string.h"
 #include "send.h"
 #include "dev-replace.h"
+#include "tree-log.h"
 
 static int btrfs_clone(struct inode *src, struct inode *inode,
 		       u64 off, u64 olen, u64 olen_aligned, u64 destoff);
@@ -416,7 +417,7 @@ static noinline int create_subvol(struct inode *dir,
 	if (ret)
 		goto fail;
 
-	leaf = btrfs_alloc_free_block(trans, root, root->leafsize,
+	leaf = btrfs_alloc_free_block(trans, root, root->nodesize,
 				      0, objectid, NULL, 0, 0, 0);
 	if (IS_ERR(leaf)) {
 		ret = PTR_ERR(leaf);
@@ -443,7 +444,7 @@ static noinline int create_subvol(struct inode *dir,
 	inode_item->generation = cpu_to_le64(1);
 	inode_item->size = cpu_to_le64(3);
 	inode_item->nlink = cpu_to_le32(1);
-	inode_item->nbytes = cpu_to_le64(root->leafsize);
+	inode_item->nbytes = cpu_to_le64(root->nodesize);
 	inode_item->mode = cpu_to_le32(S_IFDIR | 0755);
 
 	root_item.flags = 0;
@@ -829,7 +830,6 @@ static int find_new_extents(struct btrfs_root *root,
 {
 	struct btrfs_path *path;
 	struct btrfs_key min_key;
-	struct btrfs_key max_key;
 	struct extent_buffer *leaf;
 	struct btrfs_file_extent_item *extent;
 	int type;
@@ -844,15 +844,8 @@ static int find_new_extents(struct btrfs_root *root,
 	min_key.type = BTRFS_EXTENT_DATA_KEY;
 	min_key.offset = *off;
 
-	max_key.objectid = ino;
-	max_key.type = (u8)-1;
-	max_key.offset = (u64)-1;
-
-	path->keep_locks = 1;
-
 	while(1) {
-		ret = btrfs_search_forward(root, &min_key, &max_key,
-					   path, newer_than);
+		ret = btrfs_search_forward(root, &min_key, path, newer_than);
 		if (ret != 0)
 			goto none;
 		if (min_key.objectid != ino)
@@ -1455,7 +1448,7 @@ static noinline int btrfs_ioctl_resize(struct file *file,
 		goto out_free;
 	}
 
-	old_size = device->total_bytes;
+	old_size = btrfs_device_get_total_bytes(device);
 
 	if (mod < 0) {
 		if (new_size > old_size) {
@@ -1915,7 +1908,6 @@ static noinline int search_ioctl(struct inode *inode,
 {
 	struct btrfs_root *root;
 	struct btrfs_key key;
-	struct btrfs_key max_key;
 	struct btrfs_path *path;
 	struct btrfs_ioctl_search_key *sk = &args->key;
 	struct btrfs_fs_info *info = BTRFS_I(inode)->root->fs_info;
@@ -1947,15 +1939,8 @@ static noinline int search_ioctl(struct inode *inode,
 	key.type = sk->min_type;
 	key.offset = sk->min_offset;
 
-	max_key.objectid = sk->max_objectid;
-	max_key.type = sk->max_type;
-	max_key.offset = sk->max_offset;
-
-	path->keep_locks = 1;
-
 	while(1) {
-		ret = btrfs_search_forward(root, &key, &max_key, path,
-					   sk->min_transid);
+		ret = btrfs_search_forward(root, &key, path, sk->min_transid);
 		if (ret != 0) {
 			if (ret > 0)
 				ret = 0;
@@ -2242,6 +2227,8 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 	trans->block_rsv = &block_rsv;
 	trans->bytes_reserved = block_rsv.size;
 
+	btrfs_record_snapshot_destroy(trans, dir);
+
 	ret = btrfs_unlink_subvol(trans, root, dir,
 				dest->root_key.objectid,
 				dentry->d_name.name,
@@ -2453,10 +2440,10 @@ static long btrfs_ioctl_fs_info(struct btrfs_root *root, void __user *arg)
 	if (!fi_args)
 		return -ENOMEM;
 
+	mutex_lock(&fs_devices->device_list_mutex);
 	fi_args->num_devices = fs_devices->num_devices;
 	memcpy(&fi_args->fsid, root->fs_info->fsid, sizeof(fi_args->fsid));
 
-	mutex_lock(&fs_devices->device_list_mutex);
 	list_for_each_entry_safe(device, next, &fs_devices->devices, dev_list) {
 		if (device->devid > fi_args->max_id)
 			fi_args->max_id = device->devid;
@@ -2499,8 +2486,8 @@ static long btrfs_ioctl_dev_info(struct btrfs_root *root, void __user *arg)
 	}
 
 	di_args->devid = dev->devid;
-	di_args->bytes_used = dev->bytes_used;
-	di_args->total_bytes = dev->total_bytes;
+	di_args->bytes_used = btrfs_device_get_bytes_used(dev);
+	di_args->total_bytes = btrfs_device_get_total_bytes(dev);
 	memcpy(di_args->uuid, dev->uuid, sizeof(di_args->uuid));
 	if (dev->name) {
 		struct rcu_string *name;
@@ -2845,7 +2832,7 @@ static int btrfs_clone(struct inode *src, struct inode *inode,
 	u64 len = olen_aligned;
 
 	ret = -ENOMEM;
-	buf = vmalloc(btrfs_level_size(root, 0));
+	buf = vmalloc(root->nodesize);
 	if (!buf)
 		return ret;
 

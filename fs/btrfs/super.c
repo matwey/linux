@@ -65,7 +65,7 @@
 static const struct super_operations btrfs_super_ops;
 static struct file_system_type btrfs_fs_type;
 
-static const char *btrfs_decode_error(int errno)
+const char *btrfs_decode_error(int errno)
 {
 	char *errstr = "unknown";
 
@@ -1368,6 +1368,15 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		 */
 		sb->s_flags |= MS_RDONLY;
 
+		/*
+		 * Setting MS_RDONLY will put the cleaner thread to
+		 * sleep at the next loop if it's already active.
+		 * If it's already asleep, we'll leave unused block
+		 * groups on disk until we're mounted read-write again
+		 * unless we clean them up here.
+		 */
+		btrfs_delete_unused_bgs(fs_info);
+
 		btrfs_dev_replace_suspend_for_unmount(fs_info);
 		btrfs_scrub_cancel(fs_info);
 		btrfs_pause_balance(fs_info);
@@ -1628,7 +1637,11 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	__be32 *fsid = (__be32 *)fs_info->fsid;
 	int ret;
 
-	/* holding chunk_muext to avoid allocating new chunks */
+	/*
+	 * holding chunk_muext to avoid allocating new chunks, holding
+	 * device_list_mutex to avoid the device being removed
+	 */
+	mutex_lock(&fs_info->fs_devices->device_list_mutex);
 	mutex_lock(&fs_info->chunk_mutex);
 	rcu_read_lock();
 	list_for_each_entry_rcu(found, head, list) {
@@ -1651,11 +1664,13 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	ret = btrfs_calc_avail_data_space(fs_info->tree_root, &total_free_data);
 	if (ret) {
 		mutex_unlock(&fs_info->chunk_mutex);
+		mutex_unlock(&fs_info->fs_devices->device_list_mutex);
 		return ret;
 	}
 	buf->f_bavail += total_free_data;
 	buf->f_bavail = buf->f_bavail >> bits;
 	mutex_unlock(&fs_info->chunk_mutex);
+	mutex_unlock(&fs_info->fs_devices->device_list_mutex);
 
 	/* We treat it as constant endianness (it doesn't matter _which_)
 	   because we want the fsid to come out the same whether mounted

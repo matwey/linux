@@ -268,13 +268,11 @@ next:
  * to a logical address
  */
 static int __resolve_indirect_ref(struct btrfs_fs_info *fs_info,
-					int search_commit_root,
-					u64 time_seq,
-					struct __prelim_ref *ref,
-					struct ulist *parents,
-					const u64 *extent_item_pos)
+				  struct btrfs_path *path, u64 time_seq,
+				  struct __prelim_ref *ref,
+				  struct ulist *parents,
+				  const u64 *extent_item_pos)
 {
-	struct btrfs_path *path;
 	struct btrfs_root *root;
 	struct btrfs_key root_key;
 	struct extent_buffer *eb;
@@ -282,11 +280,6 @@ static int __resolve_indirect_ref(struct btrfs_fs_info *fs_info,
 	int root_level;
 	int level = ref->level;
 	int index;
-
-	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
-	path->search_commit_root = !!search_commit_root;
 
 	root_key.objectid = ref->root_id;
 	root_key.type = BTRFS_ROOT_ITEM_KEY;
@@ -301,7 +294,10 @@ static int __resolve_indirect_ref(struct btrfs_fs_info *fs_info,
 		goto out;
 	}
 
-	root_level = btrfs_old_root_level(root, time_seq);
+	if (path->search_commit_root)
+		root_level = btrfs_header_level(root->commit_root);
+	else
+		root_level = btrfs_old_root_level(root, time_seq);
 
 	if (root_level + 1 == level) {
 		srcu_read_unlock(&fs_info->subvol_srcu, index);
@@ -338,7 +334,8 @@ static int __resolve_indirect_ref(struct btrfs_fs_info *fs_info,
 				time_seq, ref->wanted_disk_byte,
 				extent_item_pos);
 out:
-	btrfs_free_path(path);
+	path->lowest_level = 0;
+	btrfs_release_path(path);
 	return ret;
 }
 
@@ -346,7 +343,7 @@ out:
  * resolve all indirect backrefs from the list
  */
 static int __resolve_indirect_refs(struct btrfs_fs_info *fs_info,
-				   int search_commit_root, u64 time_seq,
+				   struct btrfs_path *path, u64 time_seq,
 				   struct list_head *head,
 				   const u64 *extent_item_pos)
 {
@@ -373,9 +370,8 @@ static int __resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 			continue;
 		if (ref->count == 0)
 			continue;
-		err = __resolve_indirect_ref(fs_info, search_commit_root,
-					     time_seq, ref, parents,
-					     extent_item_pos);
+		err = __resolve_indirect_ref(fs_info, path, time_seq, ref,
+					     parents, extent_item_pos);
 		/*
 		 * we can only tolerate ENOENT,otherwise,we should catch error
 		 * and return directly.
@@ -452,8 +448,10 @@ static int __add_missing_keys(struct btrfs_fs_info *fs_info,
 			continue;
 		BUG_ON(!ref->wanted_disk_byte);
 		eb = read_tree_block(fs_info->tree_root, ref->wanted_disk_byte,
-				     fs_info->tree_root->leafsize, 0);
-		if (!eb || !extent_buffer_uptodate(eb)) {
+				     0);
+		if (IS_ERR(eb)) {
+			return PTR_ERR(eb);
+		} else if (!extent_buffer_uptodate(eb)) {
 			free_extent_buffer(eb);
 			return -EIO;
 		}
@@ -830,7 +828,6 @@ static int find_parent_nodes(struct btrfs_trans_handle *trans,
 	struct btrfs_delayed_ref_head *head;
 	int info_level = 0;
 	int ret;
-	int search_commit_root = (trans == BTRFS_BACKREF_SEARCH_COMMIT_ROOT);
 	struct list_head prefs_delayed;
 	struct list_head prefs;
 	struct __prelim_ref *ref;
@@ -848,7 +845,8 @@ static int find_parent_nodes(struct btrfs_trans_handle *trans,
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
-	path->search_commit_root = !!search_commit_root;
+	if (!trans)
+		path->search_commit_root = 1;
 
 	/*
 	 * grab both a lock on the path and a lock on the delayed ref head.
@@ -863,7 +861,7 @@ again:
 		goto out;
 	BUG_ON(ret == 0);
 
-	if (trans != BTRFS_BACKREF_SEARCH_COMMIT_ROOT) {
+	if (trans) {
 		/*
 		 * look if there are updates for this ref queued and lock the
 		 * head
@@ -929,8 +927,8 @@ again:
 
 	__merge_refs(&prefs, 1);
 
-	ret = __resolve_indirect_refs(fs_info, search_commit_root, time_seq,
-				      &prefs, extent_item_pos);
+	ret = __resolve_indirect_refs(fs_info, path, time_seq, &prefs,
+				      extent_item_pos);
 	if (ret)
 		goto out;
 
@@ -949,13 +947,14 @@ again:
 			struct extent_inode_elem *eie = NULL;
 			if (extent_item_pos && !ref->inode_list &&
 			    ref->level == 0) {
-				u32 bsz;
 				struct extent_buffer *eb;
-				bsz = btrfs_level_size(fs_info->extent_root,
-							ref->level);
+
 				eb = read_tree_block(fs_info->extent_root,
-							   ref->parent, bsz, 0);
-				if (!eb || !extent_buffer_uptodate(eb)) {
+							   ref->parent, 0);
+				if (IS_ERR(eb)) {
+					ret = PTR_ERR(eb);
+					goto out;
+				} else if (!extent_buffer_uptodate(eb)) {
 					free_extent_buffer(eb);
 					ret = -EIO;
 					goto out;
@@ -1077,9 +1076,9 @@ static int btrfs_find_all_leafs(struct btrfs_trans_handle *trans,
  *
  * returns 0 on success, < 0 on error.
  */
-int btrfs_find_all_roots(struct btrfs_trans_handle *trans,
-				struct btrfs_fs_info *fs_info, u64 bytenr,
-				u64 time_seq, struct ulist **roots)
+static int __btrfs_find_all_roots(struct btrfs_trans_handle *trans,
+				  struct btrfs_fs_info *fs_info, u64 bytenr,
+				  u64 time_seq, struct ulist **roots)
 {
 	struct ulist *tmp;
 	struct ulist_node *node = NULL;
@@ -1144,6 +1143,20 @@ static int __inode_info(u64 inum, u64 ioff, u8 key_type,
 		return 1;
 
 	return 0;
+}
+
+int btrfs_find_all_roots(struct btrfs_trans_handle *trans,
+			 struct btrfs_fs_info *fs_info, u64 bytenr,
+			 u64 time_seq, struct ulist **roots)
+{
+	int ret;
+
+	if (!trans)
+		down_read(&fs_info->commit_root_sem);
+	ret = __btrfs_find_all_roots(trans, fs_info, bytenr, time_seq, roots);
+	if (!trans)
+		up_read(&fs_info->commit_root_sem);
+	return ret;
 }
 
 /*
@@ -1376,7 +1389,7 @@ int extent_from_logical(struct btrfs_fs_info *fs_info, u64 logical,
 	}
 
 	if (found_key->type == BTRFS_METADATA_ITEM_KEY)
-		size = fs_info->extent_root->leafsize;
+		size = fs_info->extent_root->nodesize;
 	else if (found_key->type == BTRFS_EXTENT_ITEM_KEY)
 		size = found_key->offset;
 
@@ -1552,7 +1565,7 @@ int iterate_extent_inodes(struct btrfs_fs_info *fs_info,
 				iterate_extent_inodes_t *iterate, void *ctx)
 {
 	int ret;
-	struct btrfs_trans_handle *trans;
+	struct btrfs_trans_handle *trans = NULL;
 	struct ulist *refs = NULL;
 	struct ulist *roots = NULL;
 	struct ulist_node *ref_node = NULL;
@@ -1564,13 +1577,13 @@ int iterate_extent_inodes(struct btrfs_fs_info *fs_info,
 	pr_debug("resolving all inodes for extent %llu\n",
 			extent_item_objectid);
 
-	if (search_commit_root) {
-		trans = BTRFS_BACKREF_SEARCH_COMMIT_ROOT;
-	} else {
+	if (!search_commit_root) {
 		trans = btrfs_join_transaction(fs_info->extent_root);
 		if (IS_ERR(trans))
 			return PTR_ERR(trans);
 		btrfs_get_tree_mod_seq(fs_info, &tree_mod_seq_elem);
+	} else {
+		down_read(&fs_info->commit_root_sem);
 	}
 
 	ret = btrfs_find_all_leafs(trans, fs_info, extent_item_objectid,
@@ -1581,8 +1594,8 @@ int iterate_extent_inodes(struct btrfs_fs_info *fs_info,
 
 	ULIST_ITER_INIT(&ref_uiter);
 	while (!ret && (ref_node = ulist_next(refs, &ref_uiter))) {
-		ret = btrfs_find_all_roots(trans, fs_info, ref_node->val,
-					   tree_mod_seq_elem.seq, &roots);
+		ret = __btrfs_find_all_roots(trans, fs_info, ref_node->val,
+					     tree_mod_seq_elem.seq, &roots);
 		if (ret)
 			break;
 		ULIST_ITER_INIT(&root_uiter);
@@ -1604,6 +1617,8 @@ out:
 	if (!search_commit_root) {
 		btrfs_put_tree_mod_seq(fs_info, &tree_mod_seq_elem);
 		btrfs_end_transaction(trans, fs_info->extent_root);
+	} else {
+		up_read(&fs_info->commit_root_sem);
 	}
 
 	return ret;

@@ -32,6 +32,19 @@ struct btrfs_pending_bios {
 	struct bio *tail;
 };
 
+/*
+ * Use sequence counter to get consistent device stat data on
+ * 32-bit processors.
+ */
+#if BITS_PER_LONG==32 && defined(CONFIG_SMP)
+#include <linux/seqlock.h>
+#define __BTRFS_NEED_DEVICE_DATA_ORDERED
+#define btrfs_device_data_ordered_init(device)	\
+	seqcount_init(&device->data_seqcount)
+#else
+#define btrfs_device_data_ordered_init(device) do { } while (0)
+#endif
+
 struct btrfs_device {
 	struct list_head dev_list;
 	struct list_head dev_alloc_list;
@@ -51,6 +64,10 @@ struct btrfs_device {
 	int missing;
 	int can_discard;
 	int is_tgtdev_for_dev_replace;
+
+#ifdef __BTRFS_NEED_DEVICE_DATA_ORDERED
+	seqcount_t data_seqcount;
+#endif
 
 	spinlock_t io_lock;
 
@@ -88,6 +105,23 @@ struct btrfs_device {
 	/* physical drive uuid (or lvm uuid) */
 	u8 uuid[BTRFS_UUID_SIZE];
 
+	/*
+	 * size of the device on the current transaction
+	 *
+	 * This variant is update when committing the transaction,
+	 * and protected by device_list_mutex
+	 */
+	u64 commit_total_bytes;
+
+	/* bytes used on the current transaction */
+	u64 commit_bytes_used;
+	/*
+	 * used to manage the device which is resized
+	 *
+	 * It is protected by chunk_lock.
+	 */
+	struct list_head resized_list;
+
 	/* per-device scrub information */
 	struct scrub_ctx *scrub_device;
 
@@ -115,6 +149,73 @@ struct btrfs_device {
 	atomic_t dev_stat_values[BTRFS_DEV_STAT_VALUES_MAX];
 };
 
+/*
+ * If we read those variants at the context of their own lock, we needn't
+ * use the following helpers, reading them directly is safe.
+ */
+#if BITS_PER_LONG==32 && defined(CONFIG_SMP)
+#define BTRFS_DEVICE_GETSET_FUNCS(name)					\
+static inline u64							\
+btrfs_device_get_##name(const struct btrfs_device *dev)			\
+{									\
+	u64 size;							\
+	unsigned int seq;						\
+									\
+	do {								\
+		seq = read_seqcount_begin(&dev->data_seqcount);		\
+		size = dev->name;					\
+	} while (read_seqcount_retry(&dev->data_seqcount, seq));	\
+	return size;							\
+}									\
+									\
+static inline void							\
+btrfs_device_set_##name(struct btrfs_device *dev, u64 size)		\
+{									\
+	preempt_disable();						\
+	write_seqcount_begin(&dev->data_seqcount);			\
+	dev->name = size;						\
+	write_seqcount_end(&dev->data_seqcount);			\
+	preempt_enable();						\
+}
+#elif BITS_PER_LONG==32 && defined(CONFIG_PREEMPT)
+#define BTRFS_DEVICE_GETSET_FUNCS(name)					\
+static inline u64							\
+btrfs_device_get_##name(const struct btrfs_device *dev)			\
+{									\
+	u64 size;							\
+									\
+	preempt_disable();						\
+	size = dev->name;						\
+	preempt_enable();						\
+	return size;							\
+}									\
+									\
+static inline void							\
+btrfs_device_set_##name(struct btrfs_device *dev, u64 size)		\
+{									\
+	preempt_disable();						\
+	dev->name = size;						\
+	preempt_enable();						\
+}
+#else
+#define BTRFS_DEVICE_GETSET_FUNCS(name)					\
+static inline u64							\
+btrfs_device_get_##name(const struct btrfs_device *dev)			\
+{									\
+	return dev->name;						\
+}									\
+									\
+static inline void							\
+btrfs_device_set_##name(struct btrfs_device *dev, u64 size)		\
+{									\
+	dev->name = size;						\
+}
+#endif
+
+BTRFS_DEVICE_GETSET_FUNCS(total_bytes);
+BTRFS_DEVICE_GETSET_FUNCS(disk_total_bytes);
+BTRFS_DEVICE_GETSET_FUNCS(bytes_used);
+
 struct btrfs_fs_devices {
 	u8 fsid[BTRFS_FSID_SIZE]; /* FS specific uuid */
 
@@ -137,6 +238,7 @@ struct btrfs_fs_devices {
 	struct mutex device_list_mutex;
 	struct list_head devices;
 
+	struct list_head resized_devices;
 	/* devices not currently being allocated */
 	struct list_head alloc_list;
 	struct list_head list;
@@ -278,6 +380,9 @@ void btrfs_close_extra_devices(struct btrfs_fs_info *fs_info,
 int btrfs_find_device_missing_or_by_path(struct btrfs_root *root,
 					 char *device_path,
 					 struct btrfs_device **device);
+struct btrfs_device *btrfs_alloc_device(struct btrfs_fs_info *fs_info,
+					const u64 *devid,
+					const u8 *uuid);
 int btrfs_rm_device(struct btrfs_root *root, char *device_path);
 void btrfs_cleanup_fs_uuids(void);
 int btrfs_num_copies(struct btrfs_fs_info *fs_info, u64 logical, u64 len);
@@ -288,6 +393,7 @@ struct btrfs_device *btrfs_find_device(struct btrfs_fs_info *fs_info, u64 devid,
 int btrfs_shrink_device(struct btrfs_device *device, u64 new_size);
 int btrfs_init_new_device(struct btrfs_root *root, char *path);
 int btrfs_init_dev_replace_tgtdev(struct btrfs_root *root, char *device_path,
+				  struct btrfs_device *srcdev,
 				  struct btrfs_device **device_out);
 int btrfs_balance(struct btrfs_balance_control *bctl,
 		  struct btrfs_ioctl_balance_args *bargs);
@@ -296,7 +402,11 @@ int btrfs_recover_balance(struct btrfs_fs_info *fs_info);
 int btrfs_pause_balance(struct btrfs_fs_info *fs_info);
 int btrfs_cancel_balance(struct btrfs_fs_info *fs_info);
 int btrfs_chunk_readonly(struct btrfs_root *root, u64 chunk_offset);
-int find_free_dev_extent(struct btrfs_device *device, u64 num_bytes,
+int find_free_dev_extent_start(struct btrfs_transaction *transaction,
+			 struct btrfs_device *device, u64 num_bytes,
+			 u64 search_start, u64 *start, u64 *max_avail);
+int find_free_dev_extent(struct btrfs_trans_handle *trans,
+			 struct btrfs_device *device, u64 num_bytes,
 			 u64 *start, u64 *max_avail);
 void btrfs_dev_stat_inc_and_print(struct btrfs_device *dev, int index);
 int btrfs_get_dev_stats(struct btrfs_root *root,
@@ -311,6 +421,12 @@ void btrfs_destroy_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 void btrfs_init_dev_replace_tgtdev_for_resume(struct btrfs_fs_info *fs_info,
 					      struct btrfs_device *tgtdev);
 int btrfs_scratch_superblock(struct btrfs_device *device);
+
+int btrfs_finish_chunk_alloc(struct btrfs_trans_handle *trans,
+				struct btrfs_root *extent_root,
+				u64 chunk_offset, u64 chunk_size);
+int btrfs_remove_chunk(struct btrfs_trans_handle *trans,
+		       struct btrfs_root *root, u64 chunk_offset);
 
 static inline void btrfs_dev_stat_inc(struct btrfs_device *dev,
 				      int index)
@@ -347,4 +463,20 @@ static inline void btrfs_dev_stat_reset(struct btrfs_device *dev,
 {
 	btrfs_dev_stat_set(dev, index, 0);
 }
+
+void btrfs_update_commit_device_size(struct btrfs_fs_info *fs_info);
+void btrfs_update_commit_device_bytes_used(struct btrfs_root *root,
+					struct btrfs_transaction *transaction);
+
+static inline void lock_chunks(struct btrfs_root *root)
+{
+	mutex_lock(&root->fs_info->chunk_mutex);
+}
+
+static inline void unlock_chunks(struct btrfs_root *root)
+{
+	mutex_unlock(&root->fs_info->chunk_mutex);
+}
+
+
 #endif

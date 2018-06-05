@@ -76,6 +76,8 @@ void free_extent_map(struct extent_map *em)
 	if (atomic_dec_and_test(&em->refs)) {
 		WARN_ON(em->in_tree);
 		WARN_ON(!list_empty(&em->list));
+		if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags))
+			kfree(em->bdev);
 		kmem_cache_free(extent_map_cache, em);
 	}
 }

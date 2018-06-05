@@ -2372,11 +2372,12 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 		struct page *page = bvec->bv_page;
 		struct extent_state *cached = NULL;
 		struct extent_state *state;
+		struct inode *inode = page->mapping->host;
 
 		pr_debug("end_bio_extent_readpage: bi_vcnt=%d, idx=%d, err=%d, "
 			 "mirror=%ld\n", bio->bi_vcnt, bio->bi_idx, err,
 			 (long int)bio->bi_bdev);
-		tree = &BTRFS_I(page->mapping->host)->io_tree;
+		tree = &BTRFS_I(inode)->io_tree;
 
 		/* We always issue full-page reads, but if some block
 		 * in a page fails to read, blk_update_request() will
@@ -2450,6 +2451,14 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 		unlock_extent_cached(tree, start, end, &cached, GFP_ATOMIC);
 
 		if (uptodate) {
+			loff_t i_size = i_size_read(inode);
+			pgoff_t end_index = i_size >> PAGE_CACHE_SHIFT;
+			unsigned offset;
+
+			/* Zero out the end if this page straddles i_size */
+			offset = i_size & (PAGE_CACHE_SIZE-1);
+			if (page->index == end_index && offset)
+				zero_user_segment(page, offset, PAGE_CACHE_SIZE);
 			SetPageUptodate(page);
 		} else {
 			ClearPageUptodate(page);

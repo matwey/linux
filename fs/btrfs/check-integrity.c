@@ -804,7 +804,7 @@ static int btrfsic_process_superblock_dev_mirror(
 
 	/* super block bytenr is always the unmapped device bytenr */
 	dev_bytenr = btrfs_sb_offset(superblock_mirror_num);
-	if (dev_bytenr + BTRFS_SUPER_INFO_SIZE > device->total_bytes)
+	if (dev_bytenr + BTRFS_SUPER_INFO_SIZE > device->commit_total_bytes)
 		return -1;
 	bh = __bread(superblock_bdev, dev_bytenr / 4096,
 		     BTRFS_SUPER_INFO_SIZE);
@@ -817,7 +817,6 @@ static int btrfsic_process_superblock_dev_mirror(
 	    super_tmp->magic != cpu_to_le64(BTRFS_MAGIC) ||
 	    memcmp(device->uuid, super_tmp->dev_item.uuid, BTRFS_UUID_SIZE) ||
 	    btrfs_super_nodesize(super_tmp) != state->metablock_size ||
-	    btrfs_super_leafsize(super_tmp) != state->metablock_size ||
 	    btrfs_super_sectorsize(super_tmp) != state->datablock_size) {
 		brelse(bh);
 		return 0;
@@ -3205,22 +3204,10 @@ int btrfsic_mount(struct btrfs_root *root,
 	struct list_head *dev_head = &fs_devices->devices;
 	struct btrfs_device *device;
 
-	if (root->nodesize != root->leafsize) {
-		printk(KERN_INFO
-		       "btrfsic: cannot handle nodesize %d != leafsize %d!\n",
-		       root->nodesize, root->leafsize);
-		return -1;
-	}
 	if (root->nodesize & ((u64)PAGE_CACHE_SIZE - 1)) {
 		printk(KERN_INFO
 		       "btrfsic: cannot handle nodesize %d not being a multiple of PAGE_CACHE_SIZE %ld!\n",
 		       root->nodesize, (unsigned long)PAGE_CACHE_SIZE);
-		return -1;
-	}
-	if (root->leafsize & ((u64)PAGE_CACHE_SIZE - 1)) {
-		printk(KERN_INFO
-		       "btrfsic: cannot handle leafsize %d not being a multiple of PAGE_CACHE_SIZE %ld!\n",
-		       root->leafsize, (unsigned long)PAGE_CACHE_SIZE);
 		return -1;
 	}
 	if (root->sectorsize & ((u64)PAGE_CACHE_SIZE - 1)) {

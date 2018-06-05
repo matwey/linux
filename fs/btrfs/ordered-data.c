@@ -414,25 +414,46 @@ out:
 }
 
 /* Needs to either be called under a log transaction or the log_mutex */
-void btrfs_get_logged_extents(struct btrfs_root *log, struct inode *inode)
+void btrfs_get_logged_extents(struct inode *inode,
+			      struct list_head *logged_list)
 {
 	struct btrfs_ordered_inode_tree *tree;
 	struct btrfs_ordered_extent *ordered;
 	struct rb_node *n;
-	int index = log->log_transid % 2;
 
 	tree = &BTRFS_I(inode)->ordered_tree;
 	spin_lock_irq(&tree->lock);
 	for (n = rb_first(&tree->tree); n; n = rb_next(n)) {
 		ordered = rb_entry(n, struct btrfs_ordered_extent, rb_node);
-		spin_lock(&log->log_extents_lock[index]);
-		if (list_empty(&ordered->log_list)) {
-			list_add_tail(&ordered->log_list, &log->logged_list[index]);
-			atomic_inc(&ordered->refs);
-		}
-		spin_unlock(&log->log_extents_lock[index]);
+		if (!list_empty(&ordered->log_list))
+			continue;
+		list_add_tail(&ordered->log_list, logged_list);
+		atomic_inc(&ordered->refs);
 	}
 	spin_unlock_irq(&tree->lock);
+}
+
+void btrfs_put_logged_extents(struct list_head *logged_list)
+{
+	struct btrfs_ordered_extent *ordered;
+
+	while (!list_empty(logged_list)) {
+		ordered = list_first_entry(logged_list,
+					   struct btrfs_ordered_extent,
+					   log_list);
+		list_del_init(&ordered->log_list);
+		btrfs_put_ordered_extent(ordered);
+	}
+}
+
+void btrfs_submit_logged_extents(struct list_head *logged_list,
+				 struct btrfs_root *log)
+{
+	int index = log->log_transid % 2;
+
+	spin_lock_irq(&log->log_extents_lock[index]);
+	list_splice_tail(logged_list, &log->logged_list[index]);
+	spin_unlock_irq(&log->log_extents_lock[index]);
 }
 
 void btrfs_wait_logged_extents(struct btrfs_root *log, u64 transid)
@@ -715,8 +736,9 @@ void btrfs_start_ordered_extent(struct inode *inode,
 /*
  * Used to wait on ordered extents across a large range of bytes.
  */
-void btrfs_wait_ordered_range(struct inode *inode, u64 start, u64 len)
+int btrfs_wait_ordered_range(struct inode *inode, u64 start, u64 len)
 {
+	int ret = 0;
 	u64 end;
 	u64 orig_end;
 	struct btrfs_ordered_extent *ordered;
@@ -732,8 +754,9 @@ void btrfs_wait_ordered_range(struct inode *inode, u64 start, u64 len)
 	/* start IO across the range first to instantiate any delalloc
 	 * extents
 	 */
-	filemap_fdatawrite_range(inode->i_mapping, start, orig_end);
-
+	ret = filemap_fdatawrite_range(inode->i_mapping, start, orig_end);
+	if (ret)
+		return ret;
 	/*
 	 * So with compression we will find and lock a dirty page and clear the
 	 * first one as dirty, setup an async extent, and immediately return
@@ -749,10 +772,15 @@ void btrfs_wait_ordered_range(struct inode *inode, u64 start, u64 len)
 	 * right and you are wrong.
 	 */
 	if (test_bit(BTRFS_INODE_HAS_ASYNC_EXTENT,
-		     &BTRFS_I(inode)->runtime_flags))
-		filemap_fdatawrite_range(inode->i_mapping, start, orig_end);
-
-	filemap_fdatawait_range(inode->i_mapping, start, orig_end);
+		     &BTRFS_I(inode)->runtime_flags)) {
+		ret = filemap_fdatawrite_range(inode->i_mapping, start,
+					       orig_end);
+		if (ret)
+			return ret;
+	}
+	ret = filemap_fdatawait_range(inode->i_mapping, start, orig_end);
+	if (ret)
+		return ret;
 
 	end = orig_end;
 	while (1) {
@@ -769,11 +797,14 @@ void btrfs_wait_ordered_range(struct inode *inode, u64 start, u64 len)
 		}
 		btrfs_start_ordered_extent(inode, ordered, 1);
 		end = ordered->file_offset;
+		if (test_bit(BTRFS_ORDERED_IOERR, &ordered->flags))
+			ret = -EIO;
 		btrfs_put_ordered_extent(ordered);
-		if (end == 0 || end == start)
+		if (ret || end == 0 || end == start)
 			break;
 		end--;
 	}
+	return ret;
 }
 
 /*
@@ -842,6 +873,20 @@ out:
 		atomic_inc(&entry->refs);
 	spin_unlock_irq(&tree->lock);
 	return entry;
+}
+
+bool btrfs_have_ordered_extents_in_range(struct inode *inode,
+					 u64 file_offset,
+					 u64 len)
+{
+	struct btrfs_ordered_extent *oe;
+
+	oe = btrfs_lookup_ordered_range(inode, file_offset, len);
+	if (oe) {
+		btrfs_put_ordered_extent(oe);
+		return true;
+	}
+	return false;
 }
 
 /*
