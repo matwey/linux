@@ -23,6 +23,7 @@
 #include <asm/i387.h>
 #include <asm/debugreg.h>
 #include <asm/spec_ctrl.h>
+#include <asm/spec-ctrl.h>
 #include <xen/evtchn.h>
 
 struct kmem_cache *task_xstate_cachep;
@@ -193,9 +194,34 @@ int set_tsc_mode(unsigned int val)
 	return 0;
 }
 
+static __always_inline void __speculative_store_bypass_update(int rds)
+{
+	u64 msr;
+
+	if (static_cpu_has(X86_FEATURE_AMD_SSBD)) {
+		msr = x86_amd_ls_cfg_base | ssbd_tif_to_amd_ls_cfg(rds);
+#ifdef CONFIG_XEN
+		/*
+		 * At the moment Xen does not virtualize LS_CFG, and it
+		 * unconditionally sets the flag in question (unless disabled).
+		 * Avoid the MSR write when possible, as it triggers a (rate
+		 * limited) hypervisor log message. (This could be further
+		 * enhanced by also avoiding the write if the bit is fixed to
+		 * zero, but that would be more involved. If any guest is to
+		 * rely on the feature, Xen better had it enabled globally.)
+		 */
+		if (!(x86_amd_ls_cfg_base & x86_amd_ls_cfg_ssbd_mask))
+#endif
+		wrmsrl(MSR_AMD64_LS_CFG, msr);
+	} else {
+		msr = x86_spec_ctrl_base | ssbd_tif_to_spec_ctrl(rds);
+		wrmsrl(MSR_IA32_SPEC_CTRL, msr);
+	}
+}
+
 void speculative_store_bypass_update(void)
 {
-	/* Nothing to do for Xen here */
+	__speculative_store_bypass_update(current_thread_info()->flags);
 }
 
 void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p)
@@ -224,6 +250,11 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p)
 		else
 			hard_enable_TSC();
 	}
+
+	if (test_tsk_thread_flag(prev_p, TIF_SSBD) ^
+	    test_tsk_thread_flag(next_p, TIF_SSBD))
+		__speculative_store_bypass_update(test_tsk_thread_flag(next_p, TIF_SSBD));
+
 	propagate_user_return_notify(prev_p, next_p);
 }
 

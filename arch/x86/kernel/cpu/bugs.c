@@ -823,6 +823,11 @@ static void x86_amd_ssbd_disable(void)
 {
 	u64 msrval = x86_amd_ls_cfg_base | x86_amd_ls_cfg_ssbd_mask;
 
+#ifdef CONFIG_XEN
+	if (x86_amd_ls_cfg_base & x86_amd_ls_cfg_ssbd_mask)
+		return;
+#endif
+
 	if (boot_cpu_has(X86_FEATURE_AMD_SSBD))
 		wrmsrl(MSR_AMD64_LS_CFG, msrval);
 }
