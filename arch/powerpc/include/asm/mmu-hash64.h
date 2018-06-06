@@ -383,6 +383,7 @@ extern void slb_flush_and_rebolt(void);
 #ifndef CONFIG_BIGMEM
 extern void stab_initialize(unsigned long stab);
 #endif
+extern void slb_dump_contents(void);
 
 extern void slb_vmalloc_update(void);
 extern void slb_set_size(u16 size);

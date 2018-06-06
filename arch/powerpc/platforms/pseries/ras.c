@@ -376,6 +376,31 @@ int pSeries_system_reset_exception(struct pt_regs *regs)
 	return 0; /* need to perform reset */
 }
 
+static int mce_handle_error(struct rtas_error_log *errp)
+{
+	struct pseries_errorlog *pseries_log;
+	struct pseries_mc_errorlog *mce_log;
+	int disposition = errp->disposition;
+	uint8_t error_type;
+
+	pseries_log = get_pseries_errorlog(errp, PSERIES_ELOG_SECT_ID_MCE);
+	if (pseries_log == NULL)
+		goto out;
+
+	mce_log = (struct pseries_mc_errorlog *)pseries_log->data;
+	error_type = rtas_mc_error_type(mce_log);
+
+	if ((disposition == RTAS_DISP_NOT_RECOVERED) &&
+			(error_type == PSERIES_MC_ERROR_TYPE_SLB)) {
+		slb_dump_contents();
+		slb_flush_and_rebolt();
+		disposition = RTAS_DISP_FULLY_RECOVERED;
+	}
+
+out:
+	return disposition;
+}
+
 /*
  * See if we can recover from a machine check exception.
  * This is only called on power4 (or above) and only via
@@ -388,16 +413,19 @@ int pSeries_system_reset_exception(struct pt_regs *regs)
 static int recover_mce(struct pt_regs *regs, struct rtas_error_log *err)
 {
 	int recovered = 0;
+	int disposition;
+
+	disposition = mce_handle_error(err);
 
 	if (!(regs->msr & MSR_RI)) {
 		/* If MSR_RI isn't set, we cannot recover */
 		recovered = 0;
 
-	} else if (err->disposition == RTAS_DISP_FULLY_RECOVERED) {
+	} else if (disposition == RTAS_DISP_FULLY_RECOVERED) {
 		/* Platform corrected itself */
 		recovered = 1;
 
-	} else if (err->disposition == RTAS_DISP_LIMITED_RECOVERY) {
+	} else if (disposition == RTAS_DISP_LIMITED_RECOVERY) {
 		/* Platform corrected itself but could be degraded */
 		printk(KERN_ERR "MCE: limited recovery, system may "
 		       "be degraded\n");
