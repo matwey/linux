@@ -456,6 +456,30 @@ struct kvm_ppc_pvinfo {
 	__u8  pad[108];
 };
 
+/* for KVM_PPC_GET_SMMU_INFO */
+#define KVM_PPC_PAGE_SIZES_MAX_SZ	8
+
+struct kvm_ppc_one_page_size {
+	__u32 page_shift;	/* Page shift (or 0) */
+	__u32 pte_enc;		/* Encoding in the HPTE (>>12) */
+};
+
+struct kvm_ppc_one_seg_page_size {
+	__u32 page_shift;	/* Base page shift of segment (or 0) */
+	__u32 slb_enc;		/* SLB encoding for BookS */
+	struct kvm_ppc_one_page_size enc[KVM_PPC_PAGE_SIZES_MAX_SZ];
+};
+
+#define KVM_PPC_PAGE_SIZES_REAL		0x00000001
+#define KVM_PPC_1T_SEGMENTS		0x00000002
+
+struct kvm_ppc_smmu_info {
+	__u64 flags;
+	__u32 slb_size;
+	__u32 pad;
+	struct kvm_ppc_one_seg_page_size sps[KVM_PPC_PAGE_SIZES_MAX_SZ];
+};
+
 #define KVMIO 0xAE
 
 /*
@@ -582,6 +606,7 @@ struct kvm_ppc_pvinfo {
 #define KVM_CAP_ONE_REG 70
 #define KVM_CAP_TSC_DEADLINE_TIMER 72
 #define KVM_CAP_SYNC_REGS 74
+#define KVM_CAP_PPC_GET_SMMU_INFO 78
 #define KVM_CAP_S390_CSS_SUPPORT 85
 
 #ifdef KVM_CAP_IRQ_ROUTING
@@ -753,6 +778,8 @@ struct kvm_one_reg {
 /* Available with KVM_CAP_TSC_CONTROL */
 #define KVM_SET_TSC_KHZ           _IO(KVMIO,  0xa2)
 #define KVM_GET_TSC_KHZ           _IO(KVMIO,  0xa3)
+/* Available with KVM_CAP_PPC_GET_SMMU_INFO */
+#define KVM_PPC_GET_SMMU_INFO	  _IOR(KVMIO,  0xa6, struct kvm_ppc_smmu_info)
 
 /*
  * ioctls for vcpu fds

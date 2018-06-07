@@ -110,6 +110,9 @@ extern void kvmppc_booke_exit(void);
 extern void kvmppc_core_destroy_mmu(struct kvm_vcpu *vcpu);
 extern int kvmppc_kvm_pv(struct kvm_vcpu *vcpu);
 
+extern int kvm_vm_ioctl_get_smmu_info(struct kvm *kvm,
+				      struct kvm_ppc_smmu_info *info);
+
 /*
  * Cuts out inst bits with ordering according to spec.
  * That means the leftmost bit is zero. All given bits are included.
