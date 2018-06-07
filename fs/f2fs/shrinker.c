@@ -25,8 +25,8 @@ static unsigned long __count_nat_entries(struct f2fs_sb_info *sbi)
 
 static unsigned long __count_free_nids(struct f2fs_sb_info *sbi)
 {
-	if (NM_I(sbi)->fcnt > NAT_ENTRY_PER_BLOCK)
-		return NM_I(sbi)->fcnt - NAT_ENTRY_PER_BLOCK;
+	if (NM_I(sbi)->nid_cnt[FREE_NID_LIST] > NAT_ENTRY_PER_BLOCK)
+		return NM_I(sbi)->nid_cnt[FREE_NID_LIST] - NAT_ENTRY_PER_BLOCK ;
 	return 0;
 }
 
