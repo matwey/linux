@@ -735,7 +735,8 @@ __u32 __skb_get_hash_flowi6(struct sk_buff *skb, const struct flowi6 *fl6)
 	keys.ports.src = fl6->fl6_sport;
 	keys.ports.dst = fl6->fl6_dport;
 	keys.keyid.keyid = fl6->fl6_gre_key;
-	keys.tags.flow_label = (__force u32)fl6->flowlabel;
+	keys.tags.flow_label = (__force u32)(fl6->flowlabel &
+					     IPV6_FLOWLABEL_MASK);
 	keys.basic.ip_proto = fl6->flowi6_proto;
 
 	__skb_set_sw_hash(skb, flow_hash_from_keys(&keys),
@@ -843,7 +844,8 @@ __u32 __get_hash_from_flowi6(const struct flowi6 *fl6, struct flow_keys *keys)
 	keys->ports.src = fl6->fl6_sport;
 	keys->ports.dst = fl6->fl6_dport;
 	keys->keyid.keyid = fl6->fl6_gre_key;
-	keys->tags.flow_label = (__force u32)fl6->flowlabel;
+	keys->tags.flow_label = (__force u32)(fl6->flowlabel &
+					      IPV6_FLOWLABEL_MASK);
 	keys->basic.ip_proto = fl6->flowi6_proto;
 
 	return flow_hash_from_keys(keys);
