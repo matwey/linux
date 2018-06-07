@@ -1154,6 +1154,21 @@ static int follow_automount(struct path *path, struct nameidata *nd,
 
 }
 
+static int path_d_manage(const struct path *path, bool rcu_walk)
+{
+	struct super_block *sb = path->dentry->d_sb;
+
+	BUG_ON(!path->dentry->d_op);
+
+	if (sb->s_type->fs_flags & FS_D_MANAGE_PATH) {
+		BUG_ON(!path->dentry->d_op->d_manage_path);
+		return path->dentry->d_op->d_manage_path(path, rcu_walk);
+	}
+
+	BUG_ON(!path->dentry->d_op->d_manage);
+	return path->dentry->d_op->d_manage(path->dentry, rcu_walk);
+}
+
 /*
  * Handle a dentry that is managed in some way.
  * - Flagged for transit management (autofs)
@@ -1180,9 +1195,7 @@ static int follow_managed(struct path *path, struct nameidata *nd)
 		/* Allow the filesystem to manage the transit without i_mutex
 		 * being held. */
 		if (managed & DCACHE_MANAGE_TRANSIT) {
-			BUG_ON(!path->dentry->d_op);
-			BUG_ON(!path->dentry->d_op->d_manage);
-			ret = path->dentry->d_op->d_manage(path->dentry, false);
+			ret = path_d_manage(path, false);
 			if (ret < 0)
 				break;
 		}
@@ -1245,10 +1258,10 @@ int follow_down_one(struct path *path)
 }
 EXPORT_SYMBOL(follow_down_one);
 
-static inline int managed_dentry_rcu(struct dentry *dentry)
+static inline int managed_dentry_rcu(const struct path *path)
 {
-	return (dentry->d_flags & DCACHE_MANAGE_TRANSIT) ?
-		dentry->d_op->d_manage(dentry, true) : 0;
+	return (path->dentry->d_flags & DCACHE_MANAGE_TRANSIT) ?
+		path_d_manage(path, true) : 0;
 }
 
 /*
@@ -1264,7 +1277,7 @@ static bool __follow_mount_rcu(struct nameidata *nd, struct path *path,
 		 * Don't forget we might have a non-mountpoint managed dentry
 		 * that wants to block transit.
 		 */
-		switch (managed_dentry_rcu(path->dentry)) {
+		switch (managed_dentry_rcu(path)) {
 		case -ECHILD:
 		default:
 			return false;
@@ -1374,10 +1387,7 @@ int follow_down(struct path *path)
 		 * The filesystem may sleep at this point.
 		 */
 		if (managed & DCACHE_MANAGE_TRANSIT) {
-			BUG_ON(!path->dentry->d_op);
-			BUG_ON(!path->dentry->d_op->d_manage);
-			ret = path->dentry->d_op->d_manage(
-				path->dentry, false);
+			ret = path_d_manage(path, false);
 			if (ret < 0)
 				return ret == -EISDIR ? 0 : ret;
 		}
