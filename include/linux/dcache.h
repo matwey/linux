@@ -159,9 +159,12 @@ struct dentry_operations {
 	void (*d_iput)(struct dentry *, struct inode *);
 	char *(*d_dname)(struct dentry *, char *, int);
 	struct vfsmount *(*d_automount)(struct path *);
-	int (*d_manage)(const struct path *, bool);
+	int (*d_manage)(struct dentry *, bool);
 	struct inode *(*d_select_inode)(struct dentry *, unsigned);
 	struct dentry *(*d_real)(struct dentry *, struct inode *);
+#ifndef __GENKSYMS__
+	int (*d_manage_path)(const struct path *, bool);
+#endif
 } ____cacheline_aligned;
 
 /*

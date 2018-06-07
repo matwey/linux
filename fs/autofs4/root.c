@@ -67,7 +67,7 @@ const struct inode_operations autofs4_dir_inode_operations = {
 
 const struct dentry_operations autofs4_dentry_operations = {
 	.d_automount	= autofs4_d_automount,
-	.d_manage	= autofs4_d_manage,
+	.d_manage_path	= autofs4_d_manage,
 	.d_release	= autofs4_dentry_release,
 };
 
