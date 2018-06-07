@@ -61,19 +61,21 @@ static inline void slb_shadow_update(unsigned long ea, int ssize,
 				     unsigned long flags,
 				     unsigned long entry)
 {
+	struct slb_shadow *p = get_slb_shadow();
+
 	/*
 	 * Clear the ESID first so the entry is not valid while we are
 	 * updating it.  No write barriers are needed here, provided
 	 * we only update the current CPU's SLB shadow buffer.
 	 */
-	get_slb_shadow()->save_area[entry].esid = 0;
-	get_slb_shadow()->save_area[entry].vsid = mk_vsid_data(ea, ssize, flags);
-	get_slb_shadow()->save_area[entry].esid = mk_esid_data(ea, ssize, entry);
+	ACCESS_ONCE(p->save_area[entry].esid) = 0;
+	ACCESS_ONCE(p->save_area[entry].vsid) = mk_vsid_data(ea, ssize, flags);
+	ACCESS_ONCE(p->save_area[entry].esid) = mk_esid_data(ea, ssize, entry);
 }
 
 static inline void slb_shadow_clear(unsigned long entry)
 {
-	get_slb_shadow()->save_area[entry].esid = 0;
+	ACCESS_ONCE(get_slb_shadow()->save_area[entry].esid) = 0;
 }
 
 static inline void create_shadowed_slbe(unsigned long ea, int ssize,
