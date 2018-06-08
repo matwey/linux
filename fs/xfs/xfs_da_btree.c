@@ -1074,9 +1074,6 @@ xfs_da_node_lookup_int(xfs_da_state_t *state, int *result)
 		}
 		curr = blk->bp->data;
 		blk->magic = be16_to_cpu(curr->magic);
-		ASSERT(blk->magic == XFS_DA_NODE_MAGIC ||
-		       blk->magic == XFS_DIR2_LEAFN_MAGIC ||
-		       blk->magic == XFS_ATTR_LEAF_MAGIC);
 
 		/*
 		 * Search an intermediate node for a match.
@@ -1134,6 +1131,9 @@ xfs_da_node_lookup_int(xfs_da_state_t *state, int *result)
 		} else if (blk->magic == XFS_DIR2_LEAFN_MAGIC) {
 			blk->hashval = xfs_dir2_leafn_lasthash(blk->bp, NULL);
 			break;
+		} else {
+			ASSERT(0);
+			return XFS_ERROR(EFSCORRUPTED);
 		}
 	}
 
