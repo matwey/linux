@@ -95,7 +95,13 @@ EXPORT_SYMBOL_GPL(x86_spec_check);
 
 int __init nospec(char *str)
 {
+	/*
+	 * Due to way how apply_forced_caps() works, we have to
+	 * explicitly clear the flag here from cas_set, otherwise it'll be
+	 * kept being put into the global mask.
+	 */
 	setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
+	clear_bit(X86_FEATURE_SPEC_CTRL, (unsigned long *)cpu_caps_set);
 	ibrs_state = 0;
 	ibpb_state = 0;
 
