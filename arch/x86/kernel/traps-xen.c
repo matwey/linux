@@ -471,7 +471,6 @@ void restart_nmi(void)
 	ignore_nmis--;
 }
 
-/* May run on IST stack. */
 dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
 {
 #ifdef CONFIG_KGDB_LOW_LEVEL_TRAP

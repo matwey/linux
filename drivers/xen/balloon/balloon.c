@@ -287,13 +287,18 @@ static int increase_reservation(unsigned long nr_pages)
 
 	page = balloon_first_page();
 	for (i = 0; i < nr_pages; i++) {
-		BUG_ON(page == NULL);
-		frame_list[i] = page_to_pfn(page);;
+		if (!page) {
+			if (i)
+				break;
+			rc = -ENXIO;
+			goto out;
+		}
+		frame_list[i] = page_to_pfn(page);
 		page = balloon_next_page(page);
 	}
 
 	set_xen_guest_handle(reservation.extent_start, frame_list);
-	reservation.nr_extents = nr_pages;
+	reservation.nr_extents = i;
 	rc = HYPERVISOR_memory_op(XENMEM_populate_physmap, &reservation);
 	if (rc < 0)
 		goto out;

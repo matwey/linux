@@ -1183,7 +1183,7 @@ END(arch_unwind_init_running)
 
 paranoidzeroentry_ist debug do_debug DEBUG_STACK
 zeroentry nmi do_nmi_callback
-paranoidzeroentry_ist int3 do_int3 DEBUG_STACK
+zeroentry int3 do_int3
 errorentry stack_segment do_stack_segment
 errorentry general_protection do_general_protection
 errorentry page_fault do_page_fault
