@@ -59,6 +59,7 @@ void x86_spec_check(void)
 		if (ibrs_state == -1) {
 			/* noone force-disabled IBRS */
 			ibrs_state = 1;
+			setup_clear_cpu_cap(X86_FEATURE_IBRS_OFF);
 			printk_once(KERN_INFO "IBRS: initialized\n");
 		}
 		printk_once(KERN_INFO "IBPB: initialized\n");
@@ -78,11 +79,22 @@ void x86_spec_check(void)
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
 
-int nospec(char *str)
+void __init noibrs(void)
+ {
+	setup_force_cpu_cap(X86_FEATURE_IBRS_OFF);
+ 	ibrs_state = 0;
+}
+
+static void __init noibpb(void)
 {
 	setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
-	ibrs_state = 0;
-	ibpb_state = 0;
+ 	ibpb_state = 0;
+}
+
+int nospec(char *str)
+{
+	noibrs();
+	noibpb();
 
 	return 0;
 }

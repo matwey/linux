@@ -16,55 +16,27 @@
 .endm
 
 .macro ENABLE_IBRS_CLOBBER
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_SPEC_CTRL
-	call x86_ibrs_enabled
-	test %eax, %eax
-	jz .Llfence_\@
+	ALTERNATIVE "", "jmp .Lend_\@", X86_FEATURE_IBRS_OFF
 
 	__ENABLE_IBRS_CLOBBER
-	jmp .Lend_\@
-
-.Llfence_\@:
-	lfence
 .Lend_\@:
 .endm
 
 
 .macro ENABLE_IBRS
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_SPEC_CTRL
-
-	pushq %rax
-
-	call x86_ibrs_enabled
-	test %eax, %eax
-	jz .Llfence_\@
+	ALTERNATIVE "", "jmp .Lend_\@", X86_FEATURE_IBRS_OFF
 
 	pushq %rcx
 	pushq %rdx
 	__ENABLE_IBRS_CLOBBER
 	popq %rdx
 	popq %rcx
-
-	jmp .Lpop_\@
-
-.Llfence_\@:
-	lfence
-
-.Lpop_\@:
-	popq %rax
-
 .Lend_\@:
 .endm
 
 
 .macro DISABLE_IBRS
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_SPEC_CTRL
-
-	pushq %rax
-
-	call x86_ibrs_enabled
-	test %eax, %eax
-	jz .Llfence_\@
+	ALTERNATIVE "", "jmp .Lend_\@", X86_FEATURE_IBRS_OFF
 
 	pushq %rcx
 	pushq %rdx
@@ -74,15 +46,6 @@
 	wrmsr
 	popq %rdx
 	popq %rcx
-
-	jmp .Lpop_\@
-
-.Llfence_\@:
-	lfence
-
-.Lpop_\@:
-	popq %rax
-
 .Lend_\@:
 .endm
 
@@ -95,6 +58,7 @@ void x86_disable_ibrs(void);
 unsigned int x86_ibrs_enabled(void);
 unsigned int x86_ibpb_enabled(void);
 void x86_spec_check(void);
+void noibrs(void);
 int nospec(char *str);
 
 static inline void x86_ibp_barrier(void)

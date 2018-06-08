@@ -45,8 +45,8 @@ bool available_free_memory(struct f2fs_sb_info *sbi, int type)
 	 * give 25%, 25%, 50%, 50%, 50% memory for each components respectively
 	 */
 	if (type == FREE_NIDS) {
-		mem_size = (nm_i->fcnt * sizeof(struct free_nid)) >>
-							PAGE_CACHE_SHIFT;
+		mem_size = (nm_i->nid_cnt[FREE_NID_LIST] *
+				sizeof(struct free_nid)) >> PAGE_SHIFT;
 		res = mem_size < ((avail_ram * nm_i->ram_thresh / 100) >> 2);
 	} else if (type == NAT_ENTRIES) {
 		mem_size = (nm_i->nat_cnt * sizeof(struct nat_entry)) >>
@@ -261,13 +261,11 @@ static void cache_nat_entry(struct f2fs_nm_info *nm_i, nid_t nid,
 {
 	struct nat_entry *e;
 
-	down_write(&nm_i->nat_tree_lock);
 	e = __lookup_nat_cache(nm_i, nid);
 	if (!e) {
 		e = grab_nat_entry(nm_i, nid);
 		node_info_from_raw_nat(&e->ni, ne);
 	}
-	up_write(&nm_i->nat_tree_lock);
 }
 
 static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
@@ -379,6 +377,8 @@ void get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 
 	memset(&ne, 0, sizeof(struct f2fs_nat_entry));
 
+	down_write(&nm_i->nat_tree_lock);
+
 	/* Check current segment summary */
 	mutex_lock(&curseg->curseg_mutex);
 	i = lookup_journal_in_cursum(sum, NAT_JOURNAL, nid, 0);
@@ -399,6 +399,7 @@ void get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 cache:
 	/* cache nat entry */
 	cache_nat_entry(NM_I(sbi), nid, &ne);
+	up_write(&nm_i->nat_tree_lock);
 }
 
 /*
@@ -1419,19 +1420,44 @@ static struct free_nid *__lookup_free_nid_list(struct f2fs_nm_info *nm_i,
 	return radix_tree_lookup(&nm_i->free_nid_root, n);
 }
 
-static void __del_from_free_nid_list(struct f2fs_nm_info *nm_i,
-						struct free_nid *i)
+static int __insert_nid_to_list(struct f2fs_sb_info *sbi,
+			struct free_nid *i, enum nid_list list, bool new)
 {
+	struct f2fs_nm_info *nm_i = NM_I(sbi);
+
+	if (new) {
+		int err = radix_tree_insert(&nm_i->free_nid_root, i->nid, i);
+		if (err)
+			return err;
+	}
+
+	f2fs_bug_on(sbi, list == FREE_NID_LIST ? i->state != NID_NEW :
+						i->state != NID_ALLOC);
+	nm_i->nid_cnt[list]++;
+	list_add_tail(&i->list, &nm_i->nid_list[list]);
+	return 0;
+}
+
+static void __remove_nid_from_list(struct f2fs_sb_info *sbi,
+			struct free_nid *i, enum nid_list list, bool reuse)
+{
+	struct f2fs_nm_info *nm_i = NM_I(sbi);
+
+	f2fs_bug_on(sbi, list == FREE_NID_LIST ? i->state != NID_NEW :
+						i->state != NID_ALLOC);
+	nm_i->nid_cnt[list]--;
 	list_del(&i->list);
-	radix_tree_delete(&nm_i->free_nid_root, i->nid);
+	if (!reuse)
+		radix_tree_delete(&nm_i->free_nid_root, i->nid);
 }
 
 static int add_free_nid(struct f2fs_sb_info *sbi, nid_t nid, bool build)
 {
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
-	struct free_nid *i;
+	struct free_nid *i, *e;
 	struct nat_entry *ne;
-	bool allocated = false;
+	int err;
+	int ret = 0;
 
 	if (!available_free_memory(sbi, FREE_NIDS))
 		return -1;
@@ -1440,55 +1466,53 @@ static int add_free_nid(struct f2fs_sb_info *sbi, nid_t nid, bool build)
 	if (unlikely(nid == 0))
 		return 0;
 
-	if (build) {
-		/* do not add allocated nids */
-		down_read(&nm_i->nat_tree_lock);
-		ne = __lookup_nat_cache(nm_i, nid);
-		if (ne &&
-			(!get_nat_flag(ne, IS_CHECKPOINTED) ||
-				nat_get_blkaddr(ne) != NULL_ADDR))
-			allocated = true;
-		up_read(&nm_i->nat_tree_lock);
-		if (allocated)
-			return 0;
-	}
-
 	i = f2fs_kmem_cache_alloc(free_nid_slab, GFP_NOFS);
 	i->nid = nid;
 	i->state = NID_NEW;
 
-	if (radix_tree_preload(GFP_NOFS)) {
-		kmem_cache_free(free_nid_slab, i);
-		return 0;
-	}
+	if (radix_tree_preload(GFP_NOFS))
+		goto err;
 
-	spin_lock(&nm_i->free_nid_list_lock);
-	if (radix_tree_insert(&nm_i->free_nid_root, i->nid, i)) {
-		spin_unlock(&nm_i->free_nid_list_lock);
-		radix_tree_preload_end();
-		kmem_cache_free(free_nid_slab, i);
-		return 0;
+	spin_lock(&nm_i->nid_list_lock);
+
+	if (build) {
+		ne = __lookup_nat_cache(nm_i, nid);
+		if (ne && (!get_nat_flag(ne, IS_CHECKPOINTED) ||
+				nat_get_blkaddr(ne) != NULL_ADDR))
+			goto err_out;
+
+		e = __lookup_free_nid_list(nm_i, nid);
+		if (e) {
+			if (e->state == NID_NEW)
+				ret = true;
+			goto err_out;
+		}
 	}
-	list_add_tail(&i->list, &nm_i->free_nid_list);
-	nm_i->fcnt++;
-	spin_unlock(&nm_i->free_nid_list_lock);
+	ret = 1;
+	err = __insert_nid_to_list(sbi, i, FREE_NID_LIST, true);
+err_out:
+	spin_unlock(&nm_i->nid_list_lock);
 	radix_tree_preload_end();
-	return 1;
+err:
+	if (err)
+		kmem_cache_free(free_nid_slab, i);
+
+	return ret;
 }
 
-static void remove_free_nid(struct f2fs_nm_info *nm_i, nid_t nid)
+static void remove_free_nid(struct f2fs_sb_info *sbi, nid_t nid)
 {
+	struct f2fs_nm_info *nm_i = NM_I(sbi);
 	struct free_nid *i;
 	bool need_free = false;
 
-	spin_lock(&nm_i->free_nid_list_lock);
+	spin_lock(&nm_i->nid_list_lock);
 	i = __lookup_free_nid_list(nm_i, nid);
 	if (i && i->state == NID_NEW) {
-		__del_from_free_nid_list(nm_i, i);
-		nm_i->fcnt--;
+		__remove_nid_from_list(sbi, i, FREE_NID_LIST, false);
 		need_free = true;
 	}
-	spin_unlock(&nm_i->free_nid_list_lock);
+	spin_unlock(&nm_i->nid_list_lock);
 
 	if (need_free)
 		kmem_cache_free(free_nid_slab, i);
@@ -1527,12 +1551,14 @@ static void build_free_nids(struct f2fs_sb_info *sbi)
 	nid_t nid = nm_i->next_scan_nid;
 
 	/* Enough entries */
-	if (nm_i->fcnt > NAT_ENTRY_PER_BLOCK)
+	if (nm_i->nid_cnt[FREE_NID_LIST] > NAT_ENTRY_PER_BLOCK)
 		return;
 
 	/* readahead nat pages to be scanned */
 	ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), FREE_NID_PAGES,
 							META_NAT, true);
+
+	down_read(&nm_i->nat_tree_lock);
 
 	while (1) {
 		struct page *page = get_current_nat_page(sbi, nid);
@@ -1559,9 +1585,10 @@ static void build_free_nids(struct f2fs_sb_info *sbi)
 		if (addr == NULL_ADDR)
 			add_free_nid(sbi, nid, true);
 		else
-			remove_free_nid(nm_i, nid);
+			remove_free_nid(sbi, nid);
 	}
 	mutex_unlock(&curseg->curseg_mutex);
+	up_read(&nm_i->nat_tree_lock);
 
 	ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nm_i->next_scan_nid),
 					nm_i->ra_nid_pages, META_NAT, false);
@@ -1580,22 +1607,21 @@ retry:
 	if (unlikely(sbi->total_valid_node_count + 1 > nm_i->available_nids))
 		return false;
 
-	spin_lock(&nm_i->free_nid_list_lock);
+	spin_lock(&nm_i->nid_list_lock);
 
 	/* We should not use stale free nids created by build_free_nids */
-	if (nm_i->fcnt && !on_build_free_nids(nm_i)) {
+	if (nm_i->nid_cnt[FREE_NID_LIST] && !on_build_free_nids(nm_i)) {
 		struct node_info ni;
 
-		f2fs_bug_on(sbi, list_empty(&nm_i->free_nid_list));
-		list_for_each_entry(i, &nm_i->free_nid_list, list)
-			if (i->state == NID_NEW)
-				break;
-
-		f2fs_bug_on(sbi, i->state != NID_NEW);
+		f2fs_bug_on(sbi, list_empty(&nm_i->nid_list[FREE_NID_LIST]));
+		i = list_first_entry(&nm_i->nid_list[FREE_NID_LIST],
+					struct free_nid, list);
 		*nid = i->nid;
+
+		__remove_nid_from_list(sbi, i, FREE_NID_LIST, true);
 		i->state = NID_ALLOC;
-		nm_i->fcnt--;
-		spin_unlock(&nm_i->free_nid_list_lock);
+		__insert_nid_to_list(sbi, i, ALLOC_NID_LIST, false);
+		spin_unlock(&nm_i->nid_list_lock);
 
 		/* check nid is allocated already */
 		get_node_info(sbi, *nid, &ni);
@@ -1605,7 +1631,7 @@ retry:
 		}
 		return true;
 	}
-	spin_unlock(&nm_i->free_nid_list_lock);
+	spin_unlock(&nm_i->nid_list_lock);
 
 	/* Let's scan nat pages and its caches to get free nids */
 	mutex_lock(&nm_i->build_lock);
@@ -1622,11 +1648,11 @@ void alloc_nid_done(struct f2fs_sb_info *sbi, nid_t nid)
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
 	struct free_nid *i;
 
-	spin_lock(&nm_i->free_nid_list_lock);
+	spin_lock(&nm_i->nid_list_lock);
 	i = __lookup_free_nid_list(nm_i, nid);
-	f2fs_bug_on(sbi, !i || i->state != NID_ALLOC);
-	__del_from_free_nid_list(nm_i, i);
-	spin_unlock(&nm_i->free_nid_list_lock);
+	f2fs_bug_on(sbi, !i);
+	__remove_nid_from_list(sbi, i, ALLOC_NID_LIST, false);
+	spin_unlock(&nm_i->nid_list_lock);
 
 	kmem_cache_free(free_nid_slab, i);
 }
@@ -1643,17 +1669,19 @@ void alloc_nid_failed(struct f2fs_sb_info *sbi, nid_t nid)
 	if (!nid)
 		return;
 
-	spin_lock(&nm_i->free_nid_list_lock);
+	spin_lock(&nm_i->nid_list_lock);
 	i = __lookup_free_nid_list(nm_i, nid);
-	f2fs_bug_on(sbi, !i || i->state != NID_ALLOC);
+	f2fs_bug_on(sbi, !i);
+
 	if (!available_free_memory(sbi, FREE_NIDS)) {
-		__del_from_free_nid_list(nm_i, i);
+		__remove_nid_from_list(sbi, i, ALLOC_NID_LIST, false);
 		need_free = true;
 	} else {
+		__remove_nid_from_list(sbi, i, ALLOC_NID_LIST, true);
 		i->state = NID_NEW;
-		nm_i->fcnt++;
+		__insert_nid_to_list(sbi, i, FREE_NID_LIST, false);
 	}
-	spin_unlock(&nm_i->free_nid_list_lock);
+	spin_unlock(&nm_i->nid_list_lock);
 
 	if (need_free)
 		kmem_cache_free(free_nid_slab, i);
@@ -1668,18 +1696,18 @@ int try_to_free_nids(struct f2fs_sb_info *sbi, int nr_shrink)
 	if (!mutex_trylock(&nm_i->build_lock))
 		return 0;
 
-	spin_lock(&nm_i->free_nid_list_lock);
-	list_for_each_entry_safe(i, next, &nm_i->free_nid_list, list) {
-		if (nr_shrink <= 0 || nm_i->fcnt <= NAT_ENTRY_PER_BLOCK)
+	spin_lock(&nm_i->nid_list_lock);
+	list_for_each_entry_safe(i, next, &nm_i->nid_list[FREE_NID_LIST],
+									list) {
+		if (nr_shrink <= 0 ||
+				nm_i->nid_cnt[FREE_NID_LIST] <= NAT_ENTRY_PER_BLOCK )
 			break;
-		if (i->state == NID_ALLOC)
-			continue;
-		__del_from_free_nid_list(nm_i, i);
+
+		__remove_nid_from_list(sbi, i, FREE_NID_LIST, false);
 		kmem_cache_free(free_nid_slab, i);
-		nm_i->fcnt--;
 		nr_shrink--;
 	}
-	spin_unlock(&nm_i->free_nid_list_lock);
+	spin_unlock(&nm_i->nid_list_lock);
 	mutex_unlock(&nm_i->build_lock);
 
 	return nr - nr_shrink;
@@ -1735,7 +1763,7 @@ recover_xnid:
 	if (unlikely(!inc_valid_node_count(sbi, inode)))
 		f2fs_bug_on(sbi, 1);
 
-	remove_free_nid(NM_I(sbi), new_xnid);
+	remove_free_nid(sbi, new_xnid);
 	get_node_info(sbi, new_xnid, &ni);
 	ni.ino = inode->i_ino;
 	set_node_addr(sbi, &ni, NEW_ADDR, false);
@@ -1765,7 +1793,7 @@ int recover_inode_page(struct f2fs_sb_info *sbi, struct page *page)
 		return -ENOMEM;
 
 	/* Should not use this inode from free nid list */
-	remove_free_nid(NM_I(sbi), ino);
+	remove_free_nid(sbi, ino);
 
 	SetPageUptodate(ipage);
 	fill_node_footer(ipage, ino, ino, 0, true);
@@ -1844,14 +1872,12 @@ static void remove_nats_in_journal(struct f2fs_sb_info *sbi)
 
 		raw_ne = nat_in_journal(sum, i);
 
-		down_write(&nm_i->nat_tree_lock);
 		ne = __lookup_nat_cache(nm_i, nid);
 		if (!ne) {
 			ne = grab_nat_entry(nm_i, nid);
 			node_info_from_raw_nat(&ne->ni, &raw_ne);
 		}
 		__set_nat_cache_dirty(nm_i, ne);
-		up_write(&nm_i->nat_tree_lock);
 	}
 	update_nats_in_cursum(sum, -i);
 	mutex_unlock(&curseg->curseg_mutex);
@@ -1885,7 +1911,6 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	struct f2fs_nat_block *nat_blk;
 	struct nat_entry *ne, *cur;
 	struct page *page = NULL;
-	struct f2fs_nm_info *nm_i = NM_I(sbi);
 
 	/*
 	 * there are two steps to flush nat entries:
@@ -1922,12 +1947,8 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 			raw_ne = &nat_blk->entries[nid - start_nid];
 		}
 		raw_nat_from_node_info(raw_ne, &ne->ni);
-
-		down_write(&NM_I(sbi)->nat_tree_lock);
 		nat_reset_flag(ne);
 		__clear_nat_cache_dirty(NM_I(sbi), ne);
-		up_write(&NM_I(sbi)->nat_tree_lock);
-
 		if (nat_get_blkaddr(ne) == NULL_ADDR)
 			add_free_nid(sbi, nid, false);
 	}
@@ -1939,9 +1960,7 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 
 	f2fs_bug_on(sbi, set->entry_cnt);
 
-	down_write(&nm_i->nat_tree_lock);
 	radix_tree_delete(&NM_I(sbi)->nat_set_root, set->set);
-	up_write(&nm_i->nat_tree_lock);
 	kmem_cache_free(nat_entry_set_slab, set);
 }
 
@@ -1961,6 +1980,9 @@ void flush_nat_entries(struct f2fs_sb_info *sbi)
 
 	if (!nm_i->dirty_nat_cnt)
 		return;
+
+	down_write(&nm_i->nat_tree_lock);
+
 	/*
 	 * if there are no enough space in journal to store dirty nat
 	 * entries, remove all entries from journal and merge them
@@ -1969,7 +1991,6 @@ void flush_nat_entries(struct f2fs_sb_info *sbi)
 	if (!__has_cursum_space(sum, nm_i->dirty_nat_cnt, NAT_JOURNAL))
 		remove_nats_in_journal(sbi);
 
-	down_write(&nm_i->nat_tree_lock);
 	while ((found = __gang_lookup_nat_set(nm_i,
 					set_idx, SETVEC_SIZE, setvec))) {
 		unsigned idx;
@@ -1978,11 +1999,12 @@ void flush_nat_entries(struct f2fs_sb_info *sbi)
 			__adjust_nat_entry_set(setvec[idx], &sets,
 							MAX_NAT_JENTRIES(sum));
 	}
-	up_write(&nm_i->nat_tree_lock);
 
 	/* flush dirty nats in nat entry set */
 	list_for_each_entry_safe(set, tmp, &sets, set_list)
 		__flush_nat_entry_set(sbi, set);
+
+	up_write(&nm_i->nat_tree_lock);
 
 	f2fs_bug_on(sbi, nm_i->dirty_nat_cnt);
 }
@@ -2004,19 +2026,21 @@ static int init_node_manager(struct f2fs_sb_info *sbi)
 
 	/* not used nids: 0, node, meta, (and root counted as valid node) */
 	nm_i->available_nids = nm_i->max_nid - F2FS_RESERVED_NODE_NUM;
-	nm_i->fcnt = 0;
+	nm_i->nid_cnt[FREE_NID_LIST] = 0;
+	nm_i->nid_cnt[ALLOC_NID_LIST] = 0;
 	nm_i->nat_cnt = 0;
 	nm_i->ram_thresh = DEF_RAM_THRESHOLD;
 	nm_i->ra_nid_pages = DEF_RA_NID_PAGES;
 
 	INIT_RADIX_TREE(&nm_i->free_nid_root, GFP_ATOMIC);
-	INIT_LIST_HEAD(&nm_i->free_nid_list);
+	INIT_LIST_HEAD(&nm_i->nid_list[FREE_NID_LIST]);
+	INIT_LIST_HEAD(&nm_i->nid_list[ALLOC_NID_LIST]);
 	INIT_RADIX_TREE(&nm_i->nat_root, GFP_NOIO);
 	INIT_RADIX_TREE(&nm_i->nat_set_root, GFP_NOIO);
 	INIT_LIST_HEAD(&nm_i->nat_entries);
 
 	mutex_init(&nm_i->build_lock);
-	spin_lock_init(&nm_i->free_nid_list_lock);
+	spin_lock_init(&nm_i->nid_list_lock);
 	init_rwsem(&nm_i->nat_tree_lock);
 
 	nm_i->next_scan_nid = le32_to_cpu(sbi->ckpt->next_free_nid);
@@ -2061,17 +2085,18 @@ void destroy_node_manager(struct f2fs_sb_info *sbi)
 		return;
 
 	/* destroy free nid list */
-	spin_lock(&nm_i->free_nid_list_lock);
-	list_for_each_entry_safe(i, next_i, &nm_i->free_nid_list, list) {
-		f2fs_bug_on(sbi, i->state == NID_ALLOC);
-		__del_from_free_nid_list(nm_i, i);
-		nm_i->fcnt--;
-		spin_unlock(&nm_i->free_nid_list_lock);
+	spin_lock(&nm_i->nid_list_lock);
+	list_for_each_entry_safe(i, next_i, &nm_i->nid_list[FREE_NID_LIST],
+									list) {
+		__remove_nid_from_list(sbi, i, FREE_NID_LIST, false);
+		spin_unlock(&nm_i->nid_list_lock);
 		kmem_cache_free(free_nid_slab, i);
-		spin_lock(&nm_i->free_nid_list_lock);
+		spin_lock(&nm_i->nid_list_lock);
 	}
-	f2fs_bug_on(sbi, nm_i->fcnt);
-	spin_unlock(&nm_i->free_nid_list_lock);
+	f2fs_bug_on(sbi, nm_i->nid_cnt[FREE_NID_LIST]);
+	f2fs_bug_on(sbi, nm_i->nid_cnt[ALLOC_NID_LIST]);
+	f2fs_bug_on(sbi, !list_empty(&nm_i->nid_list[ALLOC_NID_LIST]));
+	spin_unlock(&nm_i->nid_list_lock);
 
 	/* destroy nat cache */
 	down_write(&nm_i->nat_tree_lock);
