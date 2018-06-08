@@ -77,6 +77,7 @@
  * word 7 und we not even attempting to do a nasty kABI breakage.
  */
 #define X86_FEATURE_ZEN		( 2*32+ 4) /* "" CPU is AMD family 0x17 (Zen) */
+#define X86_FEATURE_IBRS_OFF    ( 2*32+ 5) /* "" Force-disabled IBRS usage on kernel entry */
 
 /* Other features, Linux-defined mapping, word 3 */
 /* This range is used for feature bits which conflict or are synthesized */

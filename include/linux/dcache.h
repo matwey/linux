@@ -162,6 +162,9 @@ struct dentry_operations {
 	int (*d_manage)(struct dentry *, bool);
 	struct inode *(*d_select_inode)(struct dentry *, unsigned);
 	struct dentry *(*d_real)(struct dentry *, struct inode *);
+#ifndef __GENKSYMS__
+	int (*d_manage_path)(const struct path *, bool);
+#endif
 } ____cacheline_aligned;
 
 /*
@@ -270,6 +273,7 @@ extern void d_prune_aliases(struct inode *);
 
 /* test whether we have any submounts in a subdir tree */
 extern int have_submounts(struct dentry *);
+extern int path_has_submounts(const struct path *);
 
 /*
  * This adds the entry to the hash queues.

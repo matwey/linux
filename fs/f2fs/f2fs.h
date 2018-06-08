@@ -504,6 +504,12 @@ static inline void __try_update_largest_extent(struct extent_tree *et,
 		et->largest = en->ei;
 }
 
+enum nid_list {
+	FREE_NID_LIST,
+	ALLOC_NID_LIST,
+	MAX_NID_LIST,
+};
+
 struct f2fs_nm_info {
 	block_t nat_blkaddr;		/* base disk address of NAT */
 	nid_t max_nid;			/* maximum possible node ids */
@@ -522,9 +528,9 @@ struct f2fs_nm_info {
 
 	/* free node ids management */
 	struct radix_tree_root free_nid_root;/* root of the free_nid cache */
-	struct list_head free_nid_list;	/* a list for free nids */
-	spinlock_t free_nid_list_lock;	/* protect free nid list */
-	unsigned int fcnt;		/* the number of free node id */
+	struct list_head nid_list[MAX_NID_LIST];/* lists for free nids */
+	unsigned int nid_cnt[MAX_NID_LIST];	/* the number of free node id */
+	spinlock_t nid_list_lock;	/* protect nid lists ops */
 	struct mutex build_lock;	/* lock for build free nids */
 
 	/* for checkpoint */
@@ -1881,7 +1887,7 @@ struct f2fs_stat_info {
 	unsigned long long hit_total, total_ext;
 	int ext_tree, ext_node;
 	int ndirty_node, ndirty_dent, ndirty_dirs, ndirty_meta;
-	int nats, dirty_nats, sits, dirty_sits, fnids;
+	int nats, dirty_nats, sits, dirty_sits, fnids, free_nids, alloc_nids;
 	int total_count, utilization;
 	int bg_gc, inmem_pages, wb_pages;
 	int inline_xattr, inline_inode, inline_dir;

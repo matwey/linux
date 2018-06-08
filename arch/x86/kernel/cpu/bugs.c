@@ -423,7 +423,7 @@ retpoline_auto:
 
 	if (!is_skylake_era()) {
 		pr_info("Retpolines enabled, force-disabling IBRS due to !SKL-era core\n");
-		ibrs_state = 0;
+		noibrs();
 	}
 }
 
