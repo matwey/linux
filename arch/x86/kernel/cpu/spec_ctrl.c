@@ -87,7 +87,13 @@ void __init noibrs(void)
 
 static void __init noibpb(void)
 {
+	/*
+	 * Due to way how apply_forced_caps() works, we have to
+	 * explicitly clear the flag here from cas_set, otherwise it'll be
+	 * kept being put into the global mask.
+	 */
 	setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
+	clear_bit(X86_FEATURE_SPEC_CTRL, (unsigned long *)cpu_caps_set);
  	ibpb_state = 0;
 }
 
