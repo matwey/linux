@@ -528,6 +528,7 @@ struct dasd_block {
 #define DASD_FLAG_SAFE_OFFLINE	10	/* safe offline processing requested*/
 #define DASD_FLAG_SAFE_OFFLINE_RUNNING	11	/* safe offline running */
 #define DASD_FLAG_ABORTALL	12	/* Abort all noretry requests */
+#define DASD_FLAG_PATH_VERIFY	13	/* Path verification worker running */
 
 
 void dasd_put_device_wake(struct dasd_device *);
