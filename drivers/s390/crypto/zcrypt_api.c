@@ -634,7 +634,10 @@ static long zcrypt_send_ep11_cprb(struct ep11_urb *xcrb)
 				   (struct ep11_target_dev *)xcrb->targets,
 				   xcrb->targets_num *
 				   sizeof(struct ep11_target_dev)))
+		{
+			kfree(ep11_dev_list.targets);
 			return -EFAULT;
+		}
 	}
 
 	spin_lock_bh(&zcrypt_device_lock);
@@ -666,9 +669,11 @@ static long zcrypt_send_ep11_cprb(struct ep11_urb *xcrb)
 		put_device(&zdev->ap_dev->device);
 		zcrypt_device_put(zdev);
 		spin_unlock_bh(&zcrypt_device_lock);
+		kfree(ep11_dev_list.targets);
 		return rc;
 	}
 	spin_unlock_bh(&zcrypt_device_lock);
+	kfree(ep11_dev_list.targets);
 	return -ENODEV;
 }
 
