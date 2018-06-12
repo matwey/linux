@@ -61,19 +61,21 @@ static inline void slb_shadow_update(unsigned long ea, int ssize,
 				     unsigned long flags,
 				     unsigned long entry)
 {
+	struct slb_shadow *p = get_slb_shadow();
+
 	/*
 	 * Clear the ESID first so the entry is not valid while we are
 	 * updating it.  No write barriers are needed here, provided
 	 * we only update the current CPU's SLB shadow buffer.
 	 */
-	get_slb_shadow()->save_area[entry].esid = 0;
-	get_slb_shadow()->save_area[entry].vsid = mk_vsid_data(ea, ssize, flags);
-	get_slb_shadow()->save_area[entry].esid = mk_esid_data(ea, ssize, entry);
+	ACCESS_ONCE(p->save_area[entry].esid) = 0;
+	ACCESS_ONCE(p->save_area[entry].vsid) = mk_vsid_data(ea, ssize, flags);
+	ACCESS_ONCE(p->save_area[entry].esid) = mk_esid_data(ea, ssize, entry);
 }
 
 static inline void slb_shadow_clear(unsigned long entry)
 {
-	get_slb_shadow()->save_area[entry].esid = 0;
+	ACCESS_ONCE(get_slb_shadow()->save_area[entry].esid) = 0;
 }
 
 static inline void create_shadowed_slbe(unsigned long ea, int ssize,
@@ -145,6 +147,41 @@ void slb_flush_and_rebolt(void)
 
 	__slb_flush_and_rebolt();
 	get_paca()->slb_cache_ptr = 0;
+}
+
+void slb_dump_contents(void)
+{
+	int i;
+	unsigned long e, v;
+	unsigned long llp;
+
+	pr_err("slb contents:\n");
+	for (i = 0; i < mmu_slb_size; i++) {
+		asm volatile("slbmfee  %0,%1" : "=r" (e) : "r" (i));
+		asm volatile("slbmfev  %0,%1" : "=r" (v) : "r" (i));
+
+		if (!e && !v)
+			continue;
+
+		pr_err("%02d %016lx %016lx", i, e, v);
+
+		if (!(e & SLB_ESID_V)) {
+			pr_err("\n");
+			continue;
+		}
+		llp = v & SLB_VSID_LLP;
+		if (v & SLB_VSID_B_1T) {
+			pr_err("  1T  ESID=%9lx  VSID=%13lx LLP:%3lx\n",
+				GET_ESID_1T(e),
+				(v & ~SLB_VSID_B) >> SLB_VSID_SHIFT_1T,
+				llp);
+		} else {
+			pr_err(" 256M ESID=%9lx  VSID=%13lx LLP:%3lx\n",
+				GET_ESID(e),
+				(v & ~SLB_VSID_B) >> SLB_VSID_SHIFT,
+				llp);
+		}
+	}
 }
 
 void slb_vmalloc_update(void)
