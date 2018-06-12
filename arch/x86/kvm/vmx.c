@@ -6748,7 +6748,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
 
-	if (x86_ibrs_enabled())
+	if (static_cpu_has(X86_FEATURE_SPEC_CTRL_MSR))
 		x86_spec_ctrl_set_guest(vmx->spec_ctrl);
 
 	vmx->__launched = vmx->loaded_vmcs->launched;
@@ -6851,8 +6851,10 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 	      );
 
-	if (x86_ibrs_enabled())
+	if (static_cpu_has(X86_FEATURE_SPEC_CTRL_MSR)) {
+		vmx->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
 		x86_spec_ctrl_restore_host(vmx->spec_ctrl);
+	}
 
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();

@@ -3832,7 +3832,7 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	local_irq_enable();
 
-	if (x86_ibrs_enabled())
+	if (static_cpu_has(X86_FEATURE_SPEC_CTRL_MSR))
 		x86_spec_ctrl_set_guest(svm->spec_ctrl);
 
 	asm volatile (
@@ -3936,8 +3936,10 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	reload_tss(vcpu);
 
-	if (x86_ibrs_enabled())
+	if (static_cpu_has(X86_FEATURE_SPEC_CTRL_MSR)) {
+		svm->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
 		x86_spec_ctrl_restore_host(svm->spec_ctrl);
+	}
 
 	local_irq_disable();
 
