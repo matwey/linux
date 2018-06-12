@@ -46,12 +46,16 @@ static int get_busid_idx(const char *busid)
 	int i;
 	int idx = -1;
 
-	for (i = 0; i < MAX_BUSID; i++)
+	for (i = 0; i < MAX_BUSID; i++) {
+		spin_lock(&busid_table[i].busid_lock);
 		if (busid_table[i].name[0])
 			if (!strncmp(busid_table[i].name, busid, BUSID_SIZE)) {
 				idx = i;
+				spin_unlock(&busid_table[i].busid_lock);
 				break;
 			}
+		spin_unlock(&busid_table[i].busid_lock);
+	}
 
 	return idx;
 }
@@ -63,8 +67,11 @@ struct bus_id_priv *get_busid_priv(const char *busid)
 
 	spin_lock(&busid_table_lock);
 	idx = get_busid_idx(busid);
-	if (idx >= 0)
+	if (idx >= 0) {
 		bid = &(busid_table[idx]);
+		/* get busid_lock before returning */
+		spin_lock(&bid->busid_lock);
+	}
 	spin_unlock(&busid_table_lock);
 
 	return bid;
@@ -77,15 +84,22 @@ static ssize_t show_match_busid(struct device_driver *drv, char *buf)
 
 	spin_lock(&busid_table_lock);
 
-	for (i = 0; i < MAX_BUSID; i++)
+	for (i = 0; i < MAX_BUSID; i++) {
+		spin_lock(&busid_table[i].busid_lock);
 		if (busid_table[i].name[0])
 			out += sprintf(out, "%s ", busid_table[i].name);
-
+		spin_unlock(&busid_table[i].busid_lock);
+	}
 	spin_unlock(&busid_table_lock);
 	out += sprintf(out, "\n");
 
 
 	return out - buf;
+}
+
+void put_busid_priv(struct bus_id_priv *bid)
+{
+	spin_unlock(&bid->busid_lock);
 }
 
 static int add_match_busid(char *busid)
@@ -100,15 +114,19 @@ static int add_match_busid(char *busid)
 		goto out;
 	}
 
-	for (i = 0; i < MAX_BUSID; i++)
+	for (i = 0; i < MAX_BUSID; i++) {
+		spin_lock(&busid_table[i].busid_lock);
 		if (!busid_table[i].name[0]) {
 			strncpy(busid_table[i].name, busid, BUSID_SIZE);
 			if ((busid_table[i].status != STUB_BUSID_ALLOC) &&
 			    (busid_table[i].status != STUB_BUSID_REMOV))
 				busid_table[i].status = STUB_BUSID_ADDED;
 			ret = 0;
+			spin_unlock(&busid_table[i].busid_lock);
 			break;
 		}
+		spin_unlock(&busid_table[i].busid_lock);
+	}
 
 out:
 	spin_unlock(&busid_table_lock);
@@ -118,7 +136,7 @@ out:
 
 int del_match_busid(char *busid)
 {
-	int i;
+	int idx;
 	int ret = -1;
 
 	spin_lock(&busid_table_lock);
@@ -129,19 +147,22 @@ int del_match_busid(char *busid)
 	/* found */
 	ret = 0;
 
+	spin_lock(&busid_table[idx].busid_lock);
+
 	if (busid_table[idx].status == STUB_BUSID_OTHER)
 		memset(busid_table[idx].name, 0, BUSID_SIZE);
 
 	if ((busid_table[idx].status != STUB_BUSID_OTHER) &&
 	    (busid_table[idx].status != STUB_BUSID_ADDED))
 		busid_table[idx].status = STUB_BUSID_REMOV;
+	spin_unlock(&busid_table[idx].busid_lock);
 out:
 	spin_unlock(&busid_table_lock);
 
 	return -1;
 }
 
-static void init_busid_table(void)
+void init_busid_table(void)
 {
 	int i;
 
@@ -154,9 +175,12 @@ static void init_busid_table(void)
 	}
 
 	spin_lock_init(&busid_table_lock);
+
+	for (i = 0; i < MAX_BUSID; i++)
+		spin_lock_init(&busid_table[i].busid_lock);
 }
 
-static ssize_t store_match_busid(struct device_driver *dev, const char *buf,
+ssize_t store_match_busid(struct device_driver *dev, const char *buf,
 				 size_t count)
 {
 	int len;
@@ -195,7 +219,7 @@ static ssize_t store_match_busid(struct device_driver *dev, const char *buf,
 static DRIVER_ATTR(match_busid, S_IRUSR | S_IWUSR, show_match_busid,
 		   store_match_busid);
 
-static struct stub_priv *stub_priv_pop_from_listhead(struct list_head *listhead)
+struct stub_priv *stub_priv_pop_from_listhead(struct list_head *listhead)
 {
 	struct stub_priv *priv, *tmp;
 
@@ -207,7 +231,7 @@ static struct stub_priv *stub_priv_pop_from_listhead(struct list_head *listhead)
 	return NULL;
 }
 
-static struct stub_priv *stub_priv_pop(struct stub_device *sdev)
+struct stub_priv *stub_priv_pop(struct stub_device *sdev)
 {
 	unsigned long flags;
 	struct stub_priv *priv;
@@ -250,7 +274,7 @@ void stub_device_cleanup_urbs(struct stub_device *sdev)
 	}
 }
 
-static int __init usb_stub_init(void)
+static int usb_stub_init(void)
 {
 	int ret;
 
@@ -286,7 +310,7 @@ err_usb_register:
 	return ret;
 }
 
-static void __exit usb_stub_exit(void)
+static void usb_stub_exit(void)
 {
 	driver_remove_file(&stub_driver.drvwrap.driver,
 			   &driver_attr_match_busid);
