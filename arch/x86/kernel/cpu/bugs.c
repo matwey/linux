@@ -793,9 +793,6 @@ void x86_spec_ctrl_set_guest(u64 guest_spec_ctrl)
 {
 	u64 host = x86_spec_ctrl_base;
 
-	if (!boot_cpu_has(X86_FEATURE_IBRS))
-		return;
-
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
 		host |= ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
 
@@ -807,9 +804,6 @@ EXPORT_SYMBOL_GPL(x86_spec_ctrl_set_guest);
 void x86_spec_ctrl_restore_host(u64 guest_spec_ctrl)
 {
 	u64 host = x86_spec_ctrl_base;
-
-	if (!boot_cpu_has(X86_FEATURE_IBRS))
-		return;
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
 		host |= ssbd_tif_to_spec_ctrl(current_thread_info()->flags);
