@@ -188,7 +188,6 @@ void release_thread(struct task_struct *dead_task)
  */
 void prepare_to_copy(struct task_struct *tsk)
 {
-	unlazy_fpu(tsk);
 }
 
 int copy_thread(unsigned long clone_flags, unsigned long sp,
@@ -260,10 +259,6 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 	regs->cs		= __USER_CS;
 	regs->ip		= new_ip;
 	regs->sp		= new_sp;
-	/*
-	 * Free the old FP and other extended state
-	 */
-	free_thread_xstate(current);
 }
 EXPORT_SYMBOL_GPL(start_thread);
 

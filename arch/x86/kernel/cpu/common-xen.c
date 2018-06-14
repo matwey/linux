@@ -818,6 +818,8 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 
 	setup_smep(c);
 
+	fpu__init_parse_early_param();
+
 	if (this_cpu->c_bsp_init)
 		this_cpu->c_bsp_init(c);
 
@@ -1430,7 +1432,6 @@ void __cpuinit cpu_init(void)
 	dbg_restore_debug_regs();
 
 	fpu_init();
-	xsave_init();
 
 #ifndef CONFIG_XEN
 	raw_local_save_flags(kernel_eflags);
@@ -1495,6 +1496,5 @@ void __cpuinit cpu_init(void)
 	dbg_restore_debug_regs();
 
 	fpu_init();
-	xsave_init();
 }
 #endif

@@ -511,7 +511,11 @@ void __cpuinit eager_fpu_init(void)
         * not yet patched to use math_state_restore().
         */
        init_fpu(current);
+#ifndef CONFIG_XEN
        __thread_fpu_begin(current);
+#else
+       native_thread_fpu_begin(current);
+#endif
        if (cpu_has_xsave)
                xrstor_state(init_xstate_buf, -1);
        else
