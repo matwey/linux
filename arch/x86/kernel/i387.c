@@ -585,7 +585,7 @@ int save_i387_xstate_ia32(void __user *buf)
 	 * This will cause a "finit" to be triggered by the next
 	 * attempted FPU operation by the 'current' process.
 	 */
-	clear_used_math();
+	drop_init_fpu(tsk);
 
 	if (!HAVE_HWFP) {
 		return fpregs_soft_get(current, NULL,
@@ -682,10 +682,7 @@ int restore_i387_xstate_ia32(void __user *buf)
 		clear_fpu(tsk);
 
 	if (!buf) {
-		if (used_math()) {
-			clear_fpu(tsk);
-			clear_used_math();
-		}
+		drop_init_fpu(tsk);
 
 		return 0;
 	} else
