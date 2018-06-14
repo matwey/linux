@@ -2312,7 +2312,7 @@ __init int intel_pmu_init(void)
 			x86_pmu.event_constraints = intel_gen_event_constraints;
 			pr_cont("generic architected perfmon, ");
 
-			/* HSW late ack, bsc#929142 */
+			/* HSW/BDW late ack, bsc#929142 and bsc#1093183 */
 			switch (boot_cpu_data.x86_model) {
 	        	case 60: /* 22nm Haswell Core */
         		case 63: /* 22nm Haswell Server */
@@ -2320,6 +2320,14 @@ __init int intel_pmu_init(void)
         		case 70: /* 22nm Haswell + GT3e (Intel Iris Pro graphics) */
 				pr_cont("Haswell pmu late ack, ");
 				x86_pmu.late_ack = true;
+				break;
+			case 61: /* 14nm Broadwell Core */
+			case 71: /* 14nm Broadwell + GT3e (Intel Iris Pro graphics) */
+			case 79: /* 14nm Broadwell Server */
+			case 86: /* 14nm Broadwell Xeon D */
+				pr_cont("Broadwell pmu late ack, ");
+				x86_pmu.late_ack = true;
+				break;
 			}
 			break;
 		}
