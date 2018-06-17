@@ -427,11 +427,8 @@ retry:
 		urb->interval = 1; // devik
 		urb->dev = udev;
 		urb->pipe = usb_rcvisocpipe(udev, pdev->vendpoint);
-		urb->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
-		urb->transfer_buffer = usb_alloc_coherent(udev,
-							  ISO_BUFFER_SIZE,
-							  GFP_KERNEL,
-							  &urb->transfer_dma);
+		urb->transfer_flags = URB_ISO_ASAP;
+		urb->transfer_buffer = kmalloc(ISO_BUFFER_SIZE, GFP_KERNEL);
 		if (urb->transfer_buffer == NULL) {
 			PWC_ERROR("Failed to allocate urb buffer %d\n", i);
 			pwc_isoc_cleanup(pdev);
@@ -491,10 +488,7 @@ static void pwc_iso_free(struct pwc_device *pdev)
 		if (pdev->urbs[i]) {
 			PWC_DEBUG_MEMORY("Freeing URB\n");
 			if (pdev->urbs[i]->transfer_buffer) {
-				usb_free_coherent(pdev->udev,
-					pdev->urbs[i]->transfer_buffer_length,
-					pdev->urbs[i]->transfer_buffer,
-					pdev->urbs[i]->transfer_dma);
+				kfree(pdev->urbs[i]->transfer_buffer);
 			}
 			usb_free_urb(pdev->urbs[i]);
 			pdev->urbs[i] = NULL;
