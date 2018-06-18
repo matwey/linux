@@ -51,9 +51,9 @@ extern void show_regs_common(void);
  */
 #ifdef CONFIG_RETPOLINE
 #define __switch_fill_rsb \
-        ALTERNATIVE("jmp 1f\n\t" ASM_NOP3, ASM_NOP5, X86_FEATURE_RSB_CTXSW)	\
+        ALTERNATIVE("jmp 10f\n\t" ASM_NOP3, ASM_NOP5, X86_FEATURE_RSB_CTXSW)	\
 	__stringify(__FILL_RETURN_BUFFER(%%ebx,RSB_CLEAR_LOOPS,%%esp)) "\n\t"	\
-	"1:\n"
+	"10:\n"
 #else
 #define __switch_fill_rsb
 #endif
