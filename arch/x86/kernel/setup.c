@@ -843,6 +843,12 @@ void __init setup_arch(char **cmdline_p)
 	/* update the e820_saved too */
 	e820_reserve_setup_data();
 
+	/*
+	 * Make sure page 0 is always reserved because on systems with
+	 * L1TF its contents can be leaked to user processes.
+	 */
+	memblock_reserve(0, PAGE_SIZE);
+
 	copy_edd();
 
 	if (!boot_params.hdr.root_flags)

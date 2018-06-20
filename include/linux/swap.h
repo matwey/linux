@@ -485,4 +485,6 @@ mem_cgroup_count_swap_user(swp_entry_t ent, struct page **pagep)
 
 #endif /* CONFIG_SWAP */
 #endif /* __KERNEL__*/
+extern unsigned long generic_max_swapfile_size(void);
+extern unsigned long max_swapfile_size(void);
 #endif /* _LINUX_SWAP_H */

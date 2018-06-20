@@ -11,6 +11,7 @@
 #include <linux/utsname.h>
 #include <linux/device.h>
 #include <linux/prctl.h>
+#include <linux/swap.h>
 
 #include <asm/nospec-branch.h>
 #include <asm/spec_ctrl.h>
@@ -28,6 +29,7 @@
 #include <asm/cpu_device_id.h>
 #include <asm/nospec-branch.h>
 #include <asm/spec-ctrl.h>
+#include <asm/e820.h>
 
 #ifdef CONFIG_X86_32
 #ifndef CONFIG_XEN
@@ -179,6 +181,7 @@ static void __init check_config(void)
 static void __init spectre_v2_select_mitigation(void);
 static void __init ssb_select_mitigation(void);
 static void x86_amd_ssbd_disable(void);
+static void __init l1tf_select_mitigation(void);
 
 /*
  * Our boot-time value of the SPEC_CTRL MSR. We read it once so that any
@@ -226,6 +229,8 @@ void __init check_bugs(void)
 
 	/* Select the proper spectre mitigation before patching alternatives */
 	spectre_v2_select_mitigation();
+
+	l1tf_select_mitigation();
 
 	/*
 	 * Select proper mitigation for any exposure to the Speculative Store
@@ -311,13 +316,35 @@ static const __initconst struct x86_cpu_id cpu_no_spec_store_bypass[] = {
         {}
 };
 
+static const __initconst struct x86_cpu_id cpu_no_l1tf[] = {
+	/* in addition to cpu_no_speculation */
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MOOREFIELD	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_GOLDMONT	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_DENVERTON	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_GEMINI_LAKE	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
+	{}
+};
+
 static bool x86_bug_spectre_v1, x86_bug_spectre_v2, x86_bug_meltdown;
 static bool x86_bug_spec_store_bypass;
+static bool x86_bug_l1tf;
+
+bool arch_has_pfn_modify_check(void)
+{
+	return x86_bug_l1tf;
+}
 
 void setup_force_cpu_bugs(unsigned long __unused)
 {
 	x86_bug_spectre_v1 = true;
 	x86_bug_spectre_v2 = true;
+	x86_bug_l1tf = true;
 
 	if (!x86_match_cpu(cpu_no_spec_store_bypass))
 		x86_bug_spec_store_bypass = true;
@@ -326,6 +353,9 @@ void setup_force_cpu_bugs(unsigned long __unused)
 		x86_bug_meltdown = false;
 	else
 		x86_bug_meltdown = true;
+
+	if (x86_match_cpu(cpu_no_l1tf))
+		x86_bug_l1tf = false;
 }
 
 static void __init spec2_print_if_insecure(const char *reason)
@@ -500,6 +530,32 @@ retpoline_auto:
 		pr_info("Retpolines enabled, force-disabling IBRS due to !SKL-era core\n");
 		ibrs_state = 0;
 	}
+}
+
+static void __init l1tf_select_mitigation(void)
+{
+	u64 half_pa;
+
+	if (!x86_bug_l1tf)
+		return;
+
+#if PAGETABLE_LEVELS == 2
+	pr_warn("Kernel not compiled for PAE. No mitigation for L1TF\n");
+	return;
+#endif
+
+	/*
+	 * This is extremely unlikely to happen because almost all
+	 * systems have far more MAX_PA/2 than RAM can be fit into
+	 * DIMM slots.
+	 */
+	half_pa = (u64)l1tf_pfn_limit() << PAGE_SHIFT;
+	if (e820_any_mapped(half_pa, ULLONG_MAX - half_pa, E820_RAM)) {
+		pr_warn("System has more than MAX_PA/2 memory. L1TF mitigation not effective.\n");
+		return;
+	}
+
+	setup_force_cpu_cap(X86_FEATURE_L1TF_FIX);
 }
 
 #undef pr_fmt
@@ -776,6 +832,13 @@ ssize_t __weak cpu_show_spec_store_bypass(struct device *dev,
 {
 	return sprintf(buf, "%s\n", ssb_strings[ssb_mode]);
 }
+ssize_t cpu_show_l1tf(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	if (!x86_bug_l1tf)
+		return sprintf(buf, "Not affected\n");
+	return sprintf(buf, "Mitigation: Page Table Inversion\n");
+}
 #endif
 
 void x86_spec_ctrl_set(u64 val)
@@ -832,6 +895,20 @@ static void x86_amd_ssbd_disable(void)
 
 	if (boot_cpu_has(X86_FEATURE_AMD_SSBD))
 		wrmsrl(MSR_AMD64_LS_CFG, msrval);
+}
+
+
+unsigned long max_swapfile_size(void)
+{
+	unsigned long pages;
+
+	pages = generic_max_swapfile_size();
+
+	if (x86_bug_l1tf) {
+		/* Limit the swap file size to MAX_PA/2 for L1TF workaround */
+		pages = min_t(unsigned long, l1tf_pfn_limit() + 1, pages);
+	}
+	return pages;
 }
 
 void x86_sync_spec_ctrl(void)
