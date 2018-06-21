@@ -1516,6 +1516,8 @@ const struct file_operations ceph_dir_fops = {
 	.release = ceph_release,
 	.unlocked_ioctl = ceph_ioctl,
 	.fsync = ceph_fsync,
+	.lock = ceph_lock,
+	.flock = ceph_flock,
 };
 
 const struct file_operations ceph_snapdir_fops = {
