@@ -100,7 +100,7 @@ DEFINE_PER_CPU_READ_MOSTLY(struct cpuinfo_x86, cpu_info);
 EXPORT_PER_CPU_SYMBOL(cpu_info);
 
 /* Maximum number of SMT threads on any online core */
-int __max_smt_threads __read_mostly;
+int __read_mostly __max_smt_threads = 1;
 
 static inline void smpboot_setup_warm_reset_vector(unsigned long start_eip)
 {
