@@ -68,7 +68,6 @@ static inline int early_cpu_to_node(int cpu)
 }
 
 #endif /* !CONFIG_DEBUG_PER_CPU_MAPS */
-
 /* Mappings between node number and cpus on that node. */
 extern cpumask_var_t node_to_cpumask_map[MAX_NUMNODES];
 
@@ -125,6 +124,9 @@ extern const struct cpumask *cpu_coregroup_mask(int cpu);
 #ifdef ENABLE_TOPO_DEFINES
 #define topology_core_cpumask(cpu)		(per_cpu(cpu_core_map, cpu))
 #define topology_sibling_cpumask(cpu)		(per_cpu(cpu_sibling_map, cpu))
+bool topology_is_primary_thread(unsigned int cpu);
+#else
+static inline bool topology_is_primary_thread(unsigned int cpu) { return true; }
 #endif
 
 static inline void arch_fix_phys_package_id(int num, u32 slot)

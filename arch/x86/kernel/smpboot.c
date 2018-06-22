@@ -1020,6 +1020,15 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 }
 
 /**
+ * topology_is_primary_thread - Check whether CPU is the primary SMT thread
+ * @cpu:	CPU to check
+ */
+bool topology_is_primary_thread(unsigned int cpu)
+{
+	return apic_id_is_primary_thread(per_cpu(x86_cpu_to_apicid, cpu));
+}
+
+/**
  * arch_disable_smp_support() - disables SMP support for x86 at runtime
  */
 void arch_disable_smp_support(void)
