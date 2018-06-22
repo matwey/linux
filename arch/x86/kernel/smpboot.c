@@ -1029,6 +1029,14 @@ bool topology_is_primary_thread(unsigned int cpu)
 }
 
 /**
+ * topology_smt_supported - Check whether SMT is supported by the CPUs
+ */
+bool topology_smt_supported(void)
+{
+	return smp_num_siblings > 1;
+}
+
+/**
  * arch_disable_smp_support() - disables SMP support for x86 at runtime
  */
 void arch_disable_smp_support(void)

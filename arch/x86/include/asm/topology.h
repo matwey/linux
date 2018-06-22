@@ -125,8 +125,10 @@ extern const struct cpumask *cpu_coregroup_mask(int cpu);
 #define topology_core_cpumask(cpu)		(per_cpu(cpu_core_map, cpu))
 #define topology_sibling_cpumask(cpu)		(per_cpu(cpu_sibling_map, cpu))
 bool topology_is_primary_thread(unsigned int cpu);
+bool topology_smt_supported(void);
 #else
 static inline bool topology_is_primary_thread(unsigned int cpu) { return true; }
+static inline bool topology_smt_supported(void) { return false; }
 #endif
 
 static inline void arch_fix_phys_package_id(int num, u32 slot)
