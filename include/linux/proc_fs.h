@@ -82,4 +82,6 @@ static inline struct proc_dir_entry *proc_net_mkdir(
 	return proc_mkdir_data(name, 0, parent, net);
 }
 
+extern int procfs_drop_fd_dentries;
+
 #endif /* _LINUX_PROC_FS_H */
