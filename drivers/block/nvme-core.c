@@ -2603,7 +2603,10 @@ static int nvme_dev_add(struct nvme_dev *dev)
 		dev->max_hw_sectors = UINT_MAX;
 
 	if ((pdev->vendor == PCI_VENDOR_ID_INTEL) &&
-			(pdev->device == 0x0953) && ctrl->vs[3])
+			((pdev->device == 0x0953) ||
+			 (pdev->device == 0x0a53) ||
+			 (pdev->device == 0x0a54)) &&
+			ctrl->vs[3])
 		dev->stripe_size = 1 << (ctrl->vs[3] + shift);
 
 	dma_free_coherent(&dev->pci_dev->dev, 4096, mem, dma_addr);
