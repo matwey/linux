@@ -56,6 +56,9 @@ module_param(bypass_guest_pf, bool, S_IRUGO);
 static int __read_mostly enable_vpid = 1;
 module_param_named(vpid, enable_vpid, bool, 0444);
 
+static int __read_mostly vmentry_l1d_flush = 1;
+module_param_named(vmentry_l1d_flush, vmentry_l1d_flush, int, 0644);
+
 static int __read_mostly flexpriority_enabled = 1;
 module_param_named(flexpriority, flexpriority_enabled, bool, S_IRUGO);
 
@@ -1555,6 +1558,43 @@ static void vmx_save_host_state(struct kvm_vcpu *vcpu)
 		kvm_set_shared_msr(vmx->guest_msrs[i].index,
 				   vmx->guest_msrs[i].data,
 				   vmx->guest_msrs[i].mask);
+}
+
+static void vmx_prepare_guest_switch(struct kvm_vcpu *vcpu, bool *need_l1d_flush)
+{
+	vmx_save_host_state(vcpu);
+	if (!enable_ept || static_cpu_has(X86_FEATURE_HYPERVISOR)) {
+		*need_l1d_flush = false;
+		return;
+	}
+
+	switch (vmentry_l1d_flush) {
+	case 0:
+		*need_l1d_flush = false;
+		break;
+	case 1:
+		/*
+		 * If vmentry_l1d_flush is 1, each vmexit handler is responsible for
+		 * setting vcpu->arch.vcpu_unconfined.  Currently this happens in the
+		 * following cases:
+		 * - vmlaunch/vmresume: we do not want the cache to be cleared by a
+		 *   nested hypervisor *and* by KVM on bare metal, so we just do it
+		 *   on every nested entry.  Nested hypervisors do not bother clearing
+		 *   the cache.
+		 * - anything that runs the emulator (the slow paths for EPT misconfig
+		 *   or I/O instruction)
+		 * - anything that can cause get_user_pages (EPT violation, and again
+		 *   the slow paths for EPT misconfig or I/O instruction)
+		 * - anything that can run code outside KVM (external interrupt,
+		 *   which can run interrupt handlers or irqs; or the sched_in
+		 *   preempt notifier)
+		 */
+		break;
+	case 2:
+	default:
+		*need_l1d_flush = true;
+		break;
+	}
 }
 
 static void __vmx_load_host_state(struct vcpu_vmx *vmx)
@@ -6515,6 +6555,7 @@ static void vmx_handle_external_intr(struct kvm_vcpu *vcpu)
 			[ss]"i"(__KERNEL_DS),
 			[cs]"i"(__KERNEL_CS)
 			);
+		vcpu->arch.vcpu_unconfined = true;
 	} else
 		local_irq_enable();
 }
@@ -7435,6 +7476,9 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 
 	prepare_vmcs02(vcpu, vmcs12);
 
+	/* Hide L1D cache contents from the nested guest.  */
+	vmx->vcpu.arch.vcpu_unconfined = true;
+
 	if (vmcs12->guest_activity_state == GUEST_ACTIVITY_HLT)
 		return kvm_emulate_halt(vcpu);
 
@@ -7864,7 +7908,7 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.vcpu_free = vmx_free_vcpu,
 	.vcpu_reset = vmx_vcpu_reset,
 
-	.prepare_guest_switch = vmx_save_host_state,
+	.prepare_guest_switch = vmx_prepare_guest_switch,
 	.vcpu_load = vmx_vcpu_load,
 	.vcpu_put = vmx_vcpu_put,
 

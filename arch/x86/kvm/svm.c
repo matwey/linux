@@ -3670,8 +3670,9 @@ static void svm_flush_tlb(struct kvm_vcpu *vcpu)
 		svm->asid_generation--;
 }
 
-static void svm_prepare_guest_switch(struct kvm_vcpu *vcpu)
+static void svm_prepare_guest_switch(struct kvm_vcpu *vcpu, bool *need_l1d_flush)
 {
+	*need_l1d_flush = false;
 }
 
 static inline void sync_cr8_to_lapic(struct kvm_vcpu *vcpu)
