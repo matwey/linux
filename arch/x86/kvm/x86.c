@@ -6535,6 +6535,10 @@ void kvm_arch_vcpu_uninit(struct kvm_vcpu *vcpu)
 	free_page((unsigned long)vcpu->arch.pio_data);
 }
 
+void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu)
+{
+}
+
 int kvm_arch_init_vm(struct kvm *kvm)
 {
 	INIT_LIST_HEAD(&kvm->arch.active_mmu_pages);
