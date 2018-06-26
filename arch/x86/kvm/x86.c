@@ -5171,8 +5171,15 @@ static void *__read_mostly empty_zero_pages;
 
 void kvm_l1d_flush(void)
 {
+	int size;
+
+	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
+		wrmsrl(MSR_IA32_FLUSH_L1D, MSR_IA32_FLUSH_L1D_VALUE);
+		return;
+	}
+
 	/* FIXME: could this be boot_cpu_data.x86_cache_size * 2?  */
-	int size = PAGE_SIZE << L1D_CACHE_ORDER;
+	size = PAGE_SIZE << L1D_CACHE_ORDER;
 	asm volatile(
 		/* First ensure the pages are in the TLB */
 		"xorl %%eax, %%eax\n\t"
