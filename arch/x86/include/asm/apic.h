@@ -648,4 +648,12 @@ extern int default_check_phys_apicid_present(int phys_apicid);
 
 #endif /* CONFIG_X86_LOCAL_APIC */
 
+#ifdef CONFIG_SMP
+bool apic_id_is_primary_thread(unsigned int id);
+bool apic_id_disabled(unsigned int id);
+#else
+static inline bool apic_id_is_primary_thread(unsigned int id) { return false; }
+static inline bool apic_id_disabled(unsigned int id) { return false; }
+#endif
+
 #endif /* _ASM_X86_APIC_H */
