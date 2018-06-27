@@ -220,6 +220,7 @@ int walk_page_range(unsigned long addr, unsigned long end,
 			}
 			if (err < 0)
 				break;
+#ifdef CONFIG_HUGETLB_PAGE
 			/*
 			 * Handle hugetlb vma individually because pagetable
 			 * walk for the hugetlb page is dependent on the
@@ -240,6 +241,7 @@ int walk_page_range(unsigned long addr, unsigned long end,
 				pgd = pgd_offset(walk->mm, next);
 				continue;
 			}
+#endif
 		} else if (vma) {
 			/* vma starts after addr, still consume the hole though */
 			next = min(vma->vm_start, end);
