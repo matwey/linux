@@ -6773,6 +6773,12 @@ static int handle_vmon(struct kvm_vcpu *vcpu)
 	if (nested_vmx_check_vmptr(vcpu, EXIT_REASON_VMON, NULL))
 		return 1;
 
+	/* CPL=0 must be checked manually. */
+	if (vmx_get_cpl(vcpu)) {
+		kvm_queue_exception(vcpu, UD_VECTOR);
+		return 1;
+	}
+
 	if (vmx->nested.vmxon) {
 		nested_vmx_failValid(vcpu, VMXERR_VMXON_IN_VMX_ROOT_OPERATION);
 		skip_emulated_instruction(vcpu);
@@ -6832,6 +6838,11 @@ static int nested_vmx_check_permission(struct kvm_vcpu *vcpu)
 {
 	struct kvm_segment cs;
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+
+	if (vmx_get_cpl(vcpu)) {
+		kvm_queue_exception(vcpu, UD_VECTOR);
+		return 0;
+	}
 
 	if (!vmx->nested.vmxon) {
 		kvm_queue_exception(vcpu, UD_VECTOR);
