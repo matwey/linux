@@ -1020,7 +1020,7 @@ record_func_map(struct verifier_env *env, struct bpf_map *map_ptr,
 	    func_id != BPF_FUNC_map_lookup_elem)
 		return 0;
 	if (map_ptr == NULL) {
-		verbose(env, "kernel subsystem misconfigured verifier\n");
+		verbose("kernel subsystem misconfigured verifier\n");
 		return -EINVAL;
 	}
 
