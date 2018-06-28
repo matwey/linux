@@ -209,6 +209,8 @@ static inline void sbitmap_for_each_set(struct sbitmap *sb, sb_for_each_fn fn,
 {
 	unsigned int i;
 
+	if (!sb->map)
+		return;
 	for (i = 0; i < sb->map_nr; i++) {
 		struct sbitmap_word *word = &sb->map[i];
 		unsigned int off, nr;
