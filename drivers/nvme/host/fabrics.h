@@ -160,7 +160,16 @@ void nvmf_free_options(struct nvmf_ctrl_options *opts);
 const char *nvmf_get_subsysnqn(struct nvme_ctrl *ctrl);
 int nvmf_get_address(struct nvme_ctrl *ctrl, char *buf, int size);
 bool nvmf_should_reconnect(struct nvme_ctrl *ctrl);
-int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
-		struct request *rq, bool queue_live, bool is_connected);
+int nvmf_fail_nonready_command(struct request *rq);
+bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
+		bool queue_live);
+
+static inline bool nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
+		bool queue_live)
+{
+	if (likely(ctrl->state == NVME_CTRL_LIVE))
+		return true;
+	return __nvmf_check_ready(ctrl, rq, queue_live);
+}
 
 #endif /* _NVME_FABRICS_H */
