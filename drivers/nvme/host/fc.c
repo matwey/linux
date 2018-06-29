@@ -3130,6 +3130,7 @@ nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	}
 
 	if (!opts->duplicate_connect &&
+	    !opts->discovery_nqn &&
 	    nvme_fc_existing_controller(rport, opts)) {
 		ret = -EALREADY;
 		goto out_fail;
