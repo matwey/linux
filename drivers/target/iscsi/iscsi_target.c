@@ -483,8 +483,7 @@ static void iscsit_get_rx_pdu(struct iscsi_conn *);
 
 int iscsit_queue_rsp(struct iscsi_conn *conn, struct iscsi_cmd *cmd)
 {
-	iscsit_add_cmd_to_response_queue(cmd, cmd->conn, cmd->i_state);
-	return 0;
+	return iscsit_add_cmd_to_response_queue(cmd, cmd->conn, cmd->i_state);
 }
 EXPORT_SYMBOL(iscsit_queue_rsp);
 
@@ -1443,35 +1442,16 @@ static void iscsit_do_crypto_hash_buf(
 }
 
 int
-iscsit_check_dataout_hdr(struct iscsi_conn *conn, unsigned char *buf,
-			  struct iscsi_cmd **out_cmd)
+__iscsit_check_dataout_hdr(struct iscsi_conn *conn, void *buf,
+			   struct iscsi_cmd *cmd, u32 payload_length,
+			   bool *success)
 {
-	struct iscsi_data *hdr = (struct iscsi_data *)buf;
-	struct iscsi_cmd *cmd = NULL;
+	struct iscsi_data *hdr = buf;
 	struct se_cmd *se_cmd;
-	u32 payload_length = ntoh24(hdr->dlength);
 	int rc;
-
-	if (!payload_length) {
-		pr_warn("DataOUT payload is ZERO, ignoring.\n");
-		return 0;
-	}
 
 	/* iSCSI write */
 	atomic_long_add(payload_length, &conn->sess->rx_data_octets);
-
-	if (payload_length > conn->conn_ops->MaxXmitDataSegmentLength) {
-		pr_err("DataSegmentLength: %u is greater than"
-			" MaxXmitDataSegmentLength: %u\n", payload_length,
-			conn->conn_ops->MaxXmitDataSegmentLength);
-		return iscsit_add_reject(conn, ISCSI_REASON_PROTOCOL_ERROR,
-					 buf);
-	}
-
-	cmd = iscsit_find_cmd_from_itt_or_dump(conn, hdr->itt,
-			payload_length);
-	if (!cmd)
-		return 0;
 
 	pr_debug("Got DataOut ITT: 0x%08x, TTT: 0x%08x,"
 		" DataSN: 0x%08x, Offset: %u, Length: %u, CID: %hu\n",
@@ -1565,9 +1545,43 @@ iscsit_check_dataout_hdr(struct iscsi_conn *conn, unsigned char *buf,
 		return 0;
 	else if (rc == DATAOUT_CANNOT_RECOVER)
 		return -1;
-
-	*out_cmd = cmd;
+	*success = true;
 	return 0;
+}
+EXPORT_SYMBOL(__iscsit_check_dataout_hdr);
+
+int
+iscsit_check_dataout_hdr(struct iscsi_conn *conn, void *buf,
+			 struct iscsi_cmd **out_cmd)
+{
+	struct iscsi_data *hdr = buf;
+	struct iscsi_cmd *cmd;
+	u32 payload_length = ntoh24(hdr->dlength);
+	int rc;
+	bool success = false;
+
+	if (!payload_length) {
+		pr_warn_ratelimited("DataOUT payload is ZERO, ignoring.\n");
+		return 0;
+	}
+
+	if (payload_length > conn->conn_ops->MaxXmitDataSegmentLength) {
+		pr_err_ratelimited("DataSegmentLength: %u is greater than"
+			" MaxXmitDataSegmentLength: %u\n", payload_length,
+			conn->conn_ops->MaxXmitDataSegmentLength);
+		return iscsit_add_reject(conn, ISCSI_REASON_PROTOCOL_ERROR, buf);
+	}
+
+	cmd = iscsit_find_cmd_from_itt_or_dump(conn, hdr->itt, payload_length);
+	if (!cmd)
+		return 0;
+
+	rc = __iscsit_check_dataout_hdr(conn, buf, cmd, payload_length, &success);
+
+	if (success)
+		*out_cmd = cmd;
+
+	return rc;
 }
 EXPORT_SYMBOL(iscsit_check_dataout_hdr);
 
@@ -3496,9 +3510,9 @@ iscsit_build_text_rsp(struct iscsi_cmd *cmd, struct iscsi_conn *conn,
 		return text_length;
 
 	if (completed) {
-		hdr->flags |= ISCSI_FLAG_CMD_FINAL;
+		hdr->flags = ISCSI_FLAG_CMD_FINAL;
 	} else {
-		hdr->flags |= ISCSI_FLAG_TEXT_CONTINUE;
+		hdr->flags = ISCSI_FLAG_TEXT_CONTINUE;
 		cmd->read_data_done += text_length;
 		if (cmd->targ_xfer_tag == 0xFFFFFFFF)
 			cmd->targ_xfer_tag = session_get_next_ttt(conn->sess);
@@ -3820,8 +3834,10 @@ int iscsi_target_tx_thread(void *arg)
 		 */
 		iscsit_thread_check_cpumask(conn, current, 1);
 
-		wait_event_interruptible(conn->queues_wq,
-					 !iscsit_conn_all_queues_empty(conn));
+		wait_event_interruptible(conn->queues_wq, ({
+					 klp_kgraft_mark_task_safe(current);
+					 !iscsit_conn_all_queues_empty(conn);
+					 }));
 
 		if (signal_pending(current))
 			goto transport_err;
@@ -3955,6 +3971,7 @@ static void iscsit_get_rx_pdu(struct iscsi_conn *conn)
 	struct kvec iov;
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 		/*
 		 * Ensure that both TX and RX per connection kthreads
 		 * are scheduled to run on the same CPU.

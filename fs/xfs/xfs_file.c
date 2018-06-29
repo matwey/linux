@@ -53,6 +53,19 @@ static struct vm_operations_struct xfs_dmapi_file_vm_ops;
  * Locking primitives for read and write IO paths to ensure we consistently use
  * and order the inode->i_mutex, ip->i_lock and ip->i_iolock.
  */
+static inline int
+xfs_rw_ilock_trylock(
+	struct xfs_inode	*ip,
+	int			type)
+{
+	if (type & XFS_IOLOCK_EXCL) {
+		if (!mutex_trylock(&VFS_I(ip)->i_mutex))
+			return -EAGAIN;
+	}
+	xfs_ilock(ip, type);
+	return 0;
+}
+
 static inline void
 xfs_rw_ilock(
 	struct xfs_inode	*ip,
@@ -678,6 +691,12 @@ restart:
 		bool	zero = false;
 
 		spin_unlock(&ip->i_flags_lock);
+
+		/* This will lead to a file allocation, bail if nowait */
+		if ((iocb->ki_flags & IOCB_NOWAIT) &&
+				(iocb->ki_flags &  IOCB_DIRECT))
+			return -EAGAIN;
+
 		if (!drained_dio) {
 			if (*iolock == XFS_IOLOCK_SHARED) {
 				xfs_rw_iunlock(ip, *iolock);
@@ -790,7 +809,11 @@ xfs_file_dio_aio_write(
 		iolock = XFS_IOLOCK_SHARED;
 	}
 
-	xfs_rw_ilock(ip, iolock);
+	if (xfs_rw_ilock_trylock(ip, iolock) < 0) {
+		if (iocb->ki_flags & IOCB_NOWAIT)
+			return -EAGAIN;
+		xfs_rw_ilock(ip, iolock);
+	}
 
 	ret = xfs_file_aio_write_checks(iocb, from, &iolock, eventsent);
 	if (ret)
@@ -799,9 +822,17 @@ xfs_file_dio_aio_write(
 	end = iocb->ki_pos + count - 1;
 
 	if (mapping->nrpages) {
-		ret = filemap_write_and_wait_range(mapping, iocb->ki_pos, end);
-		if (ret)
-			goto out;
+		if (iocb->ki_flags & IOCB_NOWAIT) {
+			if (filemap_range_has_page(mapping, iocb->ki_pos, end)) {
+				ret = -EAGAIN;
+				goto out;
+			}
+		} else {
+			ret = filemap_write_and_wait_range(mapping,
+					iocb->ki_pos, end);
+			if (ret)
+				goto out;
+		}
 
 		/*
 		 * Invalidate whole pages. This can return an error if we fail
@@ -819,9 +850,17 @@ xfs_file_dio_aio_write(
 	 * otherwise demote the lock if we had to take the exclusive lock
 	 * for other reasons in xfs_file_aio_write_checks.
 	 */
-	if (unaligned_io)
-		inode_dio_wait(inode);
-	else if (iolock == XFS_IOLOCK_EXCL) {
+	if (unaligned_io) {
+		/* If we are going to wait for other DIO to finish, bail */
+		if (iocb->ki_flags & IOCB_NOWAIT) {
+			if (atomic_read(&inode->i_dio_count)) {
+				ret = -EAGAIN;
+				goto out;
+			}
+		} else {
+			inode_dio_wait(inode);
+		}
+	} else if (iolock == XFS_IOLOCK_EXCL) {
 		xfs_rw_ilock_demote(ip, XFS_IOLOCK_EXCL);
 		iolock = XFS_IOLOCK_SHARED;
 	}
@@ -1108,6 +1147,7 @@ xfs_file_open(
 		return -EFBIG;
 	if (XFS_FORCED_SHUTDOWN(XFS_M(inode->i_sb)))
 		return -EIO;
+	file->f_mode |= FMODE_AIO_NOWAIT;
 	return 0;
 }
 
@@ -1592,7 +1632,7 @@ xfs_filemap_page_mkwrite(
 	xfs_ilock(XFS_I(inode), XFS_MMAPLOCK_SHARED);
 
 	if (IS_DAX(inode)) {
-		ret = __dax_mkwrite(vma, vmf, xfs_get_blocks_dax_fault, NULL);
+		ret = __dax_mkwrite(vma, vmf, xfs_get_blocks_dax_fault);
 	} else {
 		ret = block_page_mkwrite(vma, vmf, xfs_get_blocks);
 		ret = block_page_mkwrite_return(ret);
@@ -1626,7 +1666,7 @@ xfs_filemap_fault(
 		 * changes to xfs_get_blocks_direct() to map unwritten extent
 		 * ioend for conversion on read-only mappings.
 		 */
-		ret = __dax_fault(vma, vmf, xfs_get_blocks_dax_fault, NULL);
+		ret = __dax_fault(vma, vmf, xfs_get_blocks_dax_fault);
 	} else
 		ret = filemap_fault(vma, vmf);
 	xfs_iunlock(XFS_I(inode), XFS_MMAPLOCK_SHARED);
@@ -1663,8 +1703,7 @@ xfs_filemap_pmd_fault(
 	}
 
 	xfs_ilock(XFS_I(inode), XFS_MMAPLOCK_SHARED);
-	ret = __dax_pmd_fault(vma, addr, pmd, flags, xfs_get_blocks_dax_fault,
-			      NULL);
+	ret = __dax_pmd_fault(vma, addr, pmd, flags, xfs_get_blocks_dax_fault);
 	xfs_iunlock(XFS_I(inode), XFS_MMAPLOCK_SHARED);
 
 	if (flags & FAULT_FLAG_WRITE)

@@ -128,14 +128,24 @@ static int page_cache_tree_insert(struct address_space *mapping,
 		if (!radix_tree_exceptional_entry(p))
 			return -EEXIST;
 
-		if (WARN_ON(dax_mapping(mapping)))
-			return -EINVAL;
-
-		if (shadowp)
-			*shadowp = p;
 		mapping->nrexceptional--;
-		if (node)
-			workingset_node_shadows_dec(node);
+		if (!dax_mapping(mapping)) {
+			if (shadowp)
+				*shadowp = p;
+			if (node)
+				workingset_node_shadows_dec(node);
+		} else {
+			/* DAX can replace empty locked entry with a hole */
+			WARN_ON_ONCE(p !=
+				(void *)(RADIX_TREE_EXCEPTIONAL_ENTRY |
+					 RADIX_DAX_ENTRY_LOCK));
+			/* DAX accounts exceptional entries as normal pages */
+			if (node)
+				workingset_node_pages_dec(node);
+			/* Wakeup waiters for exceptional entry lock */
+			dax_wake_mapping_entry_waiter(mapping, page->index,
+						      true);
+		}
 	}
 	radix_tree_replace_slot(slot, page);
 	mapping->nrpages++;
@@ -214,13 +224,15 @@ static void page_cache_tree_delete(struct address_space *mapping,
 			return;
 
 	/*
-	 * Track node that only contains shadow entries.
+	 * Track node that only contains shadow entries. DAX mappings contain
+	 * no shadow entries and may contain other exceptional entries so skip
+	 * those.
 	 *
 	 * Avoid acquiring the list_lru lock if already tracked.  The
 	 * list_empty() test is safe as node->private_list is
 	 * protected by mapping->tree_lock.
 	 */
-	if (!workingset_node_pages(node) &&
+	if (!dax_mapping(mapping) && !workingset_node_pages(node) &&
 	    list_empty(&node->private_list)) {
 		node->private_data = mapping;
 		list_lru_add(&workingset_shadow_nodes, &node->private_list);
@@ -385,6 +397,38 @@ int filemap_flush(struct address_space *mapping)
 	return __filemap_fdatawrite(mapping, WB_SYNC_NONE);
 }
 EXPORT_SYMBOL(filemap_flush);
+
+/**
+ * filemap_range_has_page - check if a page exists in range.
+ * @mapping:           address space within which to check
+ * @start_byte:        offset in bytes where the range starts
+ * @end_byte:          offset in bytes where the range ends (inclusive)
+ *
+ * Find at least one page in the range supplied, usually used to check if
+ * direct writing in this range will trigger a writeback.
+ */
+bool filemap_range_has_page(struct address_space *mapping,
+			   loff_t start_byte, loff_t end_byte)
+{
+	pgoff_t index = start_byte >> PAGE_SHIFT;
+	pgoff_t end = end_byte >> PAGE_SHIFT;
+	struct pagevec pvec;
+	bool ret;
+
+	if (end_byte < start_byte)
+		return false;
+
+	if (mapping->nrpages == 0)
+		return false;
+
+	pagevec_init(&pvec, 0);
+	if (!pagevec_lookup(&pvec, mapping, index, 1))
+		return false;
+	ret = (pvec.pages[0]->index <= end);
+	pagevec_release(&pvec);
+	return ret;
+}
+EXPORT_SYMBOL(filemap_range_has_page);
 
 static int __filemap_fdatawait_range(struct address_space *mapping,
 				     loff_t start_byte, loff_t end_byte)
@@ -1884,11 +1928,18 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 		loff_t size;
 
 		size = i_size_read(inode);
-		retval = filemap_write_and_wait_range(mapping, iocb->ki_pos,
-					iocb->ki_pos + count - 1);
-		if (!retval) {
-			struct iov_iter data = *iter;
-			retval = mapping->a_ops->direct_IO(iocb, &data);
+		if (iocb->ki_flags & IOCB_NOWAIT) {
+			if (filemap_range_has_page(mapping, iocb->ki_pos,
+						   iocb->ki_pos + count - 1))
+				return -EAGAIN;
+		} else {
+			retval = filemap_write_and_wait_range(mapping,
+						iocb->ki_pos,
+					        iocb->ki_pos + count - 1);
+			if (!retval) {
+				struct iov_iter data = *iter;
+				retval = mapping->a_ops->direct_IO(iocb, &data);
+			}
 		}
 
 		if (retval > 0) {
@@ -2476,6 +2527,9 @@ inline ssize_t generic_write_checks(struct kiocb *iocb, struct iov_iter *from)
 
 	pos = iocb->ki_pos;
 
+	if ((iocb->ki_flags & IOCB_NOWAIT) && !(iocb->ki_flags & IOCB_DIRECT))
+		return -EINVAL;
+
 	if (limit != RLIM_INFINITY) {
 		if (iocb->ki_pos >= limit) {
 			send_sig(SIGXFSZ, current, 0);
@@ -2545,9 +2599,17 @@ generic_file_direct_write(struct kiocb *iocb, struct iov_iter *from)
 	write_len = iov_iter_count(from);
 	end = (pos + write_len - 1) >> PAGE_CACHE_SHIFT;
 
-	written = filemap_write_and_wait_range(mapping, pos, pos + write_len - 1);
-	if (written)
-		goto out;
+	if (iocb->ki_flags & IOCB_NOWAIT) {
+		/* If there are pages to writeback, return */
+		if (filemap_range_has_page(inode->i_mapping, pos,
+					   pos + iov_iter_count(from)))
+			return -EAGAIN;
+	} else {
+		written = filemap_write_and_wait_range(mapping, pos,
+							pos + write_len - 1);
+		if (written)
+			goto out;
+	}
 
 	/*
 	 * After a write we want buffered reads to be sure to go to disk to get

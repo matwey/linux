@@ -25,6 +25,7 @@
 #include <linux/irqflags.h>
 #include <linux/context_tracking.h>
 #include <linux/irqbypass.h>
+#include <linux/swait.h>
 #include <asm/signal.h>
 
 #include <linux/kvm.h>
@@ -34,13 +35,16 @@
 
 #include <asm/kvm_host.h>
 
+#ifndef KVM_MAX_VCPU_ID
+#define KVM_MAX_VCPU_ID KVM_MAX_VCPUS
+#endif
+
 /*
  * The bit 16 ~ bit 31 of kvm_memory_region::flags are internally used
  * in kvm, other bits are visible for userspace which are defined in
  * include/linux/kvm_h.
  */
 #define KVM_MEMSLOT_INVALID	(1UL << 16)
-#define KVM_MEMSLOT_INCOHERENT	(1UL << 17)
 
 /* Two fragments for cross MMIO pages. */
 #define KVM_MAX_MMIO_FRAGMENTS	2
@@ -184,6 +188,8 @@ int kvm_io_bus_register_dev(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 			    int len, struct kvm_io_device *dev);
 void kvm_io_bus_unregister_dev(struct kvm *kvm, enum kvm_bus bus_idx,
 			       struct kvm_io_device *dev);
+struct kvm_io_device *kvm_io_bus_get_dev(struct kvm *kvm, enum kvm_bus bus_idx,
+					 gpa_t addr);
 
 #ifdef CONFIG_KVM_ASYNC_PF
 struct kvm_async_pf {
@@ -243,7 +249,7 @@ struct kvm_vcpu {
 	int fpu_active;
 	int guest_fpu_loaded, guest_xcr0_loaded;
 	unsigned char fpu_counter;
-	wait_queue_head_t wq;
+	struct swait_queue_head wq;
 	struct pid *pid;
 	int sigset_active;
 	sigset_t sigset;
@@ -318,6 +324,11 @@ struct kvm_s390_adapter_int {
 	u32 adapter_id;
 };
 
+struct kvm_hv_sint {
+	u32 vcpu;
+	u32 sint;
+};
+
 struct kvm_kernel_irq_routing_entry {
 	u32 gsi;
 	u32 type;
@@ -329,8 +340,15 @@ struct kvm_kernel_irq_routing_entry {
 			unsigned irqchip;
 			unsigned pin;
 		} irqchip;
-		struct msi_msg msi;
+		struct {
+			u32 address_lo;
+			u32 address_hi;
+			u32 data;
+			u32 flags;
+			u32 devid;
+		} msi;
 		struct kvm_s390_adapter_int adapter;
+		struct kvm_hv_sint hv_sint;
 	};
 	struct hlist_node link;
 };
@@ -425,6 +443,8 @@ struct kvm {
 #endif
 	long tlbs_dirty;
 	struct list_head devices;
+	struct dentry *debugfs_dentry;
+	struct kvm_stat_data **debugfs_stat_data;
 };
 
 #define kvm_err(fmt, ...) \
@@ -462,9 +482,15 @@ static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
 
 static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
 {
-	struct kvm_vcpu *vcpu;
+	struct kvm_vcpu *vcpu = NULL;
 	int i;
 
+	if (id < 0)
+		return NULL;
+	if (id < KVM_MAX_VCPUS)
+		vcpu = kvm_get_vcpu(kvm, id);
+	if (vcpu && vcpu->vcpu_id == id)
+		return vcpu;
 	kvm_for_each_vcpu(i, vcpu, kvm)
 		if (vcpu->vcpu_id == id)
 			return vcpu;
@@ -484,12 +510,12 @@ void vcpu_put(struct kvm_vcpu *vcpu);
 
 #ifdef __KVM_HAVE_IOAPIC
 void kvm_vcpu_request_scan_ioapic(struct kvm *kvm);
-void kvm_arch_irq_routing_update(struct kvm *kvm);
+void kvm_arch_post_irq_routing_update(struct kvm *kvm);
 #else
 static inline void kvm_vcpu_request_scan_ioapic(struct kvm *kvm)
 {
 }
-static inline void kvm_arch_irq_routing_update(struct kvm *kvm)
+static inline void kvm_arch_post_irq_routing_update(struct kvm *kvm)
 {
 }
 #endif
@@ -661,6 +687,7 @@ void kvm_vcpu_mark_page_dirty(struct kvm_vcpu *vcpu, gfn_t gfn);
 void kvm_vcpu_block(struct kvm_vcpu *vcpu);
 void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu);
 void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu);
+void kvm_vcpu_wake_up(struct kvm_vcpu *vcpu);
 void kvm_vcpu_kick(struct kvm_vcpu *vcpu);
 int kvm_vcpu_yield_to(struct kvm_vcpu *target);
 void kvm_vcpu_on_spin(struct kvm_vcpu *vcpu);
@@ -736,6 +763,9 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu);
 void kvm_arch_vcpu_postcreate(struct kvm_vcpu *vcpu);
 void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu);
 
+bool kvm_arch_has_vcpu_debugfs(void);
+int kvm_arch_create_vcpu_debugfs(struct kvm_vcpu *vcpu);
+
 int kvm_arch_hardware_enable(void);
 void kvm_arch_hardware_disable(void);
 int kvm_arch_hardware_setup(void);
@@ -795,7 +825,7 @@ static inline bool kvm_arch_has_assigned_device(struct kvm *kvm)
 }
 #endif
 
-static inline wait_queue_head_t *kvm_arch_vcpu_wq(struct kvm_vcpu *vcpu)
+static inline struct swait_queue_head *kvm_arch_vcpu_wq(struct kvm_vcpu *vcpu)
 {
 #ifdef __KVM_HAVE_ARCH_WQP
 	return vcpu->arch.wqp;
@@ -1001,11 +1031,15 @@ enum kvm_stat_kind {
 	KVM_STAT_VCPU,
 };
 
+struct kvm_stat_data {
+	int offset;
+	struct kvm *kvm;
+};
+
 struct kvm_stats_debugfs_item {
 	const char *name;
 	int offset;
 	enum kvm_stat_kind kind;
-	struct dentry *dentry;
 };
 extern struct kvm_stats_debugfs_item debugfs_entries[];
 extern struct dentry *kvm_debugfs_dir;
@@ -1036,17 +1070,18 @@ static inline int mmu_notifier_retry(struct kvm *kvm, unsigned long mmu_seq)
 
 #ifdef CONFIG_S390
 #define KVM_MAX_IRQ_ROUTES 4096 //FIXME: we can have more than that...
+#elif defined(CONFIG_ARM64)
+#define KVM_MAX_IRQ_ROUTES 4096
 #else
 #define KVM_MAX_IRQ_ROUTES 1024
 #endif
 
-int kvm_setup_default_irq_routing(struct kvm *kvm);
-int kvm_setup_empty_irq_routing(struct kvm *kvm);
 int kvm_set_irq_routing(struct kvm *kvm,
 			const struct kvm_irq_routing_entry *entries,
 			unsigned nr,
 			unsigned flags);
-int kvm_set_routing_entry(struct kvm_kernel_irq_routing_entry *e,
+int kvm_set_routing_entry(struct kvm *kvm,
+			  struct kvm_kernel_irq_routing_entry *e,
 			  const struct kvm_irq_routing_entry *ue);
 void kvm_free_irq_routing(struct kvm *kvm);
 
@@ -1092,6 +1127,7 @@ static inline void kvm_irq_routing_update(struct kvm *kvm)
 {
 }
 #endif
+void kvm_arch_irq_routing_update(struct kvm *kvm);
 
 static inline int kvm_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 {
@@ -1133,6 +1169,12 @@ struct kvm_device {
 /* create, destroy, and name are mandatory */
 struct kvm_device_ops {
 	const char *name;
+
+	/*
+	 * create is called holding kvm->lock and any operations not suitable
+	 * to do while holding the lock should be deferred to init (see
+	 * below).
+	 */
 	int (*create)(struct kvm_device *dev, u32 type);
 
 	/*

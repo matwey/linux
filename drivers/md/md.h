@@ -122,6 +122,13 @@ struct md_rdev {
 					   * sysfs entry */
 
 	struct badblocks badblocks;
+
+	struct {
+		short offset;	/* Offset from superblock to start of PPL.
+				 * Not used by external metadata. */
+		unsigned int size;	/* Size in sectors of the PPL space */
+		sector_t sector;	/* First sector of the PPL space */
+	} ppl;
 };
 enum flag_bits {
 	Faulty,			/* device is known to have a fault */
@@ -191,6 +198,9 @@ enum flag_bits {
 				 * it didn't fail, so don't use FailFast
 				 * any more for metadata
 				 */
+	Timeout,		/* Device fault due to timeout.
+				 * 'Faulty' is required to be set.
+				 */
 };
 
 static inline int is_badblock(struct md_rdev *rdev, sector_t s, int sectors,
@@ -212,10 +222,8 @@ extern int rdev_clear_badblocks(struct md_rdev *rdev, sector_t s, int sectors,
 				int is_new);
 struct md_cluster_info;
 
+/* change UNSUPPORTED_MDDEV_FLAGS for each array type if new flag is added */
 enum mddev_flags {
-	MD_CHANGE_DEVS,		/* Some device status has changed */
-	MD_CHANGE_CLEAN,	/* transition to or from 'clean' */
-	MD_CHANGE_PENDING,	/* switch from 'clean' to 'active' in progress */
 	MD_ARRAY_FIRST_USE,	/* First use of array, needs initialization */
 	MD_CLOSING,		/* If set, we are closing the array, do not open
 				 * it then */
@@ -228,11 +236,16 @@ enum mddev_flags {
 				 * supported as calls to md_error() will
 				 * never cause the array to become failed.
 				 */
-	MD_NEED_REWRITE,	/* metadata write needs to be repeated */
+	MD_HAS_PPL,		/* The raid array has PPL feature set */
 };
-#define MD_UPDATE_SB_FLAGS (BIT(MD_CHANGE_DEVS) | \
-			    BIT(MD_CHANGE_CLEAN) | \
-			    BIT(MD_CHANGE_PENDING))	/* If these are set, md_update_sb needed */
+
+enum mddev_sb_flags {
+	MD_SB_CHANGE_DEVS,		/* Some device status has changed */
+	MD_SB_CHANGE_CLEAN,	/* transition to or from 'clean' */
+	MD_SB_CHANGE_PENDING,	/* switch from 'clean' to 'active' in progress */
+	MD_SB_NEED_REWRITE,	/* metadata write needs to be repeated */
+};
+
 struct mddev {
 	void				*private;
 	struct md_personality		*pers;
@@ -240,6 +253,7 @@ struct mddev {
 	int				md_minor;
 	struct list_head		disks;
 	unsigned long			flags;
+	unsigned long			sb_flags;
 
 	int				suspended;
 	atomic_t			active_io;
@@ -539,6 +553,8 @@ struct md_personality
 	/* congested implements bdi.congested_fn().
 	 * Will not be called while array is 'suspended' */
 	int (*congested)(struct mddev *mddev, int bits);
+	/* Changes the consistency policy of an active array. */
+	int (*change_consistency_policy)(struct mddev *mddev, const char *buf);
 };
 
 struct md_sysfs_entry {
@@ -708,5 +724,12 @@ static inline void mddev_check_writesame(struct mddev *mddev, struct bio *bio)
 	if (bio_op(bio) == REQ_OP_WRITE_SAME &&
 	    !bdev_get_queue(bio->bi_bdev)->limits.max_write_same_sectors)
 		mddev->queue->limits.max_write_same_sectors = 0;
+}
+
+/* clear unsupported mddev_flags */
+static inline void mddev_clear_unsupported_flags(struct mddev *mddev,
+	unsigned long unsupported_flags)
+{
+	mddev->flags &= ~unsupported_flags;
 }
 #endif /* _MD_MD_H */

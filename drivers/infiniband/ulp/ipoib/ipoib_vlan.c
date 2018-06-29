@@ -35,7 +35,7 @@
 #include <linux/init.h>
 #include <linux/seq_file.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "ipoib.h"
 
@@ -61,9 +61,7 @@ int __ipoib_vlan_add(struct ipoib_dev_priv *ppriv, struct ipoib_dev_priv *priv,
 	priv->parent = ppriv->dev;
 	set_bit(IPOIB_FLAG_SUBINTERFACE, &priv->flags);
 
-	result = ipoib_set_dev_features(priv, ppriv->ca);
-	if (result)
-		goto err;
+	ipoib_set_dev_features(priv, ppriv->ca);
 
 	priv->pkey = pkey;
 
@@ -133,12 +131,13 @@ int ipoib_vlan_add(struct net_device *pdev, unsigned short pkey)
 
 	snprintf(intf_name, sizeof intf_name, "%s.%04x",
 		 ppriv->dev->name, pkey);
-	priv = ipoib_intf_alloc(intf_name);
-	if (!priv)
-		return -ENOMEM;
 
 	if (!rtnl_trylock())
 		return restart_syscall();
+
+	priv = ipoib_intf_alloc(intf_name);
+	if (!priv)
+		return -ENOMEM;
 
 	down_write(&ppriv->vlan_rwsem);
 

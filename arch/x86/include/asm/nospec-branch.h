@@ -171,6 +171,17 @@ enum spectre_v2_mitigation {
 	SPECTRE_V2_IBRS,
 };
 
+/* The Intel SPEC CTRL MSR base value cache */
+extern u64 x86_spec_ctrl_base;
+
+/* The Speculative Store Bypass disable variants */
+enum ssb_mitigation {
+	SPEC_STORE_BYPASS_NONE,
+	SPEC_STORE_BYPASS_DISABLE,
+	SPEC_STORE_BYPASS_PRCTL,
+	SPEC_STORE_BYPASS_SECCOMP,
+};
+
 extern char __indirect_thunk_start[];
 extern char __indirect_thunk_end[];
 
@@ -192,6 +203,17 @@ static inline void vmexit_fill_RSB(void)
 		      : "=r" (loops), ASM_CALL_CONSTRAINT
 		      : : "memory" );
 #endif
+}
+
+static __always_inline
+void alternative_msr_write(unsigned int msr, u64 val, unsigned int feature)
+{
+	asm volatile(ALTERNATIVE("", "wrmsr", %c[feature])
+		: : "c" (msr),
+		    "a" (val),
+		    "d" (val >> 32),
+		    [feature] "i" (feature)
+		: "memory");
 }
 
 #endif /* __ASSEMBLY__ */

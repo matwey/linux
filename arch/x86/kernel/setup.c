@@ -50,6 +50,7 @@
 #include <linux/init_ohci1394_dma.h>
 #include <linux/kvm_para.h>
 #include <linux/dma-contiguous.h>
+#include <linux/security.h>
 
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -114,6 +115,8 @@
 #include <asm/microcode.h>
 #include <asm/mmu_context.h>
 #include <asm/kaiser.h>
+
+#include <asm/suspend.h>
 
 /*
  * max_low_pfn_mapped: highest direct mapped pfn under 4GB
@@ -408,10 +411,22 @@ static void __init reserve_initrd(void)
 }
 #endif /* CONFIG_BLK_DEV_INITRD */
 
+static void __init remove_setup_data(u64 pa_prev, u64 pa_next)
+{
+	struct setup_data *data;
+
+	if (pa_prev) {
+		data = early_memremap(pa_prev, sizeof(*data));
+		data->next = pa_next;
+		early_iounmap(data, sizeof(*data));
+	} else
+		boot_params.hdr.setup_data = pa_next;
+}
+
 static void __init parse_setup_data(void)
 {
 	struct setup_data *data;
-	u64 pa_data, pa_next;
+	u64 pa_data, pa_next, pa_prev = 0;
 
 	pa_data = boot_params.hdr.setup_data;
 	while (pa_data) {
@@ -433,9 +448,14 @@ static void __init parse_setup_data(void)
 		case SETUP_EFI:
 			parse_efi_setup(pa_data, data_len);
 			break;
+		case SETUP_HIBERNATION_KEYS:
+			parse_hibernation_keys(pa_data, data_len);
+			remove_setup_data(pa_prev, pa_next);
+			break;
 		default:
 			break;
 		}
+		pa_prev = pa_data;
 		pa_data = pa_next;
 	}
 }
@@ -1100,17 +1120,19 @@ void __init setup_arch(char **cmdline_p)
 	memblock_set_current_limit(ISA_END_ADDRESS);
 	memblock_x86_fill();
 
-	if (efi_enabled(EFI_BOOT)) {
+	reserve_ebda_region();
+
+	if (efi_enabled(EFI_MEMMAP)) {
 		efi_fake_memmap();
 		efi_find_mirror();
-	}
+		efi_esrt_init();
 
-	/*
-	 * The EFI specification says that boot service code won't be called
-	 * after ExitBootServices(). This is, in fact, a lie.
-	 */
-	if (efi_enabled(EFI_MEMMAP))
+		/*
+		 * The EFI specification says that boot service code won't be
+		 * called after ExitBootServices(). This is, in fact, a lie.
+		 */
 		efi_reserve_boot_services();
+	}
 
 	/* preallocate 4k for mptable mpc */
 	early_reserve_e820_mpc_new();
@@ -1147,6 +1169,14 @@ void __init setup_arch(char **cmdline_p)
 #endif
 	/* Allocate bigger log buffer */
 	setup_log_buf(1);
+
+#ifdef CONFIG_EFI_SECURE_BOOT_SECURELEVEL
+	if (boot_params.secure_boot) {
+		set_bit(EFI_SECURE_BOOT, &efi.flags);
+		set_securelevel(1);
+		pr_info("Secure boot enabled\n");
+	}
+#endif
 
 	reserve_initrd();
 

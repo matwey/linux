@@ -517,6 +517,9 @@ void blk_set_queue_dying(struct request_queue *q)
 			}
 		}
 	}
+
+	/* Make blk_queue_enter() reexamine the DYING flag. */
+	wake_up_all(&q->mq_freeze_wq);
 }
 EXPORT_SYMBOL_GPL(blk_set_queue_dying);
 
@@ -806,15 +809,19 @@ EXPORT_SYMBOL(blk_init_queue);
 struct request_queue *
 blk_init_queue_node(request_fn_proc *rfn, spinlock_t *lock, int node_id)
 {
-	struct request_queue *uninit_q, *q;
+	struct request_queue *q;
 
-	uninit_q = blk_alloc_queue_node(GFP_KERNEL, node_id);
-	if (!uninit_q)
+	q = blk_alloc_queue_node(GFP_KERNEL, node_id);
+	if (!q)
 		return NULL;
 
-	q = blk_init_allocated_queue(uninit_q, rfn, lock);
-	if (!q)
-		blk_cleanup_queue(uninit_q);
+	q->request_fn = rfn;
+	if (lock)
+		q->queue_lock = lock;
+	if (blk_init_allocated_queue(q) < 0) {
+		blk_cleanup_queue(q);
+		return NULL;
+	}
 
 	return q;
 }
@@ -822,29 +829,18 @@ EXPORT_SYMBOL(blk_init_queue_node);
 
 static blk_qc_t blk_queue_bio(struct request_queue *q, struct bio *bio);
 
-struct request_queue *
-blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
-			 spinlock_t *lock)
-{
-	if (!q)
-		return NULL;
 
+int blk_init_allocated_queue(struct request_queue *q)
+{
 	q->fq = blk_alloc_flush_queue(q, NUMA_NO_NODE, 0);
 	if (!q->fq)
-		return NULL;
+		return -ENOMEM;
 
 	if (blk_init_rl(&q->root_rl, q, GFP_KERNEL))
 		goto fail;
 
 	INIT_WORK(&q->timeout_work, blk_timeout_work);
-	q->request_fn		= rfn;
-	q->prep_rq_fn		= NULL;
-	q->unprep_rq_fn		= NULL;
 	q->queue_flags		|= QUEUE_FLAG_DEFAULT;
-
-	/* Override internal queue lock with supplied lock pointer */
-	if (lock)
-		q->queue_lock		= lock;
 
 	/*
 	 * This also sets hw/phys segments, boundary and size
@@ -863,13 +859,12 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
 	}
 
 	mutex_unlock(&q->sysfs_lock);
-
-	return q;
+	return 0;
 
 fail:
 	blk_free_flush_queue(q->fq);
 	wbt_exit(q);
-	return NULL;
+	return -ENOMEM;
 }
 EXPORT_SYMBOL(blk_init_allocated_queue);
 
@@ -1018,7 +1013,7 @@ static bool blk_rq_should_init_elevator(struct bio *bio)
 	 * Flush requests do not use the elevator so skip initialization.
 	 * This allows a request to share the flush and elevator data.
 	 */
-	if (bio->bi_opf & (REQ_PREFLUSH | REQ_FUA))
+	if (op_is_flush(bio->bi_opf))
 		return false;
 
 	return true;
@@ -1242,6 +1237,11 @@ retry:
 	if (!IS_ERR(rq))
 		return rq;
 
+	if (op & REQ_NOWAIT) {
+		blk_put_rl(rl);
+		return ERR_PTR(-EAGAIN);
+	}
+
 	if (!gfpflags_allow_blocking(gfp_mask) || unlikely(blk_queue_dying(q))) {
 		blk_put_rl(rl);
 		return rq;
@@ -1273,16 +1273,21 @@ static struct request *blk_old_get_request(struct request_queue *q, int rw,
 		gfp_t gfp_mask)
 {
 	struct request *rq;
+	int ret = 0;
 
 	BUG_ON(rw != READ && rw != WRITE);
 
 	/* create ioc upfront */
 	create_io_context(gfp_mask, q->node);
 
+	ret = blk_queue_enter(q, !(gfp_mask & __GFP_DIRECT_RECLAIM));
+	if (ret)
+		return ERR_PTR(ret);
 	spin_lock_irq(q->queue_lock);
 	rq = get_request(q, rw, NULL, gfp_mask);
 	if (IS_ERR(rq)) {
 		spin_unlock_irq(q->queue_lock);
+		blk_queue_exit(q);
 		return rq;
 	}
 
@@ -1440,6 +1445,7 @@ void __blk_put_request(struct request_queue *q, struct request *req)
 		blk_free_request(rl, req);
 		freed_request(rl, sync, rq_flags);
 		blk_put_rl(rl);
+		blk_queue_exit(q);
 	}
 }
 EXPORT_SYMBOL_GPL(__blk_put_request);
@@ -1639,7 +1645,7 @@ static blk_qc_t blk_queue_bio(struct request_queue *q, struct bio *bio)
 		return BLK_QC_T_NONE;
 	}
 
-	if (bio->bi_opf & (REQ_PREFLUSH | REQ_FUA)) {
+	if (op_is_flush(bio->bi_opf)) {
 		spin_lock_irq(q->queue_lock);
 		where = ELEVATOR_INSERT_FLUSH;
 		goto get_rq;
@@ -1681,8 +1687,10 @@ get_rq:
 	 * Grab a free request. This is might sleep but can not fail.
 	 * Returns with the queue unlocked.
 	 */
+	blk_queue_enter_live(q);
 	req = get_request(q, bio->bi_opf, bio, GFP_NOIO);
 	if (IS_ERR(req)) {
+		blk_queue_exit(q);
 		__wbt_done(q->rq_wb, wb_acct);
 		bio->bi_error = PTR_ERR(req);
 		bio_endio(bio);
@@ -1858,6 +1866,16 @@ generic_make_request_checks(struct bio *bio)
 		goto end_io;
 	}
 
+	/*
+	 * For a REQ_NOWAIT based request, return -EOPNOTSUPP
+	 * if queue is not a request based queue.
+	 */
+
+	if ((bio->bi_opf & REQ_NOWAIT) && !queue_is_rq_based(q)) {
+		err = -EOPNOTSUPP;
+		goto end_io;
+	}
+
 	part = bio->bi_bdev->bd_part;
 	if (should_fail_request(part, bio->bi_iter.bi_size) ||
 	    should_fail_request(&part_to_disk(part)->part0,
@@ -2009,7 +2027,7 @@ blk_qc_t generic_make_request(struct bio *bio)
 	do {
 		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 
-		if (likely(blk_queue_enter(q, false) == 0)) {
+		if (likely(blk_queue_enter(q, bio->bi_opf & REQ_NOWAIT) == 0)) {
 			struct bio_list lower, same;
 
 			/* Create a fresh bio_list for all subordinate requests */
@@ -2034,7 +2052,11 @@ blk_qc_t generic_make_request(struct bio *bio)
 			bio_list_merge(&bio_list_on_stack[0], &same);
 			bio_list_merge(&bio_list_on_stack[0], &bio_list_on_stack[1]);
 		} else {
-			bio_io_error(bio);
+			if (unlikely(!blk_queue_dying(q) &&
+					(bio->bi_opf & REQ_NOWAIT)))
+				bio_wouldblock_error(bio);
+			else
+				bio_io_error(bio);
 		}
 		bio = bio_list_pop(&bio_list_on_stack[0]);
 	} while (bio);
@@ -2161,7 +2183,7 @@ int blk_insert_cloned_request(struct request_queue *q, struct request *rq)
 	 */
 	BUG_ON(blk_queued_rq(rq));
 
-	if (rq->cmd_flags & (REQ_PREFLUSH | REQ_FUA))
+	if (op_is_flush(rq->cmd_flags))
 		where = ELEVATOR_INSERT_FLUSH;
 
 	add_acct_request(q, rq, where);
@@ -3278,7 +3300,7 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 		/*
 		 * rq is already accounted, so use raw insert
 		 */
-		if (rq->cmd_flags & (REQ_PREFLUSH | REQ_FUA))
+		if (op_is_flush(rq->cmd_flags))
 			__elv_add_request(q, rq, ELEVATOR_INSERT_FLUSH);
 		else
 			__elv_add_request(q, rq, ELEVATOR_INSERT_SORT_MERGE);

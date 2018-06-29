@@ -19,6 +19,8 @@ CFLAGS_REMOVE_cgroup-debug.o = $(CC_FLAGS_FTRACE)
 CFLAGS_REMOVE_irq_work.o = $(CC_FLAGS_FTRACE)
 endif
 
+KASAN_SANITIZE_unwind.o := n
+
 # cond_syscall is currently not LTO compatible
 CFLAGS_sys_ni.o = $(DISABLE_LTO)
 
@@ -30,6 +32,7 @@ obj-y += irq/
 obj-y += rcu/
 obj-y += livepatch/
 
+obj-$(CONFIG_KGRAFT) += kgraft.o kgraft_files.o kgraft_shadow.o
 obj-$(CONFIG_CHECKPOINT_RESTORE) += kcmp.o
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o
@@ -47,8 +50,11 @@ endif
 obj-$(CONFIG_UID16) += uid16.o
 obj-$(CONFIG_MODULES) += module.o
 obj-$(CONFIG_MODULE_SIG) += module_signing.o
+obj-$(CONFIG_MODULE_SIG_UEFI) += modsign_uefi.o
 obj-$(CONFIG_KALLSYMS) += kallsyms.o
+obj-$(CONFIG_STACK_UNWIND) += unwind.o
 obj-$(CONFIG_BSD_PROCESS_ACCT) += acct.o
+obj-$(CONFIG_CRASH_CORE) += crash_core.o
 obj-$(CONFIG_KEXEC_CORE) += kexec_core.o
 obj-$(CONFIG_KEXEC) += kexec.o
 obj-$(CONFIG_KEXEC_FILE) += kexec_file.o
@@ -107,6 +113,8 @@ obj-$(CONFIG_HAS_IOMEM) += memremap.o
 obj-$(CONFIG_SUSE_KERNEL_SUPPORTED) += unsupported-feature.o
 
 $(obj)/configs.o: $(obj)/config_data.h
+
+$(obj)/modsign_uefi.o: KBUILD_CFLAGS += -fshort-wchar
 
 # config_data.h contains the same information as ikconfig.h but gzipped.
 # Info from config_data can be extracted from /proc/config*

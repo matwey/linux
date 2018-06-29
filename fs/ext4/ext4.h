@@ -2450,8 +2450,8 @@ struct buffer_head *ext4_getblk(handle_t *, struct inode *, ext4_lblk_t, int);
 struct buffer_head *ext4_bread(handle_t *, struct inode *, ext4_lblk_t, int);
 int ext4_get_block_unwritten(struct inode *inode, sector_t iblock,
 			     struct buffer_head *bh_result, int create);
-int ext4_dax_mmap_get_block(struct inode *inode, sector_t iblock,
-			    struct buffer_head *bh_result, int create);
+int ext4_dax_get_block(struct inode *inode, sector_t iblock,
+		       struct buffer_head *bh_result, int create);
 int ext4_get_block(struct inode *inode, sector_t iblock,
 		   struct buffer_head *bh_result, int create);
 int ext4_dio_get_block(struct inode *inode, sector_t iblock,
@@ -2509,7 +2509,6 @@ extern int ext4_get_next_extent(struct inode *inode, ext4_lblk_t lblk,
 /* indirect.c */
 extern int ext4_ind_map_blocks(handle_t *handle, struct inode *inode,
 				struct ext4_map_blocks *map, int flags);
-extern ssize_t ext4_ind_direct_IO(struct kiocb *iocb, struct iov_iter *iter);
 extern int ext4_ind_calc_metadata_amount(struct inode *inode, sector_t lblock);
 extern int ext4_ind_trans_blocks(struct inode *inode, int nrblocks);
 extern void ext4_ind_truncate(handle_t *, struct inode *inode);
@@ -3259,6 +3258,13 @@ static inline void ext4_clear_io_unwritten_flag(ext4_io_end_t *io_end)
 		if (atomic_dec_and_test(&EXT4_I(inode)->i_unwritten))
 			wake_up_all(ext4_ioend_wq(inode));
 	}
+}
+
+static inline bool ext4_aligned_io(struct inode *inode, loff_t off, loff_t len)
+{
+	int blksize = 1 << inode->i_blkbits;
+
+	return IS_ALIGNED(off, blksize) && IS_ALIGNED(len, blksize);
 }
 
 #endif	/* __KERNEL__ */

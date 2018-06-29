@@ -471,7 +471,6 @@ static void __init acpi_sci_ioapic_setup(u8 bus_irq, u16 polarity, u16 trigger, 
 		mp_override_legacy_irq(bus_irq, polarity, trigger, gsi);
 	else
 		mp_register_ioapic_irq(bus_irq, polarity, trigger, gsi);
-
 	acpi_penalize_sci_irq(bus_irq, trigger, polarity);
 
 	/*

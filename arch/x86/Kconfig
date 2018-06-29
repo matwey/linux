@@ -121,6 +121,7 @@ config X86
 	select HAVE_KERNEL_LZMA
 	select HAVE_KERNEL_LZO
 	select HAVE_KERNEL_XZ
+	select HAVE_KGRAFT			if X86_64
 	select HAVE_KPROBES
 	select HAVE_KPROBES_ON_FTRACE
 	select HAVE_KRETPROBES
@@ -297,6 +298,7 @@ config PGTABLE_LEVELS
 
 source "init/Kconfig"
 source "kernel/Kconfig.freezer"
+source "kernel/Kconfig.kgraft"
 
 menu "Processor type and features"
 
@@ -650,7 +652,7 @@ config X86_32_IRIS
 config SCHED_OMIT_FRAME_POINTER
 	def_bool y
 	prompt "Single-depth WCHAN output"
-	depends on X86
+	depends on X86 && !STACK_UNWIND
 	---help---
 	  Calculate simpler /proc/<PID>/wchan values. If this option
 	  is disabled then wchan values will recurse back to the
@@ -1755,6 +1757,19 @@ config EFI_MIXED
 	   the EFI handover protocol must be used.
 
 	   If unsure, say N.
+
+config EFI_SECURE_BOOT_SECURELEVEL
+        def_bool n
+	depends on SECURITY_SECURELEVEL
+	depends on EFI
+	prompt "Automatically set securelevel when UEFI Secure Boot is enabled"
+	---help---
+	  UEFI Secure Boot provides a mechanism for ensuring that the
+	  firmware will only load signed bootloaders and kernels. Certain
+	  use cases may also require that the kernel restrict any userspace
+	  mechanism that could insert untrusted code into the kernel.
+	  Say Y here to automatically enable securelevel enforcement
+	  when a system boots with UEFI Secure Boot enabled.
 
 config SECCOMP
 	def_bool y

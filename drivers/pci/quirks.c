@@ -834,6 +834,17 @@ static void quirk_amd_ioapic(struct pci_dev *dev)
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD,	PCI_DEVICE_ID_AMD_VIPER_7410,	quirk_amd_ioapic);
 #endif /* CONFIG_X86_IO_APIC */
 
+#if defined(CONFIG_ARM64) && defined(CONFIG_PCI_ATS)
+
+static void quirk_cavium_sriov_rnm_link(struct pci_dev *dev)
+{
+	/* Fix for improper SRIOV configuration on Cavium cn88xx  RNM device */
+	if (dev->subsystem_device == 0xa118)
+		dev->sriov->link = dev->devfn;
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_CAVIUM, 0xa018, quirk_cavium_sriov_rnm_link);
+#endif
+
 /*
  * Some settings of MMRBC can lead to data corruption so block changes.
  * See AMD 8131 HyperTransport PCI-X Tunnel Revision Guide
@@ -3254,6 +3265,13 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATHEROS, 0x0032, quirk_no_bus_reset);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATHEROS, 0x003c, quirk_no_bus_reset);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATHEROS, 0x0033, quirk_no_bus_reset);
 
+/*
+ * Root port on some Cavium CN8xxx chips do not successfully complete a bus
+ * reset when used with certain child devices.  After the reset, config
+ * accesses to the child may fail.
+ */
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_CAVIUM, 0xa100, quirk_no_bus_reset);
+
 static void quirk_no_pm_reset(struct pci_dev *dev)
 {
 	/*
@@ -3297,6 +3315,32 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CACTUS_RIDGE_4C
 			quirk_thunderbolt_hotplug_msi);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_PORT_RIDGE,
 			quirk_thunderbolt_hotplug_msi);
+
+static void quirk_chelsio_extend_vpd(struct pci_dev *dev)
+{
+	int chip = (dev->device & 0xf000) >> 12;
+	int func = (dev->device & 0x0f00) >>  8;
+	int prod = (dev->device & 0x00ff) >>  0;
+
+	/*
+	 * If this is a T3-based adapter, there's a 1KB VPD area at offset
+	 * 0xc00 which contains the preferred VPD values.  If this is a T4 or
+	 * later based adapter, the special VPD is at offset 0x400 for the
+	 * Physical Functions (the SR-IOV Virtual Functions have no VPD
+	 * Capabilities).  The PCI VPD Access core routines will normally
+	 * compute the size of the VPD by parsing the VPD Data Structure at
+	 * offset 0x000.  This will result in silent failures when attempting
+	 * to accesses these other VPD areas which are beyond those computed
+	 * limits.
+	 */
+	if (chip == 0x0 && prod >= 0x20)
+		pci_set_vpd_size(dev, 8192);
+	else if (chip >= 0x4 && func < 0x8)
+		pci_set_vpd_size(dev, 2048);
+}
+
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_CHELSIO, PCI_ANY_ID,
+			quirk_chelsio_extend_vpd);
 
 #ifdef CONFIG_ACPI
 /*
@@ -3861,6 +3905,46 @@ static void quirk_mic_x200_dma_alias(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x2260, quirk_mic_x200_dma_alias);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x2264, quirk_mic_x200_dma_alias);
 
+#if IS_ENABLED(CONFIG_ARM64)
+/*
+ * PCI BAR 5 is not setup correctly for the on-board AHCI controller
+ * on Broadcom's Vulcan processor. Added a quirk to fix BAR 5 by
+ * using BAR 4's resources which are populated correctly and NOT
+ * actually used by the AHCI controller.
+ */
+static void quirk_fix_vulcan_ahci_bars(struct pci_dev *dev)
+{
+	struct resource *r =  &dev->resource[4];
+
+	if (!(r->flags & IORESOURCE_MEM) || (r->start == 0))
+		return;
+
+	/* Set BAR5 resource to BAR4 */
+	dev->resource[5] = *r;
+
+	/* Update BAR5 in pci config space */
+	pci_write_config_dword(dev, PCI_BASE_ADDRESS_5, r->start);
+
+	/* Clear BAR4's resource */
+	memset(r, 0, sizeof(*r));
+}
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_BROADCOM, 0x9027, quirk_fix_vulcan_ahci_bars);
+#endif
+
+/*
+ * The IOMMU and interrupt controller on Broadcom Vulcan/Cavium ThunderX2 are
+ * associated not at the root bus, but at a bridge below. This quirk avoids
+ * generating invalid DMA aliases.
+ */
+static void quirk_bridge_cavm_thrx2_pcie_root(struct pci_dev *pdev)
+{
+	pdev->dev_flags |= PCI_DEV_FLAGS_BRIDGE_XLATE_ROOT;
+}
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_BROADCOM, 0x9000,
+				quirk_bridge_cavm_thrx2_pcie_root);
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_BROADCOM, 0x9084,
+				quirk_bridge_cavm_thrx2_pcie_root);
+
 /*
  * Intersil/Techwell TW686[4589]-based video capture cards have an empty (zero)
  * class code.  Fix it.
@@ -3882,6 +3966,25 @@ DECLARE_PCI_FIXUP_CLASS_EARLY(0x1797, 0x6868, PCI_CLASS_NOT_DEFINED, 8,
 			      quirk_tw686x_class);
 DECLARE_PCI_FIXUP_CLASS_EARLY(0x1797, 0x6869, PCI_CLASS_NOT_DEFINED, 8,
 			      quirk_tw686x_class);
+
+/*
+ * Some devices have problems with Transaction Layer Packets with the Relaxed
+ * Ordering Attribute set.  Such devices should mark themselves and other
+ * Device Drivers should check before sending TLPs with RO set.
+ */
+static void quirk_relaxedordering_enable(struct pci_dev *dev)
+{
+	dev->dev_flags |= PCI_DEV_FLAGS_RELAXED_ORDERING;
+	dev_info(&dev->dev, "Enable Relaxed Ordering attribute to avoid PCIe completion erratum\n");
+}
+
+/*
+ * The Hisilicon processors base on Hip07 microarchitecture Root Complex has
+ * a Flow Control credit issue which can cause performance problems with Upstream
+ * Transaction Layer Packets with Relaxed Ordering cleared, so enable it.
+ */
+DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_HUAWEI, 0x1610, PCI_CLASS_BRIDGE_PCI, 8,
+			      quirk_relaxedordering_enable);
 
 /*
  * Per PCIe r3.0, sec 2.2.9, "Completion headers must supply the same
@@ -3989,6 +4092,37 @@ static int pci_quirk_amd_sb_acs(struct pci_dev *dev, u16 acs_flags)
 #endif
 }
 
+static bool pci_quirk_cavium_acs_match(struct pci_dev *dev)
+{
+	/*
+	 * Effectively selects all downstream ports for whole ThunderX 1
+	 * family by 0xf800 mask (which represents 8 SoCs), while the lower
+	 * bits of device ID are used to indicate which subdevice is used
+	 * within the SoC.
+	 */
+	return (pci_is_pcie(dev) &&
+		(pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT) &&
+		((dev->device & 0xf800) == 0xa000));
+}
+
+static int pci_quirk_cavium_acs(struct pci_dev *dev, u16 acs_flags)
+{
+	/*
+	 * Cavium root ports don't advertise an ACS capability.  However,
+	 * the RTL internally implements similar protection as if ACS had
+	 * Request Redirection, Completion Redirection, Source Validation,
+	 * and Upstream Forwarding features enabled.  Assert that the
+	 * hardware implements and enables equivalent ACS functionality for
+	 * these flags.
+	 */
+	acs_flags &= ~(PCI_ACS_RR | PCI_ACS_CR | PCI_ACS_SV | PCI_ACS_UF);
+
+	if (!pci_quirk_cavium_acs_match(dev))
+		return -ENOTTY;
+
+	return acs_flags ? 0 : 1;
+}
+
 /*
  * Many Intel PCH root ports do provide ACS-like features to disable peer
  * transactions and validate bus numbers in requests, but do not provide an
@@ -4051,6 +4185,75 @@ static int pci_quirk_intel_pch_acs(struct pci_dev *dev, u16 acs_flags)
 	return acs_flags & ~flags ? 0 : 1;
 }
 
+/*
+ * Sunrise Point PCH root ports implement ACS, but unfortunately as shown in
+ * the datasheet (Intel 100 Series Chipset Family PCH Datasheet, Vol. 2,
+ * 12.1.46, 12.1.47)[1] this chipset uses dwords for the ACS capability and
+ * control registers whereas the PCIe spec packs them into words (Rev 3.0,
+ * 7.16 ACS Extended Capability).  The bit definitions are correct, but the
+ * control register is at offset 8 instead of 6 and we should probably use
+ * dword accesses to them.  This applies to the following PCI Device IDs, as
+ * found in volume 1 of the datasheet[2]:
+ *
+ * 0xa110-0xa11f Sunrise Point-H PCI Express Root Port #{0-16}
+ * 0xa167-0xa16a Sunrise Point-H PCI Express Root Port #{17-20}
+ *
+ * N.B. This doesn't fix what lspci shows.
+ *
+ * [1] http://www.intel.com/content/www/us/en/chipsets/100-series-chipset-datasheet-vol-2.html
+ * [2] http://www.intel.com/content/www/us/en/chipsets/100-series-chipset-datasheet-vol-1.html
+ */
+static bool pci_quirk_intel_spt_pch_acs_match(struct pci_dev *dev)
+{
+	return pci_is_pcie(dev) &&
+		pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT &&
+		((dev->device & ~0xf) == 0xa110 ||
+		 (dev->device >= 0xa167 && dev->device <= 0xa16a));
+}
+
+#define INTEL_SPT_ACS_CTRL (PCI_ACS_CAP + 4)
+
+static int pci_quirk_intel_spt_pch_acs(struct pci_dev *dev, u16 acs_flags)
+{
+	int pos;
+	u32 cap, ctrl;
+
+	if (!pci_quirk_intel_spt_pch_acs_match(dev))
+		return -ENOTTY;
+
+	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ACS);
+	if (!pos)
+		return -ENOTTY;
+
+	/* see pci_acs_flags_enabled() */
+	pci_read_config_dword(dev, pos + PCI_ACS_CAP, &cap);
+	acs_flags &= (cap | PCI_ACS_EC);
+
+	pci_read_config_dword(dev, pos + INTEL_SPT_ACS_CTRL, &ctrl);
+
+	return acs_flags & ~ctrl ? 0 : 1;
+}
+
+/*
+ * These QCOM root ports do provide ACS-like features to disable peer
+ * transactions and validate bus numbers in requests, but do not provide an
+ * actual PCIe ACS capability.  Hardware supports source validation but it
+ * will report the issue as Completer Abort instead of ACS Violation.
+ * Hardware doesn't support peer-to-peer and each root port is a root
+ * complex with unique segment numbers.  It is not possible for one root
+ * port to pass traffic to another root port.  All PCIe transactions are
+ * terminated inside the root port.
+ */
+static int pci_quirk_qcom_rp_acs(struct pci_dev *dev, u16 acs_flags)
+{
+	u16 flags = (PCI_ACS_RR | PCI_ACS_CR | PCI_ACS_UF | PCI_ACS_SV);
+	int ret = acs_flags & ~flags ? 0 : 1;
+
+	dev_info(&dev->dev, "Using QCOM ACS Quirk (%d)\n", ret);
+
+	return ret;
+}
+
 static int pci_quirk_mf_endpoint_acs(struct pci_dev *dev, u16 acs_flags)
 {
 	/*
@@ -4064,6 +4267,9 @@ static int pci_quirk_mf_endpoint_acs(struct pci_dev *dev, u16 acs_flags)
 	 */
 	acs_flags &= ~(PCI_ACS_SV | PCI_ACS_TB | PCI_ACS_RR |
 		       PCI_ACS_CR | PCI_ACS_UF | PCI_ACS_DT);
+
+	if (!((dev->device >= 0xa000) && (dev->device <= 0xa0ff)))
+		return -ENOTTY;
 
 	return acs_flags ? 0 : 1;
 }
@@ -4137,10 +4343,16 @@ static const struct pci_dev_acs_enabled {
 	/* I219 */
 	{ PCI_VENDOR_ID_INTEL, 0x15b7, pci_quirk_mf_endpoint_acs },
 	{ PCI_VENDOR_ID_INTEL, 0x15b8, pci_quirk_mf_endpoint_acs },
+	/* QCOM QDF2xxx root ports */
+	{ 0x17cb, 0x400, pci_quirk_qcom_rp_acs },
+	{ 0x17cb, 0x401, pci_quirk_qcom_rp_acs },
 	/* Intel PCH root ports */
 	{ PCI_VENDOR_ID_INTEL, PCI_ANY_ID, pci_quirk_intel_pch_acs },
+	{ PCI_VENDOR_ID_INTEL, PCI_ANY_ID, pci_quirk_intel_spt_pch_acs },
 	{ 0x19a2, 0x710, pci_quirk_mf_endpoint_acs }, /* Emulex BE3-R */
 	{ 0x10df, 0x720, pci_quirk_mf_endpoint_acs }, /* Emulex Skyhawk-R */
+	/* Cavium ThunderX */
+	{ PCI_VENDOR_ID_CAVIUM, PCI_ANY_ID, pci_quirk_cavium_acs },
 	{ 0 }
 };
 
@@ -4272,16 +4484,44 @@ static int pci_quirk_enable_intel_pch_acs(struct pci_dev *dev)
 	return 0;
 }
 
+static int pci_quirk_enable_intel_spt_pch_acs(struct pci_dev *dev)
+{
+	int pos;
+	u32 cap, ctrl;
+
+	if (!pci_quirk_intel_spt_pch_acs_match(dev))
+		return -ENOTTY;
+
+	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ACS);
+	if (!pos)
+		return -ENOTTY;
+
+	pci_read_config_dword(dev, pos + PCI_ACS_CAP, &cap);
+	pci_read_config_dword(dev, pos + INTEL_SPT_ACS_CTRL, &ctrl);
+
+	ctrl |= (cap & PCI_ACS_SV);
+	ctrl |= (cap & PCI_ACS_RR);
+	ctrl |= (cap & PCI_ACS_CR);
+	ctrl |= (cap & PCI_ACS_UF);
+
+	pci_write_config_dword(dev, pos + INTEL_SPT_ACS_CTRL, ctrl);
+
+	dev_info(&dev->dev, "Intel SPT PCH root port ACS workaround enabled\n");
+
+	return 0;
+}
+
 static const struct pci_dev_enable_acs {
 	u16 vendor;
 	u16 device;
 	int (*enable_acs)(struct pci_dev *dev);
 } pci_dev_enable_acs[] = {
 	{ PCI_VENDOR_ID_INTEL, PCI_ANY_ID, pci_quirk_enable_intel_pch_acs },
+	{ PCI_VENDOR_ID_INTEL, PCI_ANY_ID, pci_quirk_enable_intel_spt_pch_acs },
 	{ 0 }
 };
 
-void pci_dev_specific_enable_acs(struct pci_dev *dev)
+int pci_dev_specific_enable_acs(struct pci_dev *dev)
 {
 	const struct pci_dev_enable_acs *i;
 	int ret;
@@ -4293,9 +4533,11 @@ void pci_dev_specific_enable_acs(struct pci_dev *dev)
 		     i->device == (u16)PCI_ANY_ID)) {
 			ret = i->enable_acs(dev);
 			if (ret >= 0)
-				return;
+				return ret;
 		}
 	}
+
+	return -ENOTTY;
 }
 
 /*
@@ -4382,6 +4624,14 @@ static void quirk_intel_qat_vf_cap(struct pci_dev *pdev)
 	}
 }
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x443, quirk_intel_qat_vf_cap);
+
+/* FLR may cause some 82579 devices to hang. */
+static void quirk_intel_no_flr(struct pci_dev *dev)
+{
+	dev->dev_flags |= PCI_DEV_FLAGS_NO_FLR_RESET;
+}
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x1502, quirk_intel_no_flr);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x1503, quirk_intel_no_flr);
 
 #ifdef CONFIG_PCI_ATS
 /*

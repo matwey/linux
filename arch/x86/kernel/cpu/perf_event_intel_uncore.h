@@ -13,7 +13,11 @@
 #define UNCORE_PMC_IDX_FIXED		UNCORE_PMC_IDX_MAX_GENERIC
 #define UNCORE_PMC_IDX_MAX		(UNCORE_PMC_IDX_FIXED + 1)
 
+#define UNCORE_PCI_DEV_FULL_DATA(dev, func, type, idx)	\
+		((dev << 24) | (func << 16) | (type << 8) | idx)
 #define UNCORE_PCI_DEV_DATA(type, idx)	((type << 8) | idx)
+#define UNCORE_PCI_DEV_DEV(data)	((data >> 24) & 0xff)
+#define UNCORE_PCI_DEV_FUNC(data)	((data >> 16) & 0xff)
 #define UNCORE_PCI_DEV_TYPE(data)	((data >> 8) & 0xff)
 #define UNCORE_PCI_DEV_IDX(data)	(data & 0xff)
 #define UNCORE_EXTRA_PCI_DEV		0xff
@@ -38,6 +42,7 @@ struct intel_uncore_type {
 	unsigned perf_ctr;
 	unsigned event_ctl;
 	unsigned event_mask;
+	unsigned event_mask_ext;
 	unsigned fixed_ctr;
 	unsigned fixed_ctl;
 	unsigned box_ctl;
@@ -61,6 +66,7 @@ struct intel_uncore_type {
 
 struct intel_uncore_ops {
 	void (*init_box)(struct intel_uncore_box *);
+	void (*exit_box)(struct intel_uncore_box *);
 	void (*disable_box)(struct intel_uncore_box *);
 	void (*enable_box)(struct intel_uncore_box *);
 	void (*disable_event)(struct intel_uncore_box *, struct perf_event *);
@@ -73,13 +79,14 @@ struct intel_uncore_ops {
 };
 
 struct intel_uncore_pmu {
-	struct pmu pmu;
-	char name[UNCORE_PMU_NAME_LEN];
-	int pmu_idx;
-	int func_id;
-	struct intel_uncore_type *type;
-	struct intel_uncore_box ** __percpu box;
-	struct list_head box_list;
+	struct pmu			pmu;
+	char				name[UNCORE_PMU_NAME_LEN];
+	int				pmu_idx;
+	int				func_id;
+	bool				registered;
+	struct intel_uncore_type	*type;
+	struct intel_uncore_box		** __percpu box;
+	struct list_head		box_list;
 };
 
 struct intel_uncore_extra_reg {
@@ -111,6 +118,7 @@ struct intel_uncore_box {
 };
 
 #define UNCORE_BOX_FLAG_INITIATED	0
+#define UNCORE_BOX_FLAG_CTL_OFFS8	1 /* event config registers are 8-byte apart */
 
 struct uncore_event_desc {
 	struct kobj_attribute attr;
@@ -123,7 +131,6 @@ struct pci2phy_map {
 	int pbus_to_physid[256];
 };
 
-int uncore_pcibus_to_physid(struct pci_bus *bus);
 struct pci2phy_map *__find_pci2phy_map(int segment);
 
 ssize_t uncore_event_show(struct kobject *kobj,
@@ -164,6 +171,9 @@ static inline unsigned uncore_pci_fixed_ctr(struct intel_uncore_box *box)
 static inline
 unsigned uncore_pci_event_ctl(struct intel_uncore_box *box, int idx)
 {
+	if (test_bit(UNCORE_BOX_FLAG_CTL_OFFS8, &box->flags))
+		return idx * 8 + box->pmu->type->event_ctl;
+
 	return idx * 4 + box->pmu->type->event_ctl;
 }
 
@@ -305,14 +315,30 @@ static inline void uncore_box_init(struct intel_uncore_box *box)
 	}
 }
 
+static inline void uncore_box_exit(struct intel_uncore_box *box)
+{
+	if (test_and_clear_bit(UNCORE_BOX_FLAG_INITIATED, &box->flags)) {
+		if (box->pmu->type->ops->exit_box)
+			box->pmu->type->ops->exit_box(box);
+	}
+}
+
 static inline bool uncore_box_is_fake(struct intel_uncore_box *box)
 {
 	return (box->phys_id < 0);
 }
 
-struct intel_uncore_pmu *uncore_event_to_pmu(struct perf_event *event);
+static inline struct intel_uncore_pmu *uncore_event_to_pmu(struct perf_event *event)
+{
+	return container_of(event->pmu, struct intel_uncore_pmu, pmu);
+}
+
+static inline struct intel_uncore_box *uncore_event_to_box(struct perf_event *event)
+{
+	return event->pmu_private;
+}
+
 struct intel_uncore_box *uncore_pmu_to_box(struct intel_uncore_pmu *pmu, int cpu);
-struct intel_uncore_box *uncore_event_to_box(struct perf_event *event);
 u64 uncore_msr_read_counter(struct intel_uncore_box *box, struct perf_event *event);
 void uncore_pmu_start_hrtimer(struct intel_uncore_box *box);
 void uncore_pmu_cancel_hrtimer(struct intel_uncore_box *box);
@@ -336,8 +362,11 @@ int snb_uncore_pci_init(void);
 int ivb_uncore_pci_init(void);
 int hsw_uncore_pci_init(void);
 int bdw_uncore_pci_init(void);
+int skl_uncore_pci_init(void);
 void snb_uncore_cpu_init(void);
 void nhm_uncore_cpu_init(void);
+void skl_uncore_cpu_init(void);
+int snb_pci2phy_map_init(int devid);
 
 /* perf_event_intel_uncore_snbep.c */
 int snbep_uncore_pci_init(void);
@@ -348,6 +377,10 @@ int hswep_uncore_pci_init(void);
 void hswep_uncore_cpu_init(void);
 int bdx_uncore_pci_init(void);
 void bdx_uncore_cpu_init(void);
+int knl_uncore_pci_init(void);
+void knl_uncore_cpu_init(void);
+int skx_uncore_pci_init(void);
+void skx_uncore_cpu_init(void);
 
 /* perf_event_intel_uncore_nhmex.c */
 void nhmex_uncore_cpu_init(void);

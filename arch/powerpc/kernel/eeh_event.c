@@ -55,7 +55,14 @@ static int eeh_event_handler(void * dummy)
 	struct eeh_pe *pe;
 
 	while (!kthread_should_stop()) {
-		if (down_interruptible(&eeh_eventlist_sem))
+		int ret;
+
+		klp_kgraft_mark_task_safe(current);
+		ret = down_interruptible_timeout(&eeh_eventlist_sem,
+						 HZ * 3);
+		if (ret == -ETIME)
+			continue;
+		if (ret)
 			break;
 
 		/* Fetch EEH event from the queue */

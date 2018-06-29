@@ -67,7 +67,8 @@ void blk_mq_freeze_queue_start(struct request_queue *q)
 	freeze_depth = atomic_inc_return(&q->mq_freeze_depth);
 	if (freeze_depth == 1) {
 		percpu_ref_kill(&q->q_usage_counter);
-		blk_mq_run_hw_queues(q, false);
+		if (q->mq_ops)
+			blk_mq_run_hw_queues(q, false);
 	}
 }
 EXPORT_SYMBOL_GPL(blk_mq_freeze_queue_start);
@@ -171,13 +172,6 @@ void blk_mq_wake_waiters(struct request_queue *q)
 	queue_for_each_hw_ctx(q, hctx, i)
 		if (blk_mq_hw_queue_mapped(hctx))
 			blk_mq_tag_wakeup_all(hctx->tags, true);
-
-	/*
-	 * If we are called because the queue has now been marked as
-	 * dying, we need to ensure that processes currently waiting on
-	 * the queue are notified as well.
-	 */
-	wake_up_all(&q->mq_freeze_wq);
 }
 
 bool blk_mq_can_queue(struct blk_mq_hw_ctx *hctx)
@@ -1437,7 +1431,7 @@ insert:
 static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 {
 	const int is_sync = op_is_sync(bio->bi_opf);
-	const int is_flush_fua = bio->bi_opf & (REQ_PREFLUSH | REQ_FUA);
+	const int is_flush_fua = op_is_flush(bio->bi_opf);
 	struct blk_mq_alloc_data data;
 	struct request *rq;
 	unsigned int request_count = 0, srcu_idx;
@@ -1464,6 +1458,8 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 	rq = blk_mq_map_request(q, bio, &data);
 	if (unlikely(!rq)) {
 		__wbt_done(q->rq_wb, wb_acct);
+		if (bio->bi_opf & REQ_NOWAIT)
+			bio_wouldblock_error(bio);
 		return BLK_QC_T_NONE;
 	}
 
@@ -1545,7 +1541,7 @@ done:
 static blk_qc_t blk_sq_make_request(struct request_queue *q, struct bio *bio)
 {
 	const int is_sync = op_is_sync(bio->bi_opf);
-	const int is_flush_fua = bio->bi_opf & (REQ_PREFLUSH | REQ_FUA);
+	const int is_flush_fua = op_is_flush(bio->bi_opf);
 	struct blk_plug *plug;
 	unsigned int request_count = 0;
 	struct blk_mq_alloc_data data;
@@ -1573,6 +1569,8 @@ static blk_qc_t blk_sq_make_request(struct request_queue *q, struct bio *bio)
 	rq = blk_mq_map_request(q, bio, &data);
 	if (unlikely(!rq)) {
 		__wbt_done(q->rq_wb, wb_acct);
+		if (bio->bi_opf & REQ_NOWAIT)
+			bio_wouldblock_error(bio);
 		return BLK_QC_T_NONE;
 	}
 

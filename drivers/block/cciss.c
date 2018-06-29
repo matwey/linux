@@ -43,7 +43,7 @@
 #include <linux/mutex.h>
 #include <linux/bitmap.h>
 #include <linux/io.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <linux/dma-mapping.h>
 #include <linux/blkdev.h>
@@ -3746,6 +3746,8 @@ static int scan_thread(void *data)
 		schedule();
 		if (kthread_should_stop())
 			break;
+
+		klp_kgraft_mark_task_safe(current);
 
 		while (1) {
 			mutex_lock(&scan_mutex);

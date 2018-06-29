@@ -62,7 +62,7 @@
 
 #include <net/sock.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
@@ -650,16 +650,11 @@ iscsi_iser_session_create(struct iscsi_endpoint *ep,
 			u32 sig_caps = ib_conn->device->ib_device->attrs.sig_prot_cap;
 
 			scsi_host_set_prot(shost, iser_dif_prot_caps(sig_caps));
-			scsi_host_set_guard(shost, SHOST_DIX_GUARD_IP |
-						   SHOST_DIX_GUARD_CRC);
+			if (iser_pi_guard)
+				scsi_host_set_guard(shost, SHOST_DIX_GUARD_IP);
+			else
+				scsi_host_set_guard(shost, SHOST_DIX_GUARD_CRC);
 		}
-
-		/*
-		 * Limit the sg_tablesize and max_sectors based on the device
-		 * max fastreg page list length.
-		 */
-		shost->sg_tablesize = min_t(unsigned short, shost->sg_tablesize,
-			ib_conn->device->ib_device->attrs.max_fast_reg_page_list_len);
 
 		if (iscsi_host_add(shost,
 				   ib_conn->device->ib_device->dma_device)) {
@@ -681,6 +676,10 @@ iscsi_iser_session_create(struct iscsi_endpoint *ep,
 	 */
 	max_fr_sectors = ((shost->sg_tablesize - 1) * PAGE_SIZE) >> 9;
 	shost->max_sectors = min(iser_max_sectors, max_fr_sectors);
+
+	iser_dbg("iser_conn %p, sg_tablesize %u, max_sectors %u\n",
+		 iser_conn, shost->sg_tablesize,
+		 shost->max_sectors);
 
 	if (cmds_max > max_cmds) {
 		iser_info("cmds_max changed from %u to %u\n",

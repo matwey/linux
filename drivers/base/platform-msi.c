@@ -142,13 +142,12 @@ static int platform_msi_alloc_descs_with_irq(struct device *dev, int virq,
 	}
 
 	for (i = 0; i < nvec; i++) {
-		desc = alloc_msi_entry(dev);
+		desc = alloc_msi_entry(dev, 1, NULL);
 		if (!desc)
 			break;
 
 		desc->platform.msi_priv_data = data;
 		desc->platform.msi_index = base + i;
-		desc->nvec_used = 1;
 		desc->irq = virq ? virq + i : 0;
 
 		list_add_tail(&desc->list, dev_to_msi_list(dev));
@@ -346,8 +345,7 @@ platform_msi_create_device_domain(struct device *dev,
 
 	data->host_data = host_data;
 	domain = irq_domain_create_hierarchy(dev->msi_domain, 0, nvec,
-					     of_node_to_fwnode(dev->of_node),
-					     ops, data);
+					     dev->fwnode, ops, data);
 	if (!domain)
 		goto free_priv;
 

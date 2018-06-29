@@ -30,6 +30,7 @@ int patch_branch(unsigned int *addr, unsigned long target, int flags);
 int patch_instruction(unsigned int *addr, unsigned int instr);
 
 int instr_is_relative_branch(unsigned int instr);
+int instr_is_relative_link_branch(unsigned int instr);
 int instr_is_branch_to_addr(const unsigned int *instr, unsigned long addr);
 unsigned long branch_target(const unsigned int *instr);
 unsigned int translate_branch(const unsigned int *dest,
@@ -98,5 +99,26 @@ static inline unsigned long ppc_global_function_entry(void *func)
 	return ppc_function_entry(func);
 #endif
 }
+
+#ifdef CONFIG_PPC64
+/*
+ * Some instruction encodings commonly used in dynamic ftracing
+ * and function live patching.
+ */
+
+/* This must match the definition of STK_GOT in <asm/ppc_asm.h> */
+#if defined(_CALL_ELF) && _CALL_ELF == 2
+#define R2_STACK_OFFSET         24
+#else
+#define R2_STACK_OFFSET         40
+#endif
+
+#define PPC_INST_LD_TOC		(PPC_INST_LD  | ___PPC_RT(__REG_R2) | \
+				 ___PPC_RA(__REG_R1) | R2_STACK_OFFSET)
+
+/* usually preceded by a mflr r0 */
+#define PPC_INST_STD_LR		(PPC_INST_STD | ___PPC_RS(__REG_R0) | \
+				 ___PPC_RA(__REG_R1) | PPC_LR_STKOFF)
+#endif /* CONFIG_PPC64 */
 
 #endif /* _ASM_POWERPC_CODE_PATCHING_H */

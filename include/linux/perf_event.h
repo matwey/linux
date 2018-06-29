@@ -265,8 +265,8 @@ struct pmu {
 	 * Notification that the event was mapped or unmapped.  Called
 	 * in the context of the mapping task.
 	 */
-	void (*event_mapped)		(struct perf_event *event); /*optional*/
-	void (*event_unmapped)		(struct perf_event *event); /*optional*/
+	void (*event_mapped)		(struct perf_event *event); /* optional */
+	void (*event_unmapped)		(struct perf_event *event); /* optional */
 
 	/*
 	 * Flags for ->add()/->del()/ ->start()/->stop(). There are
@@ -394,6 +394,9 @@ struct pmu {
 	int (*filter_match)		(struct perf_event *event); /* optional */
 };
 
+extern void (*kabi_perf_event_mapped)(struct perf_event *event, struct mm_struct *mm);
+extern void (*kabi_perf_event_unmapped)(struct perf_event *event, struct mm_struct *mm);
+
 /**
  * enum perf_event_active_state - the states of a event
  */
@@ -468,6 +471,7 @@ struct perf_event {
 	int				group_flags;
 	struct perf_event		*group_leader;
 	struct pmu			*pmu;
+	void				*pmu_private;
 
 	enum perf_event_active_state	state;
 	unsigned int			attach_state;

@@ -29,7 +29,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/envctrl.h>
 #include <asm/io.h>
 
@@ -998,6 +998,7 @@ static int kenvctrld(void *__unused)
 
 	printk(KERN_INFO PFX "%s starting...\n", current->comm);
 	for (;;) {
+		klp_kgraft_mark_task_safe(current);
 		msleep_interruptible(poll_interval);
 
 		if (kthread_should_stop())

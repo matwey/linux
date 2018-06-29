@@ -34,7 +34,7 @@
 #include <linux/pagevec.h>
 #include <linux/freezer.h>
 #include <linux/namei.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/processor.h>
 #include <linux/inet.h>
 #include <linux/module.h>
@@ -943,6 +943,7 @@ cifs_demultiplex_thread(void *p)
 	if (!task_to_wake) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		while (!signal_pending(current)) {
+			klp_kgraft_mark_task_safe(current);
 			schedule();
 			set_current_state(TASK_INTERRUPTIBLE);
 		}

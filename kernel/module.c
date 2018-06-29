@@ -19,6 +19,7 @@
 #include <linux/export.h>
 #include <linux/moduleloader.h>
 #include <linux/trace_events.h>
+#include <linux/kgraft.h>
 #include <linux/init.h>
 #include <linux/kallsyms.h>
 #include <linux/file.h>
@@ -45,8 +46,9 @@
 #include <linux/device.h>
 #include <linux/string.h>
 #include <linux/mutex.h>
+#include <linux/unwind.h>
 #include <linux/rculist.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/cacheflush.h>
 #include <asm/mmu_context.h>
 #include <linux/license.h>
@@ -347,7 +349,7 @@ struct load_info {
 	unsigned long mod_kallsyms_init_off;
 #endif
 	struct {
-		unsigned int sym, str, mod, vers, info, pcpu;
+		unsigned int sym, str, mod, vers, info, pcpu, unwind;
 	} index;
 };
 
@@ -759,6 +761,27 @@ bool is_module_percpu_address(unsigned long addr)
 }
 
 #endif /* CONFIG_SMP */
+
+static unsigned int find_unwind(struct load_info *info)
+{
+	int section = 0;
+#ifdef ARCH_UNWIND_SECTION_NAME
+	section = find_sec(info, ARCH_UNWIND_SECTION_NAME);
+	if (section)
+		info->sechdrs[section].sh_flags |= SHF_ALLOC;
+#endif
+	return section;
+}
+
+static void add_unwind_table(struct module *mod, struct load_info *info)
+{
+	int index = info->index.unwind;
+
+	/* Size of section 0 is 0, so this is ok if there is no unwind info. */
+	mod->unwind_info = unwind_add_table(mod,
+					  (void *)info->sechdrs[index].sh_addr,
+					  info->sechdrs[index].sh_size);
+}
 
 #define MODINFO_ATTR(field)	\
 static void setup_modinfo_##field(struct module *mod, const char *s)  \
@@ -1177,6 +1200,8 @@ static size_t module_flags_taint(struct module *mod, char *buf)
 		buf[l++] = 'C';
 	if (mod->taints & (1 << TAINT_UNSIGNED_MODULE))
 		buf[l++] = 'E';
+	if (mod->taints & (1 << TAINT_LIVEPATCH))
+		buf[l++] = 'K';
 #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
 	if (mod->taints & (1 << TAINT_NO_SUPPORT))
 		buf[l++] = 'N';
@@ -2091,6 +2116,8 @@ static void free_module(struct module *mod)
 	/* Remove dynamic debug info */
 	ddebug_remove_module(mod->name);
 
+	unwind_remove_table(mod->unwind_info, false);
+
 	/* Arch-specific cleanup. */
 	module_arch_cleanup(mod);
 
@@ -2712,7 +2739,7 @@ static int module_sig_check(struct load_info *info, int flags)
 	}
 
 	/* Not having a signature is only an error if we're strict. */
-	if (err == -ENOKEY && !sig_enforce)
+	if ((err == -ENOKEY && !sig_enforce) && (get_securelevel() <= 0))
 		err = 0;
 
 	return err;
@@ -2936,6 +2963,8 @@ static struct module *setup_load_info(struct load_info *info, int flags)
 	}
 
 	info->index.pcpu = find_pcpusec(info);
+
+	info->index.unwind = find_unwind(info);
 
 	/* Check module struct version now, before we try to use module. */
 	if (!check_modstruct_version(info->sechdrs, info->index.vers, mod))
@@ -3399,6 +3428,7 @@ static noinline int do_init_module(struct module *mod)
 	/* Drop initial reference. */
 	module_put(mod);
 	trim_init_extable(mod);
+	unwind_remove_table(mod->unwind_info, true);
 #ifdef CONFIG_KALLSYMS
 	/* Switch to core kallsyms now init is done: kallsyms may be walking! */
 	rcu_assign_pointer(mod->kallsyms, &mod->core_kallsyms);
@@ -3648,6 +3678,17 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	if (err)
 		goto ddebug_cleanup;
 
+#if IS_ENABLED(CONFIG_KGRAFT)
+	/*
+	 * kGraft patches should to be applied after symbols are visible
+	 * to kallsyms but before the module init is called. Then the
+	 * changes can be applied immediately.
+	 */
+	err = kgr_module_init(mod);
+	if (err)
+		goto bug_cleanup;
+#endif
+
 	/* Module is ready to execute: parsing args may do that. */
 	after_dashes = parse_args(mod->name, mod->args, mod->kp, mod->num_kp,
 				  -32768, 32767, mod,
@@ -3664,6 +3705,9 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	err = mod_sysfs_setup(mod, info, mod->kp, mod->num_kp);
 	if (err < 0)
 		goto bug_cleanup;
+
+	/* Initialize unwind table */
+	add_unwind_table(mod, info);
 
 	/* Get rid of temporary copy. */
 	free_copy(info);
@@ -3689,6 +3733,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	return err;
 
  bug_cleanup:
+	destroy_params(mod->kp, mod->num_kp);
 	/* module_bug_cleanup needs module_mutex protection */
 	mutex_lock(&module_mutex);
 	module_bug_cleanup(mod);

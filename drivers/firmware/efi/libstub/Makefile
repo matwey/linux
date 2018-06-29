@@ -23,7 +23,7 @@ KBUILD_CFLAGS			:= $(cflags-y) \
 GCOV_PROFILE			:= n
 KASAN_SANITIZE			:= n
 
-lib-y				:= efi-stub-helper.o
+lib-y				:= efi-stub-helper.o gop.o
 
 # include the stub's generic dependencies from lib/ when building for ARM/arm64
 arm-deps := fdt_rw.c fdt_ro.c fdt_wip.c fdt.c fdt_empty_tree.c fdt_sw.c sort.c
@@ -34,7 +34,8 @@ $(obj)/lib-%.o: $(srctree)/lib/%.c FORCE
 lib-$(CONFIG_EFI_ARMSTUB)	+= arm-stub.o fdt.o string.o \
 				   $(patsubst %.c,lib-%.o,$(arm-deps))
 
-lib-$(CONFIG_ARM64)		+= arm64-stub.o
+lib-$(CONFIG_ARM)		+= arm32-stub.o
+lib-$(CONFIG_ARM64)		+= arm64-stub.o random.o
 CFLAGS_arm64-stub.o 		:= -DTEXT_OFFSET=$(TEXT_OFFSET)
 
 #
@@ -67,3 +68,11 @@ quiet_cmd_stubcopy = STUBCPY $@
 		     $(OBJDUMP) -r $@ | grep $(STUBCOPY_RELOC-y)	\
 		     && (echo >&2 "$@: absolute symbol references not allowed in the EFI stub"; \
 			 rm -f $@; /bin/false); else /bin/false; fi
+
+#
+# ARM discards the .data section because it disallows r/w data in the
+# decompressor. So move our .data to .data.efistub, which is preserved
+# explicitly by the decompressor linker script.
+#
+STUBCOPY_FLAGS-$(CONFIG_ARM)	+= --rename-section .data=.data.efistub
+STUBCOPY_RELOC-$(CONFIG_ARM)	:= R_ARM_ABS

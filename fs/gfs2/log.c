@@ -657,7 +657,7 @@ static void log_write_header(struct gfs2_sbd *sdp, u32 flags)
 	struct gfs2_log_header *lh;
 	unsigned int tail;
 	u32 hash;
-	int op_flags = REQ_PREFLUSH | REQ_FUA | REQ_META;
+	int op_flags = REQ_PREFLUSH | REQ_FUA | REQ_META | REQ_SYNC;
 	struct page *page = mempool_alloc(gfs2_page_pool, GFP_NOIO);
 	enum gfs2_freeze_state state = atomic_read(&sdp->sd_freeze_state);
 	lh = page_address(page);
@@ -937,8 +937,10 @@ int gfs2_logd(void *data)
 					TASK_INTERRUPTIBLE);
 			if (!gfs2_ail_flush_reqd(sdp) &&
 			    !gfs2_jrnl_flush_reqd(sdp) &&
-			    !kthread_should_stop())
+			    !kthread_should_stop()) {
+				klp_kgraft_mark_task_safe(current);
 				t = schedule_timeout(t);
+			}
 		} while(t && !gfs2_ail_flush_reqd(sdp) &&
 			!gfs2_jrnl_flush_reqd(sdp) &&
 			!kthread_should_stop());

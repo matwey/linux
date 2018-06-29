@@ -13,7 +13,7 @@
 #include <linux/mm.h>
 #include <asm/page.h>
 #include <asm/code-patching.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 
 int patch_instruction(unsigned int *addr, unsigned int instr)
@@ -93,6 +93,11 @@ int instr_is_relative_branch(unsigned int instr)
 		return 0;
 
 	return instr_is_branch_iform(instr) || instr_is_branch_bform(instr);
+}
+
+int instr_is_relative_link_branch(unsigned int instr)
+{
+	return instr_is_relative_branch(instr) && (instr & BRANCH_SET_LINK);
 }
 
 static unsigned long branch_iform_target(const unsigned int *instr)

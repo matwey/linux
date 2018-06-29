@@ -38,7 +38,7 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "uverbs.h"
 #include "core_priv.h"
@@ -1567,7 +1567,7 @@ ssize_t ib_uverbs_resize_cq(struct ib_uverbs_file *file,
 			    int out_len)
 {
 	struct ib_uverbs_resize_cq	cmd;
-	struct ib_uverbs_resize_cq_resp	resp;
+	struct ib_uverbs_resize_cq_resp	resp = {};
 	struct ib_udata                 udata;
 	struct ib_cq			*cq;
 	int				ret = -EINVAL;
@@ -1772,7 +1772,7 @@ static int create_qp(struct ib_uverbs_file *file,
 	struct ib_srq			*srq = NULL;
 	struct ib_qp			*qp;
 	char				*buf;
-	struct ib_qp_init_attr		attr;
+	struct ib_qp_init_attr		attr = {};
 	struct ib_uverbs_ex_create_qp_resp resp;
 	int				ret;
 	struct ib_rwq_ind_table *ind_tbl = NULL;
@@ -3136,6 +3136,7 @@ ssize_t ib_uverbs_detach_mcast(struct ib_uverbs_file *file,
 	struct ib_qp                 *qp;
 	struct ib_uverbs_mcast_entry *mcast;
 	int                           ret = -EINVAL;
+	bool                          found = false;
 
 	if (copy_from_user(&cmd, buf, sizeof cmd))
 		return -EFAULT;
@@ -3144,10 +3145,6 @@ ssize_t ib_uverbs_detach_mcast(struct ib_uverbs_file *file,
 	if (!qp)
 		return -EINVAL;
 
-	ret = ib_detach_mcast(qp, (union ib_gid *) cmd.gid, cmd.mlid);
-	if (ret)
-		goto out_put;
-
 	obj = container_of(qp->uobject, struct ib_uqp_object, uevent.uobject);
 
 	list_for_each_entry(mcast, &obj->mcast_list, list)
@@ -3155,8 +3152,16 @@ ssize_t ib_uverbs_detach_mcast(struct ib_uverbs_file *file,
 		    !memcmp(cmd.gid, mcast->gid.raw, sizeof mcast->gid.raw)) {
 			list_del(&mcast->list);
 			kfree(mcast);
+			found = true;
 			break;
 		}
+
+	if (!found) {
+		ret = -EINVAL;
+		goto out_put;
+	}
+
+	ret = ib_detach_mcast(qp, (union ib_gid *)cmd.gid, cmd.mlid);
 
 out_put:
 	put_qp_write(qp);
@@ -3794,8 +3799,7 @@ int ib_uverbs_ex_create_flow(struct ib_uverbs_file *file,
 	if (cmd.comp_mask)
 		return -EINVAL;
 
-	if ((cmd.flow_attr.type == IB_FLOW_ATTR_SNIFFER &&
-	     !capable(CAP_NET_ADMIN)) || !capable(CAP_NET_RAW))
+	if (!capable(CAP_NET_RAW))
 		return -EPERM;
 
 	if (cmd.flow_attr.flags >= IB_FLOW_ATTR_FLAGS_RESERVED)
@@ -3887,7 +3891,6 @@ int ib_uverbs_ex_create_flow(struct ib_uverbs_file *file,
 		err = PTR_ERR(flow_id);
 		goto err_free;
 	}
-	flow_id->qp = qp;
 	flow_id->uobject = uobj;
 	uobj->object = flow_id;
 

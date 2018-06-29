@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -1045,6 +1045,7 @@ static void dc_start(struct hfi1_devdata *);
 static int qos_rmt_entries(struct hfi1_devdata *dd, unsigned int *mp,
 			   unsigned int *np);
 static void clear_full_mgmt_pkey(struct hfi1_pportdata *ppd);
+static int wait_link_transfer_active(struct hfi1_devdata *dd, int wait_ms);
 
 /*
  * Error interrupt table entry.  This is used as input to the interrupt
@@ -7077,7 +7078,7 @@ static void add_full_mgmt_pkey(struct hfi1_pportdata *ppd)
 {
 	struct hfi1_devdata *dd = ppd->dd;
 
-	/* Sanity check - ppd->pkeys[2] should be 0, or already initalized */
+	/* Sanity check - ppd->pkeys[2] should be 0, or already initialized */
 	if (!((ppd->pkeys[2] == 0) || (ppd->pkeys[2] == FULL_MGMT_P_KEY)))
 		dd_dev_warn(dd, "%s pkey[2] already set to 0x%x, resetting it to 0x%x\n",
 			    __func__, ppd->pkeys[2], FULL_MGMT_P_KEY);
@@ -7165,7 +7166,7 @@ static void get_link_widths(struct hfi1_devdata *dd, u16 *tx_width,
 	 * set the max_rate field in handle_verify_cap until v0.19.
 	 */
 	if ((dd->icode == ICODE_RTL_SILICON) &&
-	    (dd->dc8051_ver < dc8051_ver(0, 19))) {
+	    (dd->dc8051_ver < dc8051_ver(0, 19, 0))) {
 		/* max_rate: 0 = 12.5G, 1 = 25G */
 		switch (max_rate) {
 		case 0:
@@ -7350,7 +7351,7 @@ void handle_verify_cap(struct work_struct *work)
 	}
 
 	ppd->link_speed_active = 0;	/* invalid value */
-	if (dd->dc8051_ver < dc8051_ver(0, 20)) {
+	if (dd->dc8051_ver < dc8051_ver(0, 20, 0)) {
 		/* remote_tx_rate: 0 = 12.5G, 1 = 25G */
 		switch (remote_tx_rate) {
 		case 0:
@@ -7827,7 +7828,8 @@ static void handle_dcc_err(struct hfi1_devdata *dd, u32 unused, u64 reg)
 		}
 
 		/* just report this */
-		dd_dev_info(dd, "DCC Error: fmconfig error: %s\n", extra);
+		dd_dev_info_ratelimited(dd, "DCC Error: fmconfig error: %s\n",
+					extra);
 		reg &= ~DCC_ERR_FLG_FMCONFIG_ERR_SMASK;
 	}
 
@@ -7878,34 +7880,35 @@ static void handle_dcc_err(struct hfi1_devdata *dd, u32 unused, u64 reg)
 		}
 
 		/* just report this */
-		dd_dev_info(dd, "DCC Error: PortRcv error: %s\n", extra);
-		dd_dev_info(dd, "           hdr0 0x%llx, hdr1 0x%llx\n",
-			    hdr0, hdr1);
+		dd_dev_info_ratelimited(dd, "DCC Error: PortRcv error: %s\n"
+					"               hdr0 0x%llx, hdr1 0x%llx\n",
+					extra, hdr0, hdr1);
 
 		reg &= ~DCC_ERR_FLG_RCVPORT_ERR_SMASK;
 	}
 
 	if (reg & DCC_ERR_FLG_EN_CSR_ACCESS_BLOCKED_UC_SMASK) {
 		/* informative only */
-		dd_dev_info(dd, "8051 access to LCB blocked\n");
+		dd_dev_info_ratelimited(dd, "8051 access to LCB blocked\n");
 		reg &= ~DCC_ERR_FLG_EN_CSR_ACCESS_BLOCKED_UC_SMASK;
 	}
 	if (reg & DCC_ERR_FLG_EN_CSR_ACCESS_BLOCKED_HOST_SMASK) {
 		/* informative only */
-		dd_dev_info(dd, "host access to LCB blocked\n");
+		dd_dev_info_ratelimited(dd, "host access to LCB blocked\n");
 		reg &= ~DCC_ERR_FLG_EN_CSR_ACCESS_BLOCKED_HOST_SMASK;
 	}
 
 	/* report any remaining errors */
 	if (reg)
-		dd_dev_info(dd, "DCC Error: %s\n",
-			    dcc_err_string(buf, sizeof(buf), reg));
+		dd_dev_info_ratelimited(dd, "DCC Error: %s\n",
+					dcc_err_string(buf, sizeof(buf), reg));
 
 	if (lcl_reason == 0)
 		lcl_reason = OPA_LINKDOWN_REASON_UNKNOWN;
 
 	if (do_bounce) {
-		dd_dev_info(dd, "%s: PortErrorAction bounce\n", __func__);
+		dd_dev_info_ratelimited(dd, "%s: PortErrorAction bounce\n",
+					__func__);
 		set_link_down_reason(ppd, lcl_reason, 0, lcl_reason);
 		queue_work(ppd->hfi1_wq, &ppd->link_bounce_work);
 	}
@@ -8342,6 +8345,52 @@ static int read_lcb_via_8051(struct hfi1_devdata *dd, u32 addr, u64 *data)
 }
 
 /*
+ * Provide a cache for some of the LCB registers in case the LCB is
+ * unavailable.
+ * (The LCB is unavailable in certain link states, for example.)
+ */
+struct lcb_datum {
+	u32 off;
+	u64 val;
+};
+
+static struct lcb_datum lcb_cache[] = {
+	{ DC_LCB_ERR_INFO_RX_REPLAY_CNT, 0},
+	{ DC_LCB_ERR_INFO_SEQ_CRC_CNT, 0 },
+	{ DC_LCB_ERR_INFO_REINIT_FROM_PEER_CNT, 0 },
+};
+
+static void update_lcb_cache(struct hfi1_devdata *dd)
+{
+	int i;
+	int ret;
+	u64 val;
+
+	for (i = 0; i < ARRAY_SIZE(lcb_cache); i++) {
+		ret = read_lcb_csr(dd, lcb_cache[i].off, &val);
+
+		/* Update if we get good data */
+		if (likely(ret != -EBUSY))
+			lcb_cache[i].val = val;
+	}
+}
+
+static int read_lcb_cache(u32 off, u64 *val)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(lcb_cache); i++) {
+		if (lcb_cache[i].off == off) {
+			*val = lcb_cache[i].val;
+			return 0;
+		}
+	}
+
+	pr_warn("%s bad offset 0x%x\n", __func__, off);
+	return -1;
+}
+
+/*
  * Read an LCB CSR.  Access may not be in host control, so check.
  * Return 0 on success, -EBUSY on failure.
  */
@@ -8352,9 +8401,13 @@ int read_lcb_csr(struct hfi1_devdata *dd, u32 addr, u64 *data)
 	/* if up, go through the 8051 for the value */
 	if (ppd->host_link_state & HLS_UP)
 		return read_lcb_via_8051(dd, addr, data);
-	/* if going up or down, no access */
-	if (ppd->host_link_state & (HLS_GOING_UP | HLS_GOING_OFFLINE))
-		return -EBUSY;
+	/* if going up or down, check the cache, otherwise, no access */
+	if (ppd->host_link_state & (HLS_GOING_UP | HLS_GOING_OFFLINE)) {
+		if (read_lcb_cache(addr, data))
+			return -EBUSY;
+		return 0;
+	}
+
 	/* otherwise, host has access */
 	*data = read_csr(dd, addr);
 	return 0;
@@ -8369,7 +8422,7 @@ static int write_lcb_via_8051(struct hfi1_devdata *dd, u32 addr, u64 data)
 	int ret;
 
 	if (dd->icode == ICODE_FUNCTIONAL_SIMULATOR ||
-	    (dd->dc8051_ver < dc8051_ver(0, 20))) {
+	    (dd->dc8051_ver < dc8051_ver(0, 20, 0))) {
 		if (acquire_lcb_access(dd, 0) == 0) {
 			write_csr(dd, addr, data);
 			release_lcb_access(dd, 0);
@@ -8675,13 +8728,20 @@ static void read_remote_device_id(struct hfi1_devdata *dd, u16 *device_id,
 			& REMOTE_DEVICE_REV_MASK;
 }
 
-void read_misc_status(struct hfi1_devdata *dd, u8 *ver_a, u8 *ver_b)
+void read_misc_status(struct hfi1_devdata *dd, u8 *ver_major, u8 *ver_minor,
+		      u8 *ver_patch)
 {
 	u32 frame;
 
 	read_8051_config(dd, MISC_STATUS, GENERAL_CONFIG, &frame);
-	*ver_a = (frame >> STS_FM_VERSION_A_SHIFT) & STS_FM_VERSION_A_MASK;
-	*ver_b = (frame >> STS_FM_VERSION_B_SHIFT) & STS_FM_VERSION_B_MASK;
+	*ver_major = (frame >> STS_FM_VERSION_MAJOR_SHIFT) &
+		STS_FM_VERSION_MAJOR_MASK;
+	*ver_minor = (frame >> STS_FM_VERSION_MINOR_SHIFT) &
+		STS_FM_VERSION_MINOR_MASK;
+
+	read_8051_config(dd, VERSION_PATCH, GENERAL_CONFIG, &frame);
+	*ver_patch = (frame >> STS_FM_VERSION_PATCH_SHIFT) &
+		STS_FM_VERSION_PATCH_MASK;
 }
 
 static void read_vc_remote_phy(struct hfi1_devdata *dd, u8 *power_management,
@@ -8889,8 +8949,6 @@ int send_idle_sma(struct hfi1_devdata *dd, u64 message)
  */
 static int do_quick_linkup(struct hfi1_devdata *dd)
 {
-	u64 reg;
-	unsigned long timeout;
 	int ret;
 
 	lcb_shutdown(dd, 0);
@@ -8913,19 +8971,9 @@ static int do_quick_linkup(struct hfi1_devdata *dd)
 		write_csr(dd, DC_LCB_CFG_RUN,
 			  1ull << DC_LCB_CFG_RUN_EN_SHIFT);
 
-		/* watch LCB_STS_LINK_TRANSFER_ACTIVE */
-		timeout = jiffies + msecs_to_jiffies(10);
-		while (1) {
-			reg = read_csr(dd, DC_LCB_STS_LINK_TRANSFER_ACTIVE);
-			if (reg)
-				break;
-			if (time_after(jiffies, timeout)) {
-				dd_dev_err(dd,
-					   "timeout waiting for LINK_TRANSFER_ACTIVE\n");
-				return -ETIMEDOUT;
-			}
-			udelay(2);
-		}
+		ret = wait_link_transfer_active(dd, 10);
+		if (ret)
+			return ret;
 
 		write_csr(dd, DC_LCB_CFG_ALLOW_LINK_UP,
 			  1ull << DC_LCB_CFG_ALLOW_LINK_UP_VAL_SHIFT);
@@ -9089,7 +9137,7 @@ static int set_local_link_attributes(struct hfi1_pportdata *ppd)
 	if (ret)
 		goto set_local_link_attributes_fail;
 
-	if (dd->dc8051_ver < dc8051_ver(0, 20)) {
+	if (dd->dc8051_ver < dc8051_ver(0, 20, 0)) {
 		/* set the tx rate to the fastest enabled */
 		if (ppd->link_speed_enabled & OPA_LINK_SPEED_25G)
 			ppd->local_tx_rate = 1;
@@ -9492,8 +9540,11 @@ static int test_qsfp_read(struct hfi1_pportdata *ppd)
 	int ret;
 	u8 status;
 
-	/* report success if not a QSFP */
-	if (ppd->port_type != PORT_TYPE_QSFP)
+	/*
+	 * Report success if not a QSFP or, if it is a QSFP, but the cable is
+	 * not present
+	 */
+	if (ppd->port_type != PORT_TYPE_QSFP || !qsfp_mod_present(ppd))
 		return 0;
 
 	/* read byte 2, the status byte */
@@ -10080,6 +10131,64 @@ static void check_lni_states(struct hfi1_pportdata *ppd)
 	decode_state_complete(ppd, last_remote_state, "received");
 }
 
+/* wait for wait_ms for LINK_TRANSFER_ACTIVE to go to 1 */
+static int wait_link_transfer_active(struct hfi1_devdata *dd, int wait_ms)
+{
+	u64 reg;
+	unsigned long timeout;
+
+	/* watch LCB_STS_LINK_TRANSFER_ACTIVE */
+	timeout = jiffies + msecs_to_jiffies(wait_ms);
+	while (1) {
+		reg = read_csr(dd, DC_LCB_STS_LINK_TRANSFER_ACTIVE);
+		if (reg)
+			break;
+		if (time_after(jiffies, timeout)) {
+			dd_dev_err(dd,
+				   "timeout waiting for LINK_TRANSFER_ACTIVE\n");
+			return -ETIMEDOUT;
+		}
+		udelay(2);
+	}
+	return 0;
+}
+
+/* called when the logical link state is not down as it should be */
+static void force_logical_link_state_down(struct hfi1_pportdata *ppd)
+{
+	struct hfi1_devdata *dd = ppd->dd;
+
+	/*
+	 * Bring link up in LCB loopback
+	 */
+	write_csr(dd, DC_LCB_CFG_TX_FIFOS_RESET, 1);
+	write_csr(dd, DC_LCB_CFG_IGNORE_LOST_RCLK,
+		  DC_LCB_CFG_IGNORE_LOST_RCLK_EN_SMASK);
+
+	write_csr(dd, DC_LCB_CFG_LANE_WIDTH, 0);
+	write_csr(dd, DC_LCB_CFG_REINIT_AS_SLAVE, 0);
+	write_csr(dd, DC_LCB_CFG_CNT_FOR_SKIP_STALL, 0x110);
+	write_csr(dd, DC_LCB_CFG_LOOPBACK, 0x2);
+
+	write_csr(dd, DC_LCB_CFG_TX_FIFOS_RESET, 0);
+	(void)read_csr(dd, DC_LCB_CFG_TX_FIFOS_RESET);
+	udelay(3);
+	write_csr(dd, DC_LCB_CFG_ALLOW_LINK_UP, 1);
+	write_csr(dd, DC_LCB_CFG_RUN, 1ull << DC_LCB_CFG_RUN_EN_SHIFT);
+
+	wait_link_transfer_active(dd, 100);
+
+	/*
+	 * Bring the link down again.
+	 */
+	write_csr(dd, DC_LCB_CFG_TX_FIFOS_RESET, 1);
+	write_csr(dd, DC_LCB_CFG_ALLOW_LINK_UP, 0);
+	write_csr(dd, DC_LCB_CFG_IGNORE_LOST_RCLK, 0);
+
+	/* call again to adjust ppd->statusp, if needed */
+	get_logical_state(ppd);
+}
+
 /*
  * Helper for set_link_state().  Do not call except from that routine.
  * Expects ppd->hls_mutex to be held.
@@ -10095,6 +10204,8 @@ static int goto_offline(struct hfi1_pportdata *ppd, u8 rem_reason)
 	int ret;
 	int do_transition;
 	int do_wait;
+
+	update_lcb_cache(dd);
 
 	previous_state = ppd->host_link_state;
 	ppd->host_link_state = HLS_GOING_OFFLINE;
@@ -10133,15 +10244,18 @@ static int goto_offline(struct hfi1_pportdata *ppd, u8 rem_reason)
 			return ret;
 	}
 
-	/* make sure the logical state is also down */
-	wait_logical_linkstate(ppd, IB_PORT_DOWN, 1000);
-
 	/*
 	 * Now in charge of LCB - must be after the physical state is
 	 * offline.quiet and before host_link_state is changed.
 	 */
 	set_host_lcb_access(dd);
 	write_csr(dd, DC_LCB_ERR_EN, ~0ull); /* watch LCB errors */
+
+	/* make sure the logical state is also down */
+	ret = wait_logical_linkstate(ppd, IB_PORT_DOWN, 1000);
+	if (ret)
+		force_logical_link_state_down(ppd);
+
 	ppd->host_link_state = HLS_LINK_COOLDOWN; /* LCB access allowed */
 
 	if (ppd->port_type == PORT_TYPE_QSFP &&
@@ -10508,16 +10622,18 @@ int set_link_state(struct hfi1_pportdata *ppd, u32 state)
 			ppd->remote_link_down_reason = 0;
 		}
 
-		ret1 = set_physical_link_state(dd, PLS_DISABLED);
-		if (ret1 != HCMD_SUCCESS) {
-			dd_dev_err(dd,
-				   "Failed to transition to Disabled link state, return 0x%x\n",
-				   ret1);
-			ret = -EINVAL;
-			break;
+		if (!dd->dc_shutdown) {
+			ret1 = set_physical_link_state(dd, PLS_DISABLED);
+			if (ret1 != HCMD_SUCCESS) {
+				dd_dev_err(dd,
+					   "Failed to transition to Disabled link state, return 0x%x\n",
+					   ret1);
+				ret = -EINVAL;
+				break;
+			}
+			dc_shutdown(dd);
 		}
 		ppd->host_link_state = HLS_DN_DISABLE;
-		dc_shutdown(dd);
 		break;
 	case HLS_DN_OFFLINE:
 		if (ppd->host_link_state == HLS_DN_DISABLE)

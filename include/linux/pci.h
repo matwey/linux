@@ -30,6 +30,7 @@
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/resource_ext.h>
+#include <linux/notifier.h>
 #include <uapi/linux/pci.h>
 
 #include <linux/pci_ids.h>
@@ -180,6 +181,12 @@ enum pci_dev_flags {
 	PCI_DEV_FLAGS_NO_PM_RESET = (__force pci_dev_flags_t) (1 << 7),
 	/* Get VPD from function 0 VPD */
 	PCI_DEV_FLAGS_VPD_REF_F0 = (__force pci_dev_flags_t) (1 << 8),
+	/* a non-root bridge where translation occurs, stop alias search here */
+	PCI_DEV_FLAGS_BRIDGE_XLATE_ROOT = (__force pci_dev_flags_t) (1 << 9),
+	/* Use Relaxed Ordering for TLPs directed at this device */
+	PCI_DEV_FLAGS_RELAXED_ORDERING = (__force pci_dev_flags_t) (1 << 10),
+	/* Do not use FLR even if device advertises PCI_AF_CAP */
+	PCI_DEV_FLAGS_NO_FLR_RESET = (__force pci_dev_flags_t) (1 << 11),
 };
 
 enum pci_irq_reroute_variant {
@@ -245,6 +252,7 @@ struct pci_cap_saved_state {
 	struct pci_cap_saved_data cap;
 };
 
+struct irq_affinity;
 struct pcie_link_state;
 struct pci_vpd;
 struct pci_sriov;
@@ -412,9 +420,13 @@ static inline int pci_channel_offline(struct pci_dev *pdev)
 struct pci_host_bridge {
 	struct device dev;
 	struct pci_bus *bus;		/* root bus */
+	struct pci_ops *ops;
+	void *sysdata;
+	int busnr;
 	struct list_head windows;	/* resource_entry */
 	void (*release_fn)(struct pci_host_bridge *);
 	void *release_data;
+	struct msi_controller *msi;
 	unsigned int ignore_reset_delay:1;	/* for entire hierarchy */
 	/* Resource alignment requirements */
 	resource_size_t (*align_resource)(struct pci_dev *dev,
@@ -422,10 +434,23 @@ struct pci_host_bridge {
 			resource_size_t start,
 			resource_size_t size,
 			resource_size_t align);
+	unsigned long private[0] ____cacheline_aligned;
 };
 
 #define	to_pci_host_bridge(n) container_of(n, struct pci_host_bridge, dev)
 
+static inline void *pci_host_bridge_priv(struct pci_host_bridge *bridge)
+{
+	return (void *)bridge->private;
+}
+
+static inline struct pci_host_bridge *pci_host_bridge_from_priv(void *priv)
+{
+	return container_of(priv, struct pci_host_bridge, private);
+}
+
+struct pci_host_bridge *pci_alloc_host_bridge(size_t priv);
+int pci_register_host_bridge(struct pci_host_bridge *bridge);
 struct pci_host_bridge *pci_find_host_bridge(struct pci_bus *bus);
 
 void pci_set_host_bridge_release(struct pci_host_bridge *bridge,
@@ -1022,9 +1047,11 @@ int pcie_get_mps(struct pci_dev *dev);
 int pcie_set_mps(struct pci_dev *dev, int mps);
 int pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
 			  enum pcie_link_width *width);
+void pcie_flr(struct pci_dev *dev);
 int __pci_reset_function(struct pci_dev *dev);
 int __pci_reset_function_locked(struct pci_dev *dev);
 int pci_reset_function(struct pci_dev *dev);
+int pci_reset_function_locked(struct pci_dev *dev);
 int pci_try_reset_function(struct pci_dev *dev);
 int pci_probe_reset_slot(struct pci_slot *slot);
 int pci_reset_slot(struct pci_slot *slot);
@@ -1041,6 +1068,13 @@ int __must_check pci_reassign_resource(struct pci_dev *dev, int i, resource_size
 int pci_select_bars(struct pci_dev *dev, unsigned long flags);
 bool pci_device_is_present(struct pci_dev *pdev);
 void pci_ignore_hotplug(struct pci_dev *dev);
+
+struct pci_bar_update_info {
+	u64 old_start;
+	u64 new_start;
+	u64 size;
+};
+int pci_notify_on_update_resource(struct notifier_block *nb);
 
 /* ROM control related routines */
 int pci_enable_rom(struct pci_dev *pdev);
@@ -1234,6 +1268,14 @@ resource_size_t pcibios_iov_resource_alignment(struct pci_dev *dev, int resno);
 
 int pci_set_vga_state(struct pci_dev *pdev, bool decode,
 		      unsigned int command_bits, u32 flags);
+
+#define PCI_IRQ_LEGACY		(1 << 0) /* allow legacy interrupts */
+#define PCI_IRQ_MSI		(1 << 1) /* allow MSI interrupts */
+#define PCI_IRQ_MSIX		(1 << 2) /* allow MSI-X interrupts */
+#define PCI_IRQ_AFFINITY	(1 << 3) /* auto-assign affinity */
+#define PCI_IRQ_ALL_TYPES \
+	(PCI_IRQ_LEGACY | PCI_IRQ_MSI | PCI_IRQ_MSIX)
+
 /* kmem_cache style wrapper around pci_alloc_consistent() */
 
 #include <linux/pci-dma.h>
@@ -1252,8 +1294,6 @@ struct msix_entry {
 	u32	vector;	/* kernel uses to write allocated vector */
 	u16	entry;	/* driver uses to specify entry, OS writes */
 };
-
-void pci_msi_setup_pci_dev(struct pci_dev *dev);
 
 #ifdef CONFIG_PCI_MSI
 int pci_msi_vec_count(struct pci_dev *dev);
@@ -1283,6 +1323,14 @@ static inline int pci_enable_msix_exact(struct pci_dev *dev,
 		return rc;
 	return 0;
 }
+int pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
+				   unsigned int max_vecs, unsigned int flags,
+				   const struct irq_affinity *affd);
+
+void pci_free_irq_vectors(struct pci_dev *dev);
+int pci_irq_vector(struct pci_dev *dev, unsigned int nr);
+const struct cpumask *pci_irq_get_affinity(struct pci_dev *pdev, int vec);
+
 #else
 static inline int pci_msi_vec_count(struct pci_dev *dev) { return -ENOSYS; }
 static inline void pci_msi_shutdown(struct pci_dev *dev) { }
@@ -1306,7 +1354,41 @@ static inline int pci_enable_msix_range(struct pci_dev *dev,
 static inline int pci_enable_msix_exact(struct pci_dev *dev,
 		      struct msix_entry *entries, int nvec)
 { return -ENOSYS; }
+
+static inline int
+pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
+			       unsigned int max_vecs, unsigned int flags,
+			       const struct irq_affinity *aff_desc)
+{
+	if ((flags & PCI_IRQ_LEGACY) && min_vecs == 1 && dev->irq)
+		return 1;
+	return -ENOSPC;
+}
+
+static inline void pci_free_irq_vectors(struct pci_dev *dev)
+{
+}
+
+static inline int pci_irq_vector(struct pci_dev *dev, unsigned int nr)
+{
+	if (WARN_ON_ONCE(nr > 0))
+		return -EINVAL;
+	return dev->irq;
+}
+static inline const struct cpumask *pci_irq_get_affinity(struct pci_dev *pdev,
+		int vec)
+{
+	return cpu_possible_mask;
+}
 #endif
+
+static inline int
+pci_alloc_irq_vectors(struct pci_dev *dev, unsigned int min_vecs,
+		      unsigned int max_vecs, unsigned int flags)
+{
+	return pci_alloc_irq_vectors_affinity(dev, min_vecs, max_vecs, flags,
+					      NULL);
+}
 
 #ifdef CONFIG_PCIEPORTBUS
 extern bool pcie_ports_disabled;
@@ -1700,7 +1782,7 @@ enum pci_fixup_pass {
 #ifdef CONFIG_PCI_QUIRKS
 void pci_fixup_device(enum pci_fixup_pass pass, struct pci_dev *dev);
 int pci_dev_specific_acs_enabled(struct pci_dev *dev, u16 acs_flags);
-void pci_dev_specific_enable_acs(struct pci_dev *dev);
+int pci_dev_specific_enable_acs(struct pci_dev *dev);
 #else
 static inline void pci_fixup_device(enum pci_fixup_pass pass,
 				    struct pci_dev *dev) { }
@@ -1709,7 +1791,10 @@ static inline int pci_dev_specific_acs_enabled(struct pci_dev *dev,
 {
 	return -ENOTTY;
 }
-static inline void pci_dev_specific_enable_acs(struct pci_dev *dev) { }
+static inline int pci_dev_specific_enable_acs(struct pci_dev *dev)
+{
+	return -ENOTTY;
+}
 #endif
 
 void __iomem *pcim_iomap(struct pci_dev *pdev, int bar, unsigned long maxlen);

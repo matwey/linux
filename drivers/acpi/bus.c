@@ -30,9 +30,13 @@
 #include <linux/acpi.h>
 #include <linux/slab.h>
 #include <linux/regulator/machine.h>
+#include <linux/workqueue.h>
+#include <linux/reboot.h>
+#include <linux/delay.h>
 #ifdef CONFIG_X86
 #include <asm/mpspec.h>
 #endif
+#include <linux/acpi_iort.h>
 #include <linux/pci.h>
 #include <acpi/apei.h>
 #include <linux/dmi.h>
@@ -301,6 +305,14 @@ out_kfree:
 EXPORT_SYMBOL(acpi_run_osc);
 
 bool osc_sb_apei_support_acked;
+
+/*
+ * ACPI 6.0 Section 8.4.4.2 Idle State Coordination
+ * OSPM supports platform coordinated low power idle(LPI) states
+ */
+bool osc_pc_lpi_support_confirmed;
+EXPORT_SYMBOL_GPL(osc_pc_lpi_support_confirmed);
+
 static u8 sb_uuid_str[] = "0811B06E-4A27-44F9-8D60-3CBBC22E7B48";
 static void acpi_bus_osc_support(void)
 {
@@ -321,6 +333,7 @@ static void acpi_bus_osc_support(void)
 		capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_PPC_OST_SUPPORT;
 
 	capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_HOTPLUG_OST_SUPPORT;
+	capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_PCLPI_SUPPORT;
 
 	if (!ghes_disable)
 		capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_APEI_SUPPORT;
@@ -328,9 +341,12 @@ static void acpi_bus_osc_support(void)
 		return;
 	if (ACPI_SUCCESS(acpi_run_osc(handle, &context))) {
 		u32 *capbuf_ret = context.ret.pointer;
-		if (context.ret.length > OSC_SUPPORT_DWORD)
+		if (context.ret.length > OSC_SUPPORT_DWORD) {
 			osc_sb_apei_support_acked =
 				capbuf_ret[OSC_SUPPORT_DWORD] & OSC_SB_APEI_SUPPORT;
+			osc_pc_lpi_support_confirmed =
+				capbuf_ret[OSC_SUPPORT_DWORD] & OSC_SB_PCLPI_SUPPORT;
+		}
 		kfree(context.ret.pointer);
 	}
 	/* do we need to check other returned cap? Sounds no */
@@ -472,6 +488,56 @@ static void acpi_device_remove_notify_handler(struct acpi_device *device)
 	else
 		acpi_remove_notify_handler(device->handle, ACPI_DEVICE_NOTIFY,
 					   acpi_device_notify);
+}
+
+/* Handle events targeting \_SB device (at present only graceful shutdown) */
+
+#define ACPI_SB_NOTIFY_SHUTDOWN_REQUEST 0x81
+#define ACPI_SB_INDICATE_INTERVAL	10000
+
+static void sb_notify_work(struct work_struct *dummy)
+{
+	acpi_handle sb_handle;
+
+	orderly_poweroff(true);
+
+	/*
+	 * After initiating graceful shutdown, the ACPI spec requires OSPM
+	 * to evaluate _OST method once every 10seconds to indicate that
+	 * the shutdown is in progress
+	 */
+	acpi_get_handle(NULL, "\\_SB", &sb_handle);
+	while (1) {
+		pr_info("Graceful shutdown in progress.\n");
+		acpi_evaluate_ost(sb_handle, ACPI_OST_EC_OSPM_SHUTDOWN,
+				ACPI_OST_SC_OS_SHUTDOWN_IN_PROGRESS, NULL);
+		msleep(ACPI_SB_INDICATE_INTERVAL);
+	}
+}
+
+static void acpi_sb_notify(acpi_handle handle, u32 event, void *data)
+{
+	static DECLARE_WORK(acpi_sb_work, sb_notify_work);
+
+	if (event == ACPI_SB_NOTIFY_SHUTDOWN_REQUEST) {
+		if (!work_busy(&acpi_sb_work))
+			schedule_work(&acpi_sb_work);
+	} else
+		pr_warn("event %x is not supported by \\_SB device\n", event);
+}
+
+static int __init acpi_setup_sb_notify_handler(void)
+{
+	acpi_handle sb_handle;
+
+	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &sb_handle)))
+		return -ENXIO;
+
+	if (ACPI_FAILURE(acpi_install_notify_handler(sb_handle, ACPI_DEVICE_NOTIFY,
+						acpi_sb_notify, NULL)))
+		return -EINVAL;
+
+	return 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -1092,11 +1158,13 @@ static int __init acpi_init(void)
 	}
 
 	pci_mmcfg_late_init();
+	acpi_iort_init();
 	acpi_scan_init();
 	acpi_ec_init();
 	acpi_debugfs_init();
 	acpi_sleep_proc_init();
 	acpi_wakeup_device_init();
+	acpi_setup_sb_notify_handler();
 	return 0;
 }
 

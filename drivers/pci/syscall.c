@@ -10,7 +10,8 @@
 #include <linux/errno.h>
 #include <linux/pci.h>
 #include <linux/syscalls.h>
-#include <asm/uaccess.h>
+#include <linux/security.h>
+#include <linux/uaccess.h>
 #include "pci.h"
 
 SYSCALL_DEFINE5(pciconfig_read, unsigned long, bus, unsigned long, dfn,
@@ -92,7 +93,7 @@ SYSCALL_DEFINE5(pciconfig_write, unsigned long, bus, unsigned long, dfn,
 	u32 dword;
 	int err = 0;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_ADMIN) || (get_securelevel() > 0))
 		return -EPERM;
 
 	dev = pci_get_bus_and_slot(bus, dfn);

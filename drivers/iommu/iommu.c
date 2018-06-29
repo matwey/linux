@@ -31,11 +31,18 @@
 #include <linux/err.h>
 #include <linux/pci.h>
 #include <linux/bitops.h>
+#include <linux/property.h>
 #include <trace/events/iommu.h>
 
 static struct kset *iommu_group_kset;
 static struct ida iommu_group_ida;
 static struct mutex iommu_group_mutex;
+
+#ifdef CONFIG_ARM64
+static unsigned int iommu_def_domain_type = IOMMU_DOMAIN_IDENTITY;
+#else
+static unsigned int iommu_def_domain_type = IOMMU_DOMAIN_DMA;
+#endif
 
 struct iommu_callback_data {
 	const struct iommu_ops *ops;
@@ -68,6 +75,13 @@ struct iommu_group_attribute {
 			 const char *buf, size_t count);
 };
 
+static const char * const iommu_group_resv_type_string[] = {
+	[IOMMU_RESV_DIRECT]	= "direct",
+	[IOMMU_RESV_RESERVED]	= "reserved",
+	[IOMMU_RESV_MSI]	= "msi",
+	[IOMMU_RESV_SW_MSI]	= "msi",
+};
+
 #define IOMMU_GROUP_ATTR(_name, _mode, _show, _store)		\
 struct iommu_group_attribute iommu_group_attr_##_name =		\
 	__ATTR(_name, _mode, _show, _store)
@@ -85,6 +99,18 @@ static int __iommu_attach_group(struct iommu_domain *domain,
 				struct iommu_group *group);
 static void __iommu_detach_group(struct iommu_domain *domain,
 				 struct iommu_group *group);
+
+static int __init iommu_set_def_domain_type(char *str)
+{
+	bool pt;
+
+	if (!str || strtobool(str, &pt))
+		return -EINVAL;
+
+	iommu_def_domain_type = pt ? IOMMU_DOMAIN_IDENTITY : IOMMU_DOMAIN_DMA;
+	return 0;
+}
+early_param("iommu.passthrough", iommu_set_def_domain_type);
 
 static ssize_t iommu_group_attr_show(struct kobject *kobj,
 				     struct attribute *__attr, char *buf)
@@ -133,7 +159,130 @@ static ssize_t iommu_group_show_name(struct iommu_group *group, char *buf)
 	return sprintf(buf, "%s\n", group->name);
 }
 
+/**
+ * iommu_insert_resv_region - Insert a new region in the
+ * list of reserved regions.
+ * @new: new region to insert
+ * @regions: list of regions
+ *
+ * The new element is sorted by address with respect to the other
+ * regions of the same type. In case it overlaps with another
+ * region of the same type, regions are merged. In case it
+ * overlaps with another region of different type, regions are
+ * not merged.
+ */
+static int iommu_insert_resv_region(struct iommu_resv_region *new,
+				    struct list_head *regions)
+{
+	struct iommu_resv_region *region;
+	phys_addr_t start = new->start;
+	phys_addr_t end = new->start + new->length - 1;
+	struct list_head *pos = regions->next;
+
+	while (pos != regions) {
+		struct iommu_resv_region *entry =
+			list_entry(pos, struct iommu_resv_region, list);
+		phys_addr_t a = entry->start;
+		phys_addr_t b = entry->start + entry->length - 1;
+		int type = entry->type;
+
+		if (end < a) {
+			goto insert;
+		} else if (start > b) {
+			pos = pos->next;
+		} else if ((start >= a) && (end <= b)) {
+			if (new->type == type)
+				goto done;
+			else
+				pos = pos->next;
+		} else {
+			if (new->type == type) {
+				phys_addr_t new_start = min(a, start);
+				phys_addr_t new_end = max(b, end);
+
+				list_del(&entry->list);
+				entry->start = new_start;
+				entry->length = new_end - new_start + 1;
+				iommu_insert_resv_region(entry, regions);
+			} else {
+				pos = pos->next;
+			}
+		}
+	}
+insert:
+	region = iommu_alloc_resv_region(new->start, new->length,
+					 new->prot, new->type);
+	if (!region)
+		return -ENOMEM;
+
+	list_add_tail(&region->list, pos);
+done:
+	return 0;
+}
+
+static int
+iommu_insert_device_resv_regions(struct list_head *dev_resv_regions,
+				 struct list_head *group_resv_regions)
+{
+	struct iommu_resv_region *entry;
+	int ret;
+
+	list_for_each_entry(entry, dev_resv_regions, list) {
+		ret = iommu_insert_resv_region(entry, group_resv_regions);
+		if (ret)
+			break;
+	}
+	return ret;
+}
+
+int iommu_get_group_resv_regions(struct iommu_group *group,
+				 struct list_head *head)
+{
+	struct iommu_device *device;
+	int ret = 0;
+
+	mutex_lock(&group->mutex);
+	list_for_each_entry(device, &group->devices, list) {
+		struct list_head dev_resv_regions;
+
+		INIT_LIST_HEAD(&dev_resv_regions);
+		iommu_get_resv_regions(device->dev, &dev_resv_regions);
+		ret = iommu_insert_device_resv_regions(&dev_resv_regions, head);
+		iommu_put_resv_regions(device->dev, &dev_resv_regions);
+		if (ret)
+			break;
+	}
+	mutex_unlock(&group->mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iommu_get_group_resv_regions);
+
+static ssize_t iommu_group_show_resv_regions(struct iommu_group *group,
+					     char *buf)
+{
+	struct iommu_resv_region *region, *next;
+	struct list_head group_resv_regions;
+	char *str = buf;
+
+	INIT_LIST_HEAD(&group_resv_regions);
+	iommu_get_group_resv_regions(group, &group_resv_regions);
+
+	list_for_each_entry_safe(region, next, &group_resv_regions, list) {
+		str += sprintf(str, "0x%016llx 0x%016llx %s\n",
+			       (long long int)region->start,
+			       (long long int)(region->start +
+						region->length - 1),
+			       iommu_group_resv_type_string[region->type]);
+		kfree(region);
+	}
+
+	return (str - buf);
+}
+
 static IOMMU_GROUP_ATTR(name, S_IRUGO, iommu_group_show_name, NULL);
+
+static IOMMU_GROUP_ATTR(reserved_regions, 0444,
+			iommu_group_show_resv_regions, NULL);
 
 static void iommu_group_release(struct kobject *kobj)
 {
@@ -222,6 +371,11 @@ again:
 	 * use the devices_kobj for reference counting.
 	 */
 	kobject_put(&group->kobj);
+
+	ret = iommu_group_create_file(group,
+				      &iommu_group_attr_reserved_regions);
+	if (ret)
+		return ERR_PTR(ret);
 
 	pr_debug("Allocated group %d\n", group->id);
 
@@ -329,7 +483,7 @@ static int iommu_group_create_direct_mappings(struct iommu_group *group,
 					      struct device *dev)
 {
 	struct iommu_domain *domain = group->default_domain;
-	struct iommu_dm_region *entry;
+	struct iommu_resv_region *entry;
 	struct list_head mappings;
 	unsigned long pg_size;
 	int ret = 0;
@@ -342,14 +496,20 @@ static int iommu_group_create_direct_mappings(struct iommu_group *group,
 	pg_size = 1UL << __ffs(domain->ops->pgsize_bitmap);
 	INIT_LIST_HEAD(&mappings);
 
-	iommu_get_dm_regions(dev, &mappings);
+	iommu_get_resv_regions(dev, &mappings);
 
 	/* We need to consider overlapping regions for different devices */
 	list_for_each_entry(entry, &mappings, list) {
 		dma_addr_t start, end, addr;
 
+		if (domain->ops->apply_resv_region)
+			domain->ops->apply_resv_region(dev, domain, entry);
+
 		start = ALIGN(entry->start, pg_size);
 		end   = ALIGN(entry->start + entry->length, pg_size);
+
+		if (entry->type != IOMMU_RESV_DIRECT)
+			continue;
 
 		for (addr = start; addr < end; addr += pg_size) {
 			phys_addr_t phys_addr;
@@ -366,7 +526,7 @@ static int iommu_group_create_direct_mappings(struct iommu_group *group,
 	}
 
 out:
-	iommu_put_dm_regions(dev, &mappings);
+	iommu_put_resv_regions(dev, &mappings);
 
 	return ret;
 }
@@ -853,10 +1013,19 @@ struct iommu_group *iommu_group_get_for_dev(struct device *dev)
 	 * IOMMU driver.
 	 */
 	if (!group->default_domain) {
-		group->default_domain = __iommu_domain_alloc(dev->bus,
-							     IOMMU_DOMAIN_DMA);
+		struct iommu_domain *dom;
+
+		dom = __iommu_domain_alloc(dev->bus, iommu_def_domain_type);
+		if (!dom && iommu_def_domain_type != IOMMU_DOMAIN_DMA) {
+			dev_warn(dev,
+				 "failed to allocate default IOMMU domain of type %u; falling back to IOMMU_DOMAIN_DMA",
+				 iommu_def_domain_type);
+			dom = __iommu_domain_alloc(dev->bus, IOMMU_DOMAIN_DMA);
+		}
+
+		group->default_domain = dom;
 		if (!group->domain)
-			group->domain = group->default_domain;
+			group->domain = dom;
 	}
 
 	ret = iommu_group_add_device(group, dev);
@@ -1565,20 +1734,38 @@ int iommu_domain_set_attr(struct iommu_domain *domain,
 }
 EXPORT_SYMBOL_GPL(iommu_domain_set_attr);
 
-void iommu_get_dm_regions(struct device *dev, struct list_head *list)
+void iommu_get_resv_regions(struct device *dev, struct list_head *list)
 {
 	const struct iommu_ops *ops = dev->bus->iommu_ops;
 
-	if (ops && ops->get_dm_regions)
-		ops->get_dm_regions(dev, list);
+	if (ops && ops->get_resv_regions)
+		ops->get_resv_regions(dev, list);
 }
 
-void iommu_put_dm_regions(struct device *dev, struct list_head *list)
+void iommu_put_resv_regions(struct device *dev, struct list_head *list)
 {
 	const struct iommu_ops *ops = dev->bus->iommu_ops;
 
-	if (ops && ops->put_dm_regions)
-		ops->put_dm_regions(dev, list);
+	if (ops && ops->put_resv_regions)
+		ops->put_resv_regions(dev, list);
+}
+
+struct iommu_resv_region *iommu_alloc_resv_region(phys_addr_t start,
+						  size_t length, int prot,
+						  enum iommu_resv_type type)
+{
+	struct iommu_resv_region *region;
+
+	region = kzalloc(sizeof(*region), GFP_KERNEL);
+	if (!region)
+		return NULL;
+
+	INIT_LIST_HEAD(&region->list);
+	region->start = start;
+	region->length = length;
+	region->prot = prot;
+	region->type = type;
+	return region;
 }
 
 /* Request that a device is direct mapped by the IOMMU */
@@ -1633,3 +1820,100 @@ out:
 
 	return ret;
 }
+
+struct iommu_instance {
+	struct list_head list;
+	struct fwnode_handle *fwnode;
+	const struct iommu_ops *ops;
+};
+static LIST_HEAD(iommu_instance_list);
+static DEFINE_SPINLOCK(iommu_instance_lock);
+
+void iommu_register_instance(struct fwnode_handle *fwnode,
+			     const struct iommu_ops *ops)
+{
+	struct iommu_instance *iommu = kzalloc(sizeof(*iommu), GFP_KERNEL);
+
+	if (WARN_ON(!iommu))
+		return;
+
+	of_node_get(to_of_node(fwnode));
+	INIT_LIST_HEAD(&iommu->list);
+	iommu->fwnode = fwnode;
+	iommu->ops = ops;
+	spin_lock(&iommu_instance_lock);
+	list_add_tail(&iommu->list, &iommu_instance_list);
+	spin_unlock(&iommu_instance_lock);
+}
+
+const struct iommu_ops *iommu_get_instance(struct fwnode_handle *fwnode)
+{
+	struct iommu_instance *instance;
+	const struct iommu_ops *ops = NULL;
+
+	spin_lock(&iommu_instance_lock);
+	list_for_each_entry(instance, &iommu_instance_list, list)
+		if (instance->fwnode == fwnode) {
+			ops = instance->ops;
+			break;
+		}
+	spin_unlock(&iommu_instance_lock);
+	return ops;
+}
+
+int iommu_fwspec_init(struct device *dev, struct fwnode_handle *iommu_fwnode,
+		      const struct iommu_ops *ops)
+{
+	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+
+	if (fwspec)
+		return ops == fwspec->ops ? 0 : -EINVAL;
+
+	fwspec = kzalloc(sizeof(*fwspec), GFP_KERNEL);
+	if (!fwspec)
+		return -ENOMEM;
+
+	of_node_get(to_of_node(iommu_fwnode));
+	fwspec->iommu_fwnode = iommu_fwnode;
+	fwspec->ops = ops;
+	dev->iommu_fwspec = fwspec;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_fwspec_init);
+
+void iommu_fwspec_free(struct device *dev)
+{
+	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+
+	if (fwspec) {
+		fwnode_handle_put(fwspec->iommu_fwnode);
+		kfree(fwspec);
+		dev->iommu_fwspec = NULL;
+	}
+}
+EXPORT_SYMBOL_GPL(iommu_fwspec_free);
+
+int iommu_fwspec_add_ids(struct device *dev, u32 *ids, int num_ids)
+{
+	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+	size_t size;
+	int i;
+
+	if (!fwspec)
+		return -EINVAL;
+
+	size = offsetof(struct iommu_fwspec, ids[fwspec->num_ids + num_ids]);
+	if (size > sizeof(*fwspec)) {
+		fwspec = krealloc(dev->iommu_fwspec, size, GFP_KERNEL);
+		if (!fwspec)
+			return -ENOMEM;
+	}
+
+	for (i = 0; i < num_ids; i++)
+		fwspec->ids[fwspec->num_ids + i] = ids[i];
+
+	fwspec->num_ids += num_ids;
+	dev->iommu_fwspec = fwspec;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_fwspec_add_ids);

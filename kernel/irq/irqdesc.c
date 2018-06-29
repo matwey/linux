@@ -51,9 +51,13 @@ static int alloc_masks(struct irq_desc *desc, gfp_t gfp, int node)
 	return 0;
 }
 
-static void desc_smp_init(struct irq_desc *desc, int node)
+static void desc_smp_init(struct irq_desc *desc, int node,
+			  const struct cpumask *affinity)
 {
-	cpumask_copy(desc->irq_common_data.affinity, irq_default_affinity);
+	if (!affinity)
+		affinity = irq_default_affinity;
+	cpumask_copy(desc->irq_common_data.affinity, affinity);
+
 #ifdef CONFIG_GENERIC_PENDING_IRQ
 	cpumask_clear(desc->pending_mask);
 #endif
@@ -65,11 +69,12 @@ static void desc_smp_init(struct irq_desc *desc, int node)
 #else
 static inline int
 alloc_masks(struct irq_desc *desc, gfp_t gfp, int node) { return 0; }
-static inline void desc_smp_init(struct irq_desc *desc, int node) { }
+static inline void
+desc_smp_init(struct irq_desc *desc, int node, const struct cpumask *affinity) { }
 #endif
 
 static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,
-		struct module *owner)
+			      const struct cpumask *affinity, struct module *owner)
 {
 	int cpu;
 
@@ -90,7 +95,7 @@ static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,
 	desc->owner = owner;
 	for_each_possible_cpu(cpu)
 		*per_cpu_ptr(desc->kstat_irqs, cpu) = 0;
-	desc_smp_init(desc, node);
+	desc_smp_init(desc, node, affinity);
 }
 
 int nr_irqs = NR_IRQS;
@@ -141,7 +146,9 @@ void irq_unlock_sparse(void)
 	mutex_unlock(&sparse_irq_lock);
 }
 
-static struct irq_desc *alloc_desc(int irq, int node, struct module *owner)
+static struct irq_desc *alloc_desc(int irq, int node, unsigned int flags,
+				   const struct cpumask *affinity,
+				   struct module *owner)
 {
 	struct irq_desc *desc;
 	gfp_t gfp = GFP_KERNEL;
@@ -160,7 +167,8 @@ static struct irq_desc *alloc_desc(int irq, int node, struct module *owner)
 	raw_spin_lock_init(&desc->lock);
 	lockdep_set_class(&desc->lock, &irq_desc_lock_class);
 
-	desc_set_defaults(irq, desc, node, owner);
+	desc_set_defaults(irq, desc, node, affinity, owner);
+	irqd_set(&desc->irq_data, flags);
 
 	return desc;
 
@@ -193,13 +201,31 @@ static void free_desc(unsigned int irq)
 }
 
 static int alloc_descs(unsigned int start, unsigned int cnt, int node,
-		       struct module *owner)
+		       const struct cpumask *affinity, struct module *owner)
 {
+	const struct cpumask *mask = NULL;
 	struct irq_desc *desc;
+	unsigned int flags;
 	int i;
 
+	/* Validate affinity mask(s) */
+	if (affinity) {
+		for (i = 0, mask = affinity; i < cnt; i++, mask++) {
+			if (cpumask_empty(mask))
+				return -EINVAL;
+		}
+	}
+
+	flags = affinity ? IRQD_AFFINITY_MANAGED : 0;
+	mask = NULL;
+
 	for (i = 0; i < cnt; i++) {
-		desc = alloc_desc(start + i, node, owner);
+		if (affinity) {
+			node = cpu_to_node(cpumask_first(affinity));
+			mask = affinity;
+			affinity++;
+		}
+		desc = alloc_desc(start + i, node, flags, mask, owner);
 		if (!desc)
 			goto err;
 		mutex_lock(&sparse_irq_lock);
@@ -247,7 +273,7 @@ int __init early_irq_init(void)
 		nr_irqs = initcnt;
 
 	for (i = 0; i < initcnt; i++) {
-		desc = alloc_desc(i, node, NULL);
+		desc = alloc_desc(i, node, 0, NULL, NULL);
 		set_bit(i, allocated_irqs);
 		irq_insert_desc(i, desc);
 	}
@@ -281,7 +307,7 @@ int __init early_irq_init(void)
 		alloc_masks(&desc[i], GFP_KERNEL, node);
 		raw_spin_lock_init(&desc[i].lock);
 		lockdep_set_class(&desc[i].lock, &irq_desc_lock_class);
-		desc_set_defaults(i, &desc[i], node, NULL);
+		desc_set_defaults(i, &desc[i], node, NULL, NULL);
 	}
 	return arch_early_irq_init();
 }
@@ -298,11 +324,12 @@ static void free_desc(unsigned int irq)
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&desc->lock, flags);
-	desc_set_defaults(irq, desc, irq_desc_get_node(desc), NULL);
+	desc_set_defaults(irq, desc, irq_desc_get_node(desc), NULL, NULL);
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
 }
 
 static inline int alloc_descs(unsigned int start, unsigned int cnt, int node,
+			      const struct cpumask *affinity,
 			      struct module *owner)
 {
 	u32 i;
@@ -423,12 +450,15 @@ EXPORT_SYMBOL_GPL(irq_free_descs);
  * @cnt:	Number of consecutive irqs to allocate.
  * @node:	Preferred node on which the irq descriptor should be allocated
  * @owner:	Owning module (can be NULL)
+ * @affinity:	Optional pointer to an affinity mask array of size @cnt which
+ *		hints where the irq descriptors should be allocated and which
+ *		default affinities to use
  *
  * Returns the first irq number or error code
  */
 int __ref
 __irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node,
-		  struct module *owner)
+		  struct module *owner, const struct cpumask *affinity)
 {
 	int start, ret;
 
@@ -464,7 +494,7 @@ __irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node,
 
 	bitmap_set(allocated_irqs, start, cnt);
 	mutex_unlock(&sparse_irq_lock);
-	return alloc_descs(start, cnt, node, owner);
+	return alloc_descs(start, cnt, node, affinity, owner);
 
 err:
 	mutex_unlock(&sparse_irq_lock);
@@ -482,7 +512,7 @@ EXPORT_SYMBOL_GPL(__irq_alloc_descs);
  */
 unsigned int irq_alloc_hwirqs(int cnt, int node)
 {
-	int i, irq = __irq_alloc_descs(-1, 0, cnt, node, NULL);
+	int i, irq = __irq_alloc_descs(-1, 0, cnt, node, NULL, NULL);
 
 	if (irq < 0)
 		return 0;

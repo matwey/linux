@@ -41,6 +41,9 @@
 #define KVM_USER_MEM_SLOTS 32
 #define KVM_MEM_SLOTS_NUM KVM_USER_MEM_SLOTS
 
+#include <asm/cputhreads.h>
+#define KVM_MAX_VCPU_ID                (threads_per_subcore * KVM_MAX_VCORES)
+
 #ifdef CONFIG_KVM_MMIO
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
 #endif
@@ -286,7 +289,7 @@ struct kvmppc_vcore {
 	struct list_head runnable_threads;
 	struct list_head preempt_list;
 	spinlock_t lock;
-	wait_queue_head_t wq;
+	struct swait_queue_head wq;
 	spinlock_t stoltb_lock;	/* protects stolen_tb and preempt_tb */
 	u64 stolen_tb;
 	u64 preempt_tb;
@@ -297,6 +300,7 @@ struct kvmppc_vcore {
 	u32 arch_compat;
 	ulong pcr;
 	ulong dpdes;		/* doorbell state (POWER8) */
+	ulong vtb;		/* virtual timebase */
 	ulong conferring_threads;
 };
 
@@ -473,7 +477,6 @@ struct kvm_vcpu_arch {
 	ulong purr;
 	ulong spurr;
 	ulong ic;
-	ulong vtb;
 	ulong dscr;
 	ulong amr;
 	ulong uamor;
@@ -627,7 +630,7 @@ struct kvm_vcpu_arch {
 	u8 prodded;
 	u32 last_inst;
 
-	wait_queue_head_t *wqp;
+	struct swait_queue_head *wqp;
 	struct kvmppc_vcore *vcore;
 	int ret;
 	int trap;

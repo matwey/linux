@@ -44,6 +44,10 @@
 #include <asm/pat.h>
 #include <asm/microcode.h>
 #include <asm/microcode_intel.h>
+#include <asm/intel-family.h>
+#ifndef __GENKSYMS__
+#include <asm/cpu_device_id.h>
+#endif
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/uv/uv.h>
@@ -729,6 +733,41 @@ static void apply_forced_caps(struct cpuinfo_x86 *c)
 	}
 }
 
+static void init_speculation_control(struct cpuinfo_x86 *c)
+{
+	/*
+	 * The Intel SPEC_CTRL CPUID bit implies IBRS and IBPB support,
+	 * and they also have a different bit for STIBP support. Also,
+	 * a hypervisor might have set the individual AMD bits even on
+	 * Intel CPUs, for finer-grained selection of what's available.
+	 */
+	if (cpu_has(c, X86_FEATURE_SPEC_CTRL)) {
+//		set_cpu_cap(c, X86_FEATURE_IBRS);
+		set_cpu_cap(c, X86_FEATURE_IBPB);
+		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+	}
+
+	if (cpu_has(c, X86_FEATURE_INTEL_STIBP))
+		set_cpu_cap(c, X86_FEATURE_STIBP);
+
+	if (cpu_has(c, X86_FEATURE_SPEC_CTRL_SSBD) ||
+	    cpu_has(c, X86_FEATURE_VIRT_SSBD))
+		set_cpu_cap(c, X86_FEATURE_SSBD);
+
+	if (cpu_has(c, X86_FEATURE_AMD_IBRS)) {
+		set_cpu_cap(c, X86_FEATURE_SPEC_CTRL);
+		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+	}
+
+	if (cpu_has(c, X86_FEATURE_AMD_IBPB))
+		set_cpu_cap(c, X86_FEATURE_IBPB);
+
+	if (cpu_has(c, X86_FEATURE_AMD_STIBP)) {
+		set_cpu_cap(c, X86_FEATURE_STIBP);
+		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+	}
+}
+
 void get_cpu_cap(struct cpuinfo_x86 *c)
 {
 	u32 eax, ebx, ecx, edx;
@@ -814,6 +853,7 @@ void get_cpu_cap(struct cpuinfo_x86 *c)
 #endif
 
 	init_scattered_cpuid_features(c);
+	init_speculation_control(c);
 }
 
 static void identify_cpu_without_cpuid(struct cpuinfo_x86 *c)
@@ -840,6 +880,75 @@ static void identify_cpu_without_cpuid(struct cpuinfo_x86 *c)
 			}
 		}
 #endif
+}
+
+static const __initconst struct x86_cpu_id cpu_no_speculation[] = {
+	{ X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_CEDARVIEW,	X86_FEATURE_ANY },
+	{ X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_CLOVERVIEW,	X86_FEATURE_ANY },
+	{ X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_LINCROFT,	X86_FEATURE_ANY },
+	{ X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_PENWELL,	X86_FEATURE_ANY },
+	{ X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_PINEVIEW,	X86_FEATURE_ANY },
+	{ X86_VENDOR_CENTAUR,	5 },
+	{ X86_VENDOR_INTEL,	5 },
+	{ X86_VENDOR_NSC,	5 },
+	{ X86_VENDOR_ANY,	4 },
+	{}
+};
+
+static const __initconst struct x86_cpu_id cpu_no_meltdown[] = {
+	{ X86_VENDOR_AMD },
+	{}
+};
+
+static const __initconst struct x86_cpu_id cpu_no_spec_store_bypass[] = {
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PINEVIEW	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_LINCROFT	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PENWELL		},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_CLOVERVIEW	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_CEDARVIEW	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD	},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_CORE_YONAH		},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
+	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
+	{ X86_VENDOR_CENTAUR,	5,					},
+	{ X86_VENDOR_INTEL,	5,					},
+	{ X86_VENDOR_NSC,	5,					},
+	{ X86_VENDOR_AMD,	0x12,					},
+	{ X86_VENDOR_AMD,	0x11,					},
+	{ X86_VENDOR_AMD,	0x10,					},
+	{ X86_VENDOR_AMD,	0xf,					},
+	{ X86_VENDOR_ANY,	4,					},
+	{}
+};
+
+static void __init cpu_set_bug_bits(struct cpuinfo_x86 *c)
+{
+	u64 ia32_cap = 0;
+
+	if (cpu_has(c, X86_FEATURE_ARCH_CAPABILITIES))
+		rdmsrl(MSR_IA32_ARCH_CAPABILITIES, ia32_cap);
+
+	if (!x86_match_cpu(cpu_no_spec_store_bypass) &&
+	   !(ia32_cap & ARCH_CAP_SSB_NO))
+		setup_force_cpu_bug(X86_BUG_SPEC_STORE_BYPASS);
+
+	if (x86_match_cpu(cpu_no_speculation))
+		return;
+
+	setup_force_cpu_bug(X86_BUG_SPECTRE_V1);
+	setup_force_cpu_bug(X86_BUG_SPECTRE_V2);
+
+	if (x86_match_cpu(cpu_no_meltdown))
+		return;
+
+	/* Rogue Data Cache Load? No! */
+	if (ia32_cap & ARCH_CAP_RDCL_NO)
+		return;
+
+	setup_force_cpu_bug(X86_BUG_CPU_MELTDOWN);
 }
 
 /*
@@ -888,11 +997,7 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 
 	setup_force_cpu_cap(X86_FEATURE_ALWAYS);
 
-	if (c->x86_vendor != X86_VENDOR_AMD)
-		setup_force_cpu_bug(X86_BUG_CPU_MELTDOWN);
-
-	setup_force_cpu_bug(X86_BUG_SPECTRE_V1);
-	setup_force_cpu_bug(X86_BUG_SPECTRE_V2);
+	cpu_set_bug_bits(c);
 
 	fpu__init_system(c);
 
@@ -1182,6 +1287,7 @@ void identify_secondary_cpu(struct cpuinfo_x86 *c)
 	enable_sep_cpu();
 #endif
 	mtrr_ap_init();
+	x86_spec_ctrl_setup_ap();
 }
 
 struct msr_range {
@@ -1471,7 +1577,7 @@ void cpu_init(void)
 {
 	struct orig_ist *oist;
 	struct task_struct *me;
-	struct tss_struct *t;
+	struct tss_struct *t, *t_orig;
 	unsigned long v;
 	int cpu = stack_smp_processor_id();
 	int i;
@@ -1498,7 +1604,8 @@ void cpu_init(void)
 	 */
 	load_ucode_ap();
 
-	t = &per_cpu(cpu_tss, cpu);
+	t = &per_cpu(cpu_tss_tramp, cpu);
+	t_orig = &per_cpu(cpu_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 
 #ifdef CONFIG_NUMA
@@ -1549,23 +1656,46 @@ void cpu_init(void)
 	}
 
 	t->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
+	t_orig->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
 
 	/*
 	 * <= is required because the CPU will access up to
 	 * 8 bits beyond the end of the IO permission bitmap.
 	 */
-	for (i = 0; i <= IO_BITMAP_LONGS; i++)
+	for (i = 0; i <= IO_BITMAP_LONGS; i++) {
 		t->io_bitmap[i] = ~0UL;
+		t_orig->io_bitmap[i] = ~0UL;
+	}
 
 	atomic_inc(&init_mm.mm_count);
 	me->active_mm = &init_mm;
 	BUG_ON(me->mm);
 	enter_lazy_tlb(&init_mm, me);
 
+	load_sp0(t_orig, &current->thread);
+	/*
+	 * Initialize the TSS.  sp0 points to the entry trampoline stack
+	 * regardless of what task is running.
+	 *
+	 * load_sp0() is required for paravirt establishment of the vCPU sp0.
+	 */
+	v = current->thread.sp0;
+	current->thread.sp0 = (unsigned long)t + offsetofend(struct tss_struct,
+		SYSENTER_stack);
 	load_sp0(t, &current->thread);
+	WRITE_ONCE(t->x86_tss.sp0, current->thread.sp0);
+	/* Restore original value */
+	current->thread.sp0 = v;
+
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 	load_mm_ldt(&init_mm);
+
+	/*
+	 * Entry stack has to be 16-bytes aligned so that it can serve as stack
+	 * for IRQ handlers (INT instruction implicitly aligns %rsp to 16-bytes)
+	 */
+	BUILD_BUG_ON(offsetofend(struct tss_struct, SYSENTER_stack) % 16 != 0);
 
 	clear_all_debug_regs();
 	dbg_restore_debug_regs();

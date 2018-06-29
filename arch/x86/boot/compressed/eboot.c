@@ -12,6 +12,8 @@
 #include <asm/efi.h>
 #include <asm/setup.h>
 #include <asm/desc.h>
+#include <asm/bootparam_utils.h>
+#include <asm/suspend.h>
 
 #include "../string.h"
 #include "eboot.h"
@@ -30,12 +32,14 @@ static void setup_boot_services##bits(struct efi_config *c)		\
 {									\
 	efi_system_table_##bits##_t *table;				\
 	efi_boot_services_##bits##_t *bt;				\
+	efi_runtime_services_##bits##_t *rt;				\
 									\
 	table = (typeof(table))sys_table;				\
 									\
 	c->text_output = table->con_out;				\
 									\
 	bt = (typeof(bt))(unsigned long)(table->boottime);		\
+	rt = (typeof(rt))(unsigned long)(table->runtime);		\
 									\
 	c->allocate_pool = bt->allocate_pool;				\
 	c->allocate_pages = bt->allocate_pages;				\
@@ -45,6 +49,8 @@ static void setup_boot_services##bits(struct efi_config *c)		\
 	c->locate_handle = bt->locate_handle;				\
 	c->handle_protocol = bt->handle_protocol;			\
 	c->exit_boot_services = bt->exit_boot_services;			\
+	c->get_variable = rt->get_variable;				\
+	c->set_variable = rt->set_variable;				\
 }
 BOOT_SERVICES(32);
 BOOT_SERVICES(64);
@@ -573,312 +579,6 @@ free_handle:
 	efi_call_early(free_pool, pci_handle);
 }
 
-static void
-setup_pixel_info(struct screen_info *si, u32 pixels_per_scan_line,
-		 struct efi_pixel_bitmask pixel_info, int pixel_format)
-{
-	if (pixel_format == PIXEL_RGB_RESERVED_8BIT_PER_COLOR) {
-		si->lfb_depth = 32;
-		si->lfb_linelength = pixels_per_scan_line * 4;
-		si->red_size = 8;
-		si->red_pos = 0;
-		si->green_size = 8;
-		si->green_pos = 8;
-		si->blue_size = 8;
-		si->blue_pos = 16;
-		si->rsvd_size = 8;
-		si->rsvd_pos = 24;
-	} else if (pixel_format == PIXEL_BGR_RESERVED_8BIT_PER_COLOR) {
-		si->lfb_depth = 32;
-		si->lfb_linelength = pixels_per_scan_line * 4;
-		si->red_size = 8;
-		si->red_pos = 16;
-		si->green_size = 8;
-		si->green_pos = 8;
-		si->blue_size = 8;
-		si->blue_pos = 0;
-		si->rsvd_size = 8;
-		si->rsvd_pos = 24;
-	} else if (pixel_format == PIXEL_BIT_MASK) {
-		find_bits(pixel_info.red_mask, &si->red_pos, &si->red_size);
-		find_bits(pixel_info.green_mask, &si->green_pos,
-			  &si->green_size);
-		find_bits(pixel_info.blue_mask, &si->blue_pos, &si->blue_size);
-		find_bits(pixel_info.reserved_mask, &si->rsvd_pos,
-			  &si->rsvd_size);
-		si->lfb_depth = si->red_size + si->green_size +
-			si->blue_size + si->rsvd_size;
-		si->lfb_linelength = (pixels_per_scan_line * si->lfb_depth) / 8;
-	} else {
-		si->lfb_depth = 4;
-		si->lfb_linelength = si->lfb_width / 2;
-		si->red_size = 0;
-		si->red_pos = 0;
-		si->green_size = 0;
-		si->green_pos = 0;
-		si->blue_size = 0;
-		si->blue_pos = 0;
-		si->rsvd_size = 0;
-		si->rsvd_pos = 0;
-	}
-}
-
-static efi_status_t
-__gop_query32(struct efi_graphics_output_protocol_32 *gop32,
-	      struct efi_graphics_output_mode_info **info,
-	      unsigned long *size, u64 *fb_base)
-{
-	struct efi_graphics_output_protocol_mode_32 *mode;
-	efi_status_t status;
-	unsigned long m;
-
-	m = gop32->mode;
-	mode = (struct efi_graphics_output_protocol_mode_32 *)m;
-
-	status = efi_early->call(gop32->query_mode, gop32,
-				 mode->mode, size, info);
-	if (status != EFI_SUCCESS)
-		return status;
-
-	*fb_base = mode->frame_buffer_base;
-	return status;
-}
-
-static efi_status_t
-setup_gop32(struct screen_info *si, efi_guid_t *proto,
-	    unsigned long size, void **gop_handle)
-{
-	struct efi_graphics_output_protocol_32 *gop32, *first_gop;
-	unsigned long nr_gops;
-	u16 width, height;
-	u32 pixels_per_scan_line;
-	u32 ext_lfb_base;
-	u64 fb_base;
-	struct efi_pixel_bitmask pixel_info;
-	int pixel_format;
-	efi_status_t status;
-	u32 *handles = (u32 *)(unsigned long)gop_handle;
-	int i;
-
-	first_gop = NULL;
-	gop32 = NULL;
-
-	nr_gops = size / sizeof(u32);
-	for (i = 0; i < nr_gops; i++) {
-		struct efi_graphics_output_mode_info *info = NULL;
-		efi_guid_t conout_proto = EFI_CONSOLE_OUT_DEVICE_GUID;
-		bool conout_found = false;
-		void *dummy = NULL;
-		u32 h = handles[i];
-		u64 current_fb_base;
-
-		status = efi_call_early(handle_protocol, h,
-					proto, (void **)&gop32);
-		if (status != EFI_SUCCESS)
-			continue;
-
-		status = efi_call_early(handle_protocol, h,
-					&conout_proto, &dummy);
-		if (status == EFI_SUCCESS)
-			conout_found = true;
-
-		status = __gop_query32(gop32, &info, &size, &current_fb_base);
-		if (status == EFI_SUCCESS && (!first_gop || conout_found)) {
-			/*
-			 * Systems that use the UEFI Console Splitter may
-			 * provide multiple GOP devices, not all of which are
-			 * backed by real hardware. The workaround is to search
-			 * for a GOP implementing the ConOut protocol, and if
-			 * one isn't found, to just fall back to the first GOP.
-			 */
-			width = info->horizontal_resolution;
-			height = info->vertical_resolution;
-			pixel_format = info->pixel_format;
-			pixel_info = info->pixel_information;
-			pixels_per_scan_line = info->pixels_per_scan_line;
-			fb_base = current_fb_base;
-
-			/*
-			 * Once we've found a GOP supporting ConOut,
-			 * don't bother looking any further.
-			 */
-			first_gop = gop32;
-			if (conout_found)
-				break;
-		}
-	}
-
-	/* Did we find any GOPs? */
-	if (!first_gop)
-		goto out;
-
-	/* EFI framebuffer */
-	si->orig_video_isVGA = VIDEO_TYPE_EFI;
-
-	si->lfb_width = width;
-	si->lfb_height = height;
-	si->lfb_base = fb_base;
-
-	ext_lfb_base = (u64)(unsigned long)fb_base >> 32;
-	if (ext_lfb_base) {
-		si->capabilities |= VIDEO_CAPABILITY_64BIT_BASE;
-		si->ext_lfb_base = ext_lfb_base;
-	}
-
-	si->pages = 1;
-
-	setup_pixel_info(si, pixels_per_scan_line, pixel_info, pixel_format);
-
-	si->lfb_size = si->lfb_linelength * si->lfb_height;
-
-	si->capabilities |= VIDEO_CAPABILITY_SKIP_QUIRKS;
-out:
-	return status;
-}
-
-static efi_status_t
-__gop_query64(struct efi_graphics_output_protocol_64 *gop64,
-	      struct efi_graphics_output_mode_info **info,
-	      unsigned long *size, u64 *fb_base)
-{
-	struct efi_graphics_output_protocol_mode_64 *mode;
-	efi_status_t status;
-	unsigned long m;
-
-	m = gop64->mode;
-	mode = (struct efi_graphics_output_protocol_mode_64 *)m;
-
-	status = efi_early->call(gop64->query_mode, gop64,
-				 mode->mode, size, info);
-	if (status != EFI_SUCCESS)
-		return status;
-
-	*fb_base = mode->frame_buffer_base;
-	return status;
-}
-
-static efi_status_t
-setup_gop64(struct screen_info *si, efi_guid_t *proto,
-	    unsigned long size, void **gop_handle)
-{
-	struct efi_graphics_output_protocol_64 *gop64, *first_gop;
-	unsigned long nr_gops;
-	u16 width, height;
-	u32 pixels_per_scan_line;
-	u32 ext_lfb_base;
-	u64 fb_base;
-	struct efi_pixel_bitmask pixel_info;
-	int pixel_format;
-	efi_status_t status;
-	u64 *handles = (u64 *)(unsigned long)gop_handle;
-	int i;
-
-	first_gop = NULL;
-	gop64 = NULL;
-
-	nr_gops = size / sizeof(u64);
-	for (i = 0; i < nr_gops; i++) {
-		struct efi_graphics_output_mode_info *info = NULL;
-		efi_guid_t conout_proto = EFI_CONSOLE_OUT_DEVICE_GUID;
-		bool conout_found = false;
-		void *dummy = NULL;
-		u64 h = handles[i];
-		u64 current_fb_base;
-
-		status = efi_call_early(handle_protocol, h,
-					proto, (void **)&gop64);
-		if (status != EFI_SUCCESS)
-			continue;
-
-		status = efi_call_early(handle_protocol, h,
-					&conout_proto, &dummy);
-		if (status == EFI_SUCCESS)
-			conout_found = true;
-
-		status = __gop_query64(gop64, &info, &size, &current_fb_base);
-		if (status == EFI_SUCCESS && (!first_gop || conout_found)) {
-			/*
-			 * Systems that use the UEFI Console Splitter may
-			 * provide multiple GOP devices, not all of which are
-			 * backed by real hardware. The workaround is to search
-			 * for a GOP implementing the ConOut protocol, and if
-			 * one isn't found, to just fall back to the first GOP.
-			 */
-			width = info->horizontal_resolution;
-			height = info->vertical_resolution;
-			pixel_format = info->pixel_format;
-			pixel_info = info->pixel_information;
-			pixels_per_scan_line = info->pixels_per_scan_line;
-			fb_base = current_fb_base;
-
-			/*
-			 * Once we've found a GOP supporting ConOut,
-			 * don't bother looking any further.
-			 */
-			first_gop = gop64;
-			if (conout_found)
-				break;
-		}
-	}
-
-	/* Did we find any GOPs? */
-	if (!first_gop)
-		goto out;
-
-	/* EFI framebuffer */
-	si->orig_video_isVGA = VIDEO_TYPE_EFI;
-
-	si->lfb_width = width;
-	si->lfb_height = height;
-	si->lfb_base = fb_base;
-
-	ext_lfb_base = (u64)(unsigned long)fb_base >> 32;
-	if (ext_lfb_base) {
-		si->capabilities |= VIDEO_CAPABILITY_64BIT_BASE;
-		si->ext_lfb_base = ext_lfb_base;
-	}
-
-	si->pages = 1;
-
-	setup_pixel_info(si, pixels_per_scan_line, pixel_info, pixel_format);
-
-	si->lfb_size = si->lfb_linelength * si->lfb_height;
-
-	si->capabilities |= VIDEO_CAPABILITY_SKIP_QUIRKS;
-out:
-	return status;
-}
-
-/*
- * See if we have Graphics Output Protocol
- */
-static efi_status_t setup_gop(struct screen_info *si, efi_guid_t *proto,
-			      unsigned long size)
-{
-	efi_status_t status;
-	void **gop_handle = NULL;
-
-	status = efi_call_early(allocate_pool, EFI_LOADER_DATA,
-				size, (void **)&gop_handle);
-	if (status != EFI_SUCCESS)
-		return status;
-
-	status = efi_call_early(locate_handle,
-				EFI_LOCATE_BY_PROTOCOL,
-				proto, NULL, &size, gop_handle);
-	if (status != EFI_SUCCESS)
-		goto free_handle;
-
-	if (efi_early->is64)
-		status = setup_gop64(si, proto, size, gop_handle);
-	else
-		status = setup_gop32(si, proto, size, gop_handle);
-
-free_handle:
-	efi_call_early(free_pool, gop_handle);
-	return status;
-}
-
 static efi_status_t
 setup_uga32(void **uga_handle, unsigned long size, u32 *width, u32 *height)
 {
@@ -1040,7 +740,7 @@ void setup_graphics(struct boot_params *boot_params)
 				EFI_LOCATE_BY_PROTOCOL,
 				&graphics_proto, NULL, &size, gop_handle);
 	if (status == EFI_BUFFER_TOO_SMALL)
-		status = setup_gop(si, &graphics_proto, size);
+		status = efi_setup_gop(NULL, si, &graphics_proto, size);
 
 	if (status != EFI_SUCCESS) {
 		size = 0;
@@ -1051,6 +751,37 @@ void setup_graphics(struct boot_params *boot_params)
 			setup_uga(si, &uga_proto, size);
 	}
 }
+
+static int get_secure_boot(void)
+{
+	u8 sb, setup;
+	unsigned long datasize = sizeof(sb);
+	efi_guid_t var_guid = EFI_GLOBAL_VARIABLE_GUID;
+	efi_status_t status;
+
+	status = efi_early->call((unsigned long)sys_table->runtime->get_variable,
+				 L"SecureBoot", &var_guid, NULL, &datasize, &sb);
+
+	if (status != EFI_SUCCESS)
+		return 0;
+
+	if (sb == 0)
+		return 0;
+
+
+	status = efi_early->call((unsigned long)sys_table->runtime->get_variable,
+				L"SetupMode", &var_guid, NULL, &datasize,
+				&setup);
+
+	if (status != EFI_SUCCESS)
+		return 0;
+
+	if (setup == 1)
+		return 0;
+
+	return 1;
+}
+
 
 /*
  * Because the x86 boot code expects to be passed a boot_params we
@@ -1314,79 +1045,87 @@ static efi_status_t alloc_e820ext(u32 nr_desc, struct setup_data **e820ext,
 	return status;
 }
 
+struct exit_boot_struct {
+	struct boot_params *boot_params;
+	struct efi_info *efi;
+	struct setup_data *e820ext;
+	__u32 e820ext_size;
+	bool is64;
+};
+
+static efi_status_t exit_boot_func(efi_system_table_t *sys_table_arg,
+				   struct efi_boot_memmap *map,
+				   void *priv)
+{
+	static bool first = true;
+	const char *signature;
+	__u32 nr_desc;
+	efi_status_t status;
+	struct exit_boot_struct *p = priv;
+
+	if (first) {
+		nr_desc = *map->buff_size / *map->desc_size;
+		if (nr_desc > ARRAY_SIZE(p->boot_params->e820_map)) {
+			u32 nr_e820ext = nr_desc -
+					ARRAY_SIZE(p->boot_params->e820_map);
+
+			status = alloc_e820ext(nr_e820ext, &p->e820ext,
+					       &p->e820ext_size);
+			if (status != EFI_SUCCESS)
+				return status;
+		}
+		first = false;
+	}
+
+	signature = p->is64 ? EFI64_LOADER_SIGNATURE : EFI32_LOADER_SIGNATURE;
+	memcpy(&p->efi->efi_loader_signature, signature, sizeof(__u32));
+
+	p->efi->efi_systab = (unsigned long)sys_table_arg;
+	p->efi->efi_memdesc_size = *map->desc_size;
+	p->efi->efi_memdesc_version = *map->desc_ver;
+	p->efi->efi_memmap = (unsigned long)*map->map;
+	p->efi->efi_memmap_size = *map->map_size;
+
+#ifdef CONFIG_X86_64
+	p->efi->efi_systab_hi = (unsigned long)sys_table_arg >> 32;
+	p->efi->efi_memmap_hi = (unsigned long)*map->map >> 32;
+#endif
+
+	return EFI_SUCCESS;
+}
+
 static efi_status_t exit_boot(struct boot_params *boot_params,
 			      void *handle, bool is64)
 {
-	struct efi_info *efi = &boot_params->efi_info;
-	unsigned long map_sz, key, desc_size;
+	unsigned long map_sz, key, desc_size, buff_size;
 	efi_memory_desc_t *mem_map;
 	struct setup_data *e820ext;
-	const char *signature;
 	__u32 e820ext_size;
-	__u32 nr_desc, prev_nr_desc;
 	efi_status_t status;
 	__u32 desc_version;
-	bool called_exit = false;
-	u8 nr_entries;
-	int i;
+	struct efi_boot_memmap map;
+	struct exit_boot_struct priv;
 
-	nr_desc = 0;
-	e820ext = NULL;
-	e820ext_size = 0;
+	map.map =		&mem_map;
+	map.map_size =		&map_sz;
+	map.desc_size =		&desc_size;
+	map.desc_ver =		&desc_version;
+	map.key_ptr =		&key;
+	map.buff_size =		&buff_size;
+	priv.boot_params =	boot_params;
+	priv.efi =		&boot_params->efi_info;
+	priv.e820ext =		NULL;
+	priv.e820ext_size =	0;
+	priv.is64 =		is64;
 
-get_map:
-	status = efi_get_memory_map(sys_table, &mem_map, &map_sz, &desc_size,
-				    &desc_version, &key);
-
+	/* Might as well exit boot services now */
+	status = efi_exit_boot_services(sys_table, handle, &map, &priv,
+					exit_boot_func);
 	if (status != EFI_SUCCESS)
 		return status;
 
-	prev_nr_desc = nr_desc;
-	nr_desc = map_sz / desc_size;
-	if (nr_desc > prev_nr_desc &&
-	    nr_desc > ARRAY_SIZE(boot_params->e820_map)) {
-		u32 nr_e820ext = nr_desc - ARRAY_SIZE(boot_params->e820_map);
-
-		status = alloc_e820ext(nr_e820ext, &e820ext, &e820ext_size);
-		if (status != EFI_SUCCESS)
-			goto free_mem_map;
-
-		efi_call_early(free_pool, mem_map);
-		goto get_map; /* Allocated memory, get map again */
-	}
-
-	signature = is64 ? EFI64_LOADER_SIGNATURE : EFI32_LOADER_SIGNATURE;
-	memcpy(&efi->efi_loader_signature, signature, sizeof(__u32));
-
-	efi->efi_systab = (unsigned long)sys_table;
-	efi->efi_memdesc_size = desc_size;
-	efi->efi_memdesc_version = desc_version;
-	efi->efi_memmap = (unsigned long)mem_map;
-	efi->efi_memmap_size = map_sz;
-
-#ifdef CONFIG_X86_64
-	efi->efi_systab_hi = (unsigned long)sys_table >> 32;
-	efi->efi_memmap_hi = (unsigned long)mem_map >> 32;
-#endif
-
-	/* Might as well exit boot services now */
-	status = efi_call_early(exit_boot_services, handle, key);
-	if (status != EFI_SUCCESS) {
-		/*
-		 * ExitBootServices() will fail if any of the event
-		 * handlers change the memory map. In which case, we
-		 * must be prepared to retry, but only once so that
-		 * we're guaranteed to exit on repeated failures instead
-		 * of spinning forever.
-		 */
-		if (called_exit)
-			goto free_mem_map;
-
-		called_exit = true;
-		efi_call_early(free_pool, mem_map);
-		goto get_map;
-	}
-
+	e820ext = priv.e820ext;
+	e820ext_size = priv.e820ext_size;
 	/* Historic? */
 	boot_params->alt_mem_k = 32 * 1024;
 
@@ -1395,11 +1134,106 @@ get_map:
 		return status;
 
 	return EFI_SUCCESS;
-
-free_mem_map:
-	efi_call_early(free_pool, mem_map);
-	return status;
 }
+
+#ifdef CONFIG_HIBERNATE_VERIFICATION
+#define HIBERNATION_KEY \
+	((efi_char16_t [15]) { 'H', 'I', 'B', 'E', 'R', 'N', 'A', 'T', 'I', 'O', 'N', 'K', 'e', 'y', 0 })
+#define HIBERNATION_KEY_ATTRIBUTE	(EFI_VARIABLE_NON_VOLATILE | \
+					EFI_VARIABLE_BOOTSERVICE_ACCESS)
+
+static void setup_hibernation_keys(struct boot_params *params)
+{
+	unsigned long key_size;
+	unsigned long attributes = 0;
+	unsigned long buff_size;
+	struct setup_data *setup_data, *hibernation_setup_data;
+	struct hibernation_keys *keys;
+	bool regen_key = false;
+	unsigned long size = 0;
+	efi_status_t status, reg_status;
+
+	/* Allocate setup_data to carry keys */
+	size = sizeof(struct setup_data) + sizeof(struct hibernation_keys);
+	status = efi_call_early(allocate_pool, EFI_LOADER_DATA,
+				size, &hibernation_setup_data);
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to alloc mem for hibernation keys\n");
+		return;
+	}
+
+	memset(hibernation_setup_data, 0, size);
+	keys = (struct hibernation_keys *) hibernation_setup_data->data;
+	key_size = sizeof(keys->hibernation_key);
+
+	status = efi_call_early(get_variable, HIBERNATION_KEY,
+				&EFI_HIBERNATION_GUID, &attributes,
+				&key_size, keys->hibernation_key);
+	if (status == EFI_SUCCESS && attributes != HIBERNATION_KEY_ATTRIBUTE) {
+		efi_printk(sys_table, "A hibernation key is not boot service variable\n");
+		memset(keys->hibernation_key, 0, HIBERNATION_DIGEST_SIZE);
+		status = efi_call_early(set_variable, HIBERNATION_KEY,
+					&EFI_HIBERNATION_GUID, attributes, 0,
+					NULL);
+		if (status == EFI_SUCCESS) {
+			efi_printk(sys_table, "Cleaned existing hibernation key\n");
+			status = EFI_NOT_FOUND;
+		} else
+			goto clean_fail;
+	} else if (status !=  EFI_SUCCESS && status != EFI_NOT_FOUND) {
+		efi_printk(sys_table, "Failed to get hibernation key: ");
+		efi_printk(sys_table, efi_status_to_str(status));
+		efi_printk(sys_table, "\n");
+	}
+
+	buff_size = sizeof(regen_key);
+	reg_status = efi_call_early(get_variable, HIBERNATION_KEY_REGEN_FLAG,
+				    &EFI_HIBERNATION_GUID, &attributes,
+				    &buff_size, &regen_key);
+	if ((status != EFI_SUCCESS) ||
+	   (reg_status == EFI_SUCCESS && regen_key)) {
+		efi_get_random_key(sys_table, params, keys->hibernation_key,
+				   HIBERNATION_DIGEST_SIZE);
+
+		/* Set new hibernation key to bootservice non-volatile variable */
+		status = efi_call_early(set_variable, HIBERNATION_KEY,
+					&EFI_HIBERNATION_GUID,
+					HIBERNATION_KEY_ATTRIBUTE,
+					HIBERNATION_DIGEST_SIZE,
+					keys->hibernation_key);
+		if (status != EFI_SUCCESS) {
+			efi_printk(sys_table, "Failed to set hibernation key: ");
+			efi_printk(sys_table, efi_status_to_str(status));
+			efi_printk(sys_table, "\n");
+		}
+
+		efi_call_early(get_variable, HIBERNATION_KEY,
+				&EFI_HIBERNATION_GUID,
+				&attributes, &key_size, keys->hibernation_key);
+
+		/* Clean key regenerate flag */
+		efi_call_early(set_variable, HIBERNATION_KEY_REGEN_FLAG,
+				&EFI_HIBERNATION_GUID, 0, 0, NULL);
+	}
+
+clean_fail:
+	hibernation_setup_data->type = SETUP_HIBERNATION_KEYS;
+	hibernation_setup_data->len = sizeof(struct hibernation_keys);
+	hibernation_setup_data->next = 0;
+	keys->hkey_status = efi_status_to_err(status);
+
+	setup_data = (struct setup_data *)params->hdr.setup_data;
+	while (setup_data && setup_data->next)
+		setup_data = (struct setup_data *)setup_data->next;
+
+	if (setup_data)
+		setup_data->next = (unsigned long)hibernation_setup_data;
+	else
+		params->hdr.setup_data = (unsigned long)hibernation_setup_data;
+}
+#else
+static void setup_hibernation_keys(struct boot_params *params) {}
+#endif
 
 /*
  * On success we return a pointer to a boot_params structure, and NULL
@@ -1434,9 +1268,15 @@ struct boot_params *efi_main(struct efi_config *c,
 	else
 		setup_boot_services32(efi_early);
 
+	sanitize_boot_params(boot_params);
+
+	boot_params->secure_boot = get_secure_boot();
+
 	setup_graphics(boot_params);
 
 	setup_efi_pci(boot_params);
+
+	setup_hibernation_keys(boot_params);
 
 	status = efi_call_early(allocate_pool, EFI_LOADER_DATA,
 				sizeof(*gdt), (void **)&gdt);

@@ -806,8 +806,9 @@ static int xenwatch_thread(void *unused)
 	struct xs_stored_msg *msg;
 
 	for (;;) {
-		wait_event_interruptible(watch_events_waitq,
-					 !list_empty(&watch_events));
+		wait_event_interruptible(watch_events_waitq, ({
+					 klp_kgraft_mark_task_safe(current);
+					 !list_empty(&watch_events); }));
 
 		if (kthread_should_stop())
 			break;
@@ -847,7 +848,7 @@ static int process_msg(void)
 	 * A partial read across s/r leaves us out of sync with xenstored.
 	 */
 	for (;;) {
-		err = xb_wait_for_data_to_read();
+		err = xb_wait_for_data_to_read_kgraft();
 		if (err)
 			return err;
 		mutex_lock(&xs_state.response_mutex);

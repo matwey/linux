@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -52,44 +52,6 @@
 #include "qp.h"
 #include "verbs_txreq.h"
 #include "trace.h"
-
-/*
- * Convert the AETH RNR timeout code into the number of microseconds.
- */
-const u32 ib_hfi1_rnr_table[32] = {
-	655360,	/* 00: 655.36 */
-	10,	/* 01:    .01 */
-	20,	/* 02     .02 */
-	30,	/* 03:    .03 */
-	40,	/* 04:    .04 */
-	60,	/* 05:    .06 */
-	80,	/* 06:    .08 */
-	120,	/* 07:    .12 */
-	160,	/* 08:    .16 */
-	240,	/* 09:    .24 */
-	320,	/* 0A:    .32 */
-	480,	/* 0B:    .48 */
-	640,	/* 0C:    .64 */
-	960,	/* 0D:    .96 */
-	1280,	/* 0E:   1.28 */
-	1920,	/* 0F:   1.92 */
-	2560,	/* 10:   2.56 */
-	3840,	/* 11:   3.84 */
-	5120,	/* 12:   5.12 */
-	7680,	/* 13:   7.68 */
-	10240,	/* 14:  10.24 */
-	15360,	/* 15:  15.36 */
-	20480,	/* 16:  20.48 */
-	30720,	/* 17:  30.72 */
-	40960,	/* 18:  40.96 */
-	61440,	/* 19:  61.44 */
-	81920,	/* 1A:  81.92 */
-	122880,	/* 1B: 122.88 */
-	163840,	/* 1C: 163.84 */
-	245760,	/* 1D: 245.76 */
-	327680,	/* 1E: 327.68 */
-	491520	/* 1F: 491.52 */
-};
 
 /*
  * Validate a RWQE and fill in the SGE state.
@@ -358,10 +320,9 @@ static void ruc_loopback(struct rvt_qp *sqp)
 	u64 sdata;
 	atomic64_t *maddr;
 	enum ib_wc_status send_status;
-	int release;
+	bool release;
 	int ret;
-	int copy_last = 0;
-	u32 to;
+	bool copy_last = false;
 	int local_ops = 0;
 
 	rcu_read_lock();
@@ -425,7 +386,7 @@ again:
 	memset(&wc, 0, sizeof(wc));
 	send_status = IB_WC_SUCCESS;
 
-	release = 1;
+	release = true;
 	sqp->s_sge.sge = wqe->sg_list[0];
 	sqp->s_sge.sg_list = wqe->sg_list + 1;
 	sqp->s_sge.num_sge = wqe->wr.num_sge;
@@ -476,7 +437,7 @@ send:
 		/* skip copy_last set and qp_access_flags recheck */
 		goto do_write;
 	case IB_WR_RDMA_WRITE:
-		copy_last = ibpd_to_rvtpd(qp->ibqp.pd)->user;
+		copy_last = rvt_is_user_qp(qp);
 		if (unlikely(!(qp->qp_access_flags & IB_ACCESS_REMOTE_WRITE)))
 			goto inv_err;
 do_write:
@@ -500,7 +461,7 @@ do_write:
 					  wqe->rdma_wr.rkey,
 					  IB_ACCESS_REMOTE_READ)))
 			goto acc_err;
-		release = 0;
+		release = false;
 		sqp->s_sge.sg_list = NULL;
 		sqp->s_sge.num_sge = 1;
 		qp->r_sge.sge = wqe->sg_list[0];
@@ -618,8 +579,8 @@ rnr_nak:
 	spin_lock_irqsave(&sqp->s_lock, flags);
 	if (!(ib_rvt_state_ops[sqp->state] & RVT_PROCESS_RECV_OK))
 		goto clr_busy;
-	to = ib_hfi1_rnr_table[qp->r_min_rnr_timer];
-	hfi1_add_rnr_timer(sqp, to);
+	rvt_add_rnr_timer(sqp, qp->r_min_rnr_timer <<
+				IB_AETH_CREDIT_SHIFT);
 	goto clr_busy;
 
 op_err:
@@ -637,7 +598,7 @@ acc_err:
 	wc.status = IB_WC_LOC_PROT_ERR;
 err:
 	/* responder goes to error state */
-	hfi1_rc_error(qp, wc.status);
+	rvt_rc_error(qp, wc.status);
 
 serr:
 	spin_lock_irqsave(&sqp->s_lock, flags);
@@ -823,23 +784,29 @@ void hfi1_make_ruc_header(struct rvt_qp *qp, struct ib_other_headers *ohdr,
 /* when sending, force a reschedule every one of these periods */
 #define SEND_RESCHED_TIMEOUT (5 * HZ)  /* 5s in jiffies */
 
+void hfi1_do_send_from_rvt(struct rvt_qp *qp)
+{
+	hfi1_do_send(qp, false);
+}
+
 void _hfi1_do_send(struct work_struct *work)
 {
 	struct iowait *wait = container_of(work, struct iowait, iowork);
 	struct rvt_qp *qp = iowait_to_qp(wait);
 
-	hfi1_do_send(qp);
+	hfi1_do_send(qp, true);
 }
 
 /**
  * hfi1_do_send - perform a send on a QP
  * @work: contains a pointer to the QP
+ * @in_thread: true if in a workqueue thread
  *
  * Process entries in the send work queue until credit or queue is
  * exhausted.  Only allow one CPU to send a packet per QP.
  * Otherwise, two threads could send packets out of order.
  */
-void hfi1_do_send(struct rvt_qp *qp)
+void hfi1_do_send(struct rvt_qp *qp, bool in_thread)
 {
 	struct hfi1_pkt_state ps;
 	struct hfi1_qp_priv *priv = qp->priv;
@@ -907,8 +874,10 @@ void hfi1_do_send(struct rvt_qp *qp)
 			qp->s_hdrwords = 0;
 			/* allow other tasks to run */
 			if (unlikely(time_after(jiffies, timeout))) {
-				if (workqueue_congested(cpu,
-							ps.ppd->hfi1_wq)) {
+				if (!in_thread ||
+				    workqueue_congested(
+						cpu,
+						ps.ppd->hfi1_wq)) {
 					spin_lock_irqsave(
 						&qp->s_lock,
 						ps.flags);
@@ -921,11 +890,9 @@ void hfi1_do_send(struct rvt_qp *qp)
 						*ps.ppd->dd->send_schedule);
 					return;
 				}
-				if (!irqs_disabled()) {
-					cond_resched();
-					this_cpu_inc(
-					   *ps.ppd->dd->send_schedule);
-				}
+				cond_resched();
+				this_cpu_inc(
+					*ps.ppd->dd->send_schedule);
 				timeout = jiffies + (timeout_int) / 8;
 			}
 			spin_lock_irqsave(&qp->s_lock, ps.flags);
@@ -948,8 +915,10 @@ void hfi1_send_complete(struct rvt_qp *qp, struct rvt_swqe *wqe,
 
 	last = qp->s_last;
 	old_last = last;
+	trace_hfi1_qp_send_completion(qp, wqe, last);
 	if (++last >= qp->s_size)
 		last = 0;
+	trace_hfi1_qp_send_completion(qp, wqe, last);
 	qp->s_last = last;
 	/* See post_send() */
 	barrier();
@@ -959,7 +928,10 @@ void hfi1_send_complete(struct rvt_qp *qp, struct rvt_swqe *wqe,
 	    qp->ibqp.qp_type == IB_QPT_GSI)
 		atomic_dec(&ibah_to_rvtah(wqe->ud_wr.ah)->refcount);
 
-	rvt_qp_swqe_complete(qp, wqe, status);
+	rvt_qp_swqe_complete(qp,
+			     wqe,
+			     ib_hfi1_wc_opcode[wqe->wr.opcode],
+			     status);
 
 	if (qp->s_acked == old_last)
 		qp->s_acked = last;

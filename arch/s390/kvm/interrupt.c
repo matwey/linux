@@ -20,7 +20,7 @@
 #include <linux/vmalloc.h>
 #include <asm/asm-offsets.h>
 #include <asm/dis.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/sclp.h>
 #include <asm/isc.h>
 #include "kvm-s390.h"
@@ -868,13 +868,13 @@ no_timer:
 
 void kvm_s390_vcpu_wakeup(struct kvm_vcpu *vcpu)
 {
-	if (waitqueue_active(&vcpu->wq)) {
+	if (swait_active(&vcpu->wq)) {
 		/*
 		 * The vcpu gave up the cpu voluntarily, mark it as a good
 		 * yield-candidate.
 		 */
 		vcpu->preempted = true;
-		wake_up_interruptible(&vcpu->wq);
+		swake_up(&vcpu->wq);
 		vcpu->stat.halt_wakeup++;
 	}
 }
@@ -2091,7 +2091,8 @@ static int set_adapter_int(struct kvm_kernel_irq_routing_entry *e,
 	return ret;
 }
 
-int kvm_set_routing_entry(struct kvm_kernel_irq_routing_entry *e,
+int kvm_set_routing_entry(struct kvm *kvm,
+			  struct kvm_kernel_irq_routing_entry *e,
 			  const struct kvm_irq_routing_entry *ue)
 {
 	int ret;

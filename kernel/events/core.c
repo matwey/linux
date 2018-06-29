@@ -49,6 +49,9 @@
 
 #include <asm/irq_regs.h>
 
+void (*kabi_perf_event_mapped)(struct perf_event *event, struct mm_struct *mm);
+void (*kabi_perf_event_unmapped)(struct perf_event *event, struct mm_struct *mm);
+
 static struct workqueue_struct *perf_wq;
 
 typedef int (*remote_function_f)(void *);
@@ -262,6 +265,13 @@ static void perf_duration_warn(struct irq_work *w)
 			"kernel.perf_event_max_sample_rate to %d\n",
 			avg_local_sample_len, allowed_ns >> 1,
 			sysctl_perf_event_sample_rate);
+
+	if (sysctl_perf_event_sample_rate < 4000) {
+		printk_ratelimited(KERN_WARNING
+			"Subsequent perf sampling commands (record) will fail unless frequency <= %d is specified (via -F). "
+			"To disable this warning 'echo 0 > /proc/sys/kernel/perf_cpu_time_max_percent'\n",
+			sysctl_perf_event_sample_rate);
+	}
 }
 
 static DEFINE_IRQ_WORK(perf_duration_work, perf_duration_warn);
@@ -305,6 +315,13 @@ void perf_sample_event_took(u64 sample_len_ns)
 			     "kernel.perf_event_max_sample_rate to %d\n",
 			     avg_local_sample_len, allowed_ns >> 1,
 			     sysctl_perf_event_sample_rate);
+
+		if (sysctl_perf_event_sample_rate < 4000) {
+			early_printk(KERN_WARNING
+				"Subsequent perf sampling commands (record) will fail unless frequency <= %d is specified (via -F). "
+				"To disable this warning 'echo 0 > /proc/sys/kernel/perf_cpu_time_max_percent'\n",
+				sysctl_perf_event_sample_rate);
+		}
 	}
 }
 
@@ -3940,7 +3957,9 @@ EXPORT_SYMBOL_GPL(perf_event_read_value);
 static int __perf_read_group_add(struct perf_event *leader,
 					u64 read_format, u64 *values)
 {
+	struct perf_event_context *ctx = leader->ctx;
 	struct perf_event *sub;
+	unsigned long flags;
 	int n = 1; /* skip @nr */
 	int ret;
 
@@ -3970,12 +3989,15 @@ static int __perf_read_group_add(struct perf_event *leader,
 	if (read_format & PERF_FORMAT_ID)
 		values[n++] = primary_event_id(leader);
 
+	raw_spin_lock_irqsave(&ctx->lock, flags);
+
 	list_for_each_entry(sub, &leader->sibling_list, group_entry) {
 		values[n++] += perf_event_count(sub);
 		if (read_format & PERF_FORMAT_ID)
 			values[n++] = primary_event_id(sub);
 	}
 
+	raw_spin_unlock_irqrestore(&ctx->lock, flags);
 	return 0;
 }
 
@@ -4646,6 +4668,9 @@ static void perf_mmap_open(struct vm_area_struct *vma)
 
 	if (event->pmu->event_mapped)
 		event->pmu->event_mapped(event);
+
+	if (kabi_perf_event_mapped)
+		kabi_perf_event_mapped(event, vma->vm_mm);
 }
 
 /*
@@ -4668,6 +4693,8 @@ static void perf_mmap_close(struct vm_area_struct *vma)
 	if (event->pmu->event_unmapped)
 		event->pmu->event_unmapped(event);
 
+	if (kabi_perf_event_unmapped)
+		kabi_perf_event_unmapped(event, vma->vm_mm);
 	/*
 	 * rb->aux_mmap_count will always drop before rb->mmap_count and
 	 * event->mmap_count, so it is ok to use event->mmap_mutex to
@@ -4953,6 +4980,9 @@ aux_unlock:
 
 	if (event->pmu->event_mapped)
 		event->pmu->event_mapped(event);
+
+	if (kabi_perf_event_mapped)
+		kabi_perf_event_mapped(event, vma->vm_mm);
 
 	return ret;
 }

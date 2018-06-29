@@ -385,6 +385,21 @@ static struct vfio_group *vfio_group_get_from_minor(int minor)
 	return group;
 }
 
+static struct vfio_group *vfio_group_get_from_dev(struct device *dev)
+{
+	struct iommu_group *iommu_group;
+	struct vfio_group *group;
+
+	iommu_group = iommu_group_get(dev);
+	if (!iommu_group)
+		return NULL;
+
+	group = vfio_group_get_from_iommu(iommu_group);
+	iommu_group_put(iommu_group);
+
+	return group;
+}
+
 /**
  * Device objects - create, release, get, put, search
  */
@@ -723,16 +738,10 @@ EXPORT_SYMBOL_GPL(vfio_add_group_dev);
  */
 struct vfio_device *vfio_device_get_from_dev(struct device *dev)
 {
-	struct iommu_group *iommu_group;
 	struct vfio_group *group;
 	struct vfio_device *device;
 
-	iommu_group = iommu_group_get(dev);
-	if (!iommu_group)
-		return NULL;
-
-	group = vfio_group_get_from_iommu(iommu_group);
-	iommu_group_put(iommu_group);
+	group = vfio_group_get_from_dev(dev);
 	if (!group)
 		return NULL;
 
@@ -1264,6 +1273,19 @@ static bool vfio_group_viable(struct vfio_group *group)
 					 group, vfio_dev_viable) == 0);
 }
 
+static int vfio_group_add_container_user(struct vfio_group *group)
+{
+	if (!atomic_inc_not_zero(&group->container_users))
+		return -EINVAL;
+
+	if (!group->container->iommu_driver || !vfio_group_viable(group)) {
+		atomic_dec(&group->container_users);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static const struct file_operations vfio_device_fops;
 
 static int vfio_group_get_device_fd(struct vfio_group *group, char *buf)
@@ -1561,18 +1583,14 @@ static const struct file_operations vfio_device_fops = {
 struct vfio_group *vfio_group_get_external_user(struct file *filep)
 {
 	struct vfio_group *group = filep->private_data;
+	int ret;
 
 	if (filep->f_op != &vfio_group_fops)
 		return ERR_PTR(-EINVAL);
 
-	if (!atomic_inc_not_zero(&group->container_users))
-		return ERR_PTR(-EINVAL);
-
-	if (!group->container->iommu_driver ||
-			!vfio_group_viable(group)) {
-		atomic_dec(&group->container_users);
-		return ERR_PTR(-EINVAL);
-	}
+	ret = vfio_group_add_container_user(group);
+	if (ret)
+		return ERR_PTR(ret);
 
 	vfio_group_get(group);
 
@@ -1607,6 +1625,107 @@ long vfio_external_check_extension(struct vfio_group *group, unsigned long arg)
 	return vfio_ioctl_check_extension(group->container, arg);
 }
 EXPORT_SYMBOL_GPL(vfio_external_check_extension);
+
+/*
+ * Pin a set of guest PFNs and return their associated host PFNs for local
+ * domain only.
+ * @dev [in]     : device
+ * @user_pfn [in]: array of user/guest PFNs to be unpinned.
+ * @npage [in]   : count of elements in user_pfn array.  This count should not
+ *		   be greater VFIO_PIN_PAGES_MAX_ENTRIES.
+ * @prot [in]    : protection flags
+ * @phys_pfn[out]: array of host PFNs
+ * Return error or number of pages pinned.
+ */
+int vfio_pin_pages(struct device *dev, unsigned long *user_pfn, int npage,
+		   int prot, unsigned long *phys_pfn)
+{
+	struct vfio_container *container;
+	struct vfio_group *group;
+	struct vfio_iommu_driver *driver;
+	int ret;
+
+	if (!dev || !user_pfn || !phys_pfn || !npage)
+		return -EINVAL;
+
+	if (npage > VFIO_PIN_PAGES_MAX_ENTRIES)
+		return -E2BIG;
+
+	group = vfio_group_get_from_dev(dev);
+	if (!group)
+		return -ENODEV;
+
+	ret = vfio_group_add_container_user(group);
+	if (ret)
+		goto err_pin_pages;
+
+	container = group->container;
+	down_read(&container->group_lock);
+
+	driver = container->iommu_driver;
+	if (likely(driver && driver->ops->pin_pages))
+		ret = driver->ops->pin_pages(container->iommu_data, user_pfn,
+					     npage, prot, phys_pfn);
+	else
+		ret = -ENOTTY;
+
+	up_read(&container->group_lock);
+	vfio_group_try_dissolve_container(group);
+
+err_pin_pages:
+	vfio_group_put(group);
+	return ret;
+}
+EXPORT_SYMBOL(vfio_pin_pages);
+
+/*
+ * Unpin set of host PFNs for local domain only.
+ * @dev [in]     : device
+ * @user_pfn [in]: array of user/guest PFNs to be unpinned. Number of user/guest
+ *		   PFNs should not be greater than VFIO_PIN_PAGES_MAX_ENTRIES.
+ * @npage [in]   : count of elements in user_pfn array.  This count should not
+ *                 be greater than VFIO_PIN_PAGES_MAX_ENTRIES.
+ * Return error or number of pages unpinned.
+ */
+int vfio_unpin_pages(struct device *dev, unsigned long *user_pfn, int npage)
+{
+	struct vfio_container *container;
+	struct vfio_group *group;
+	struct vfio_iommu_driver *driver;
+	int ret;
+
+	if (!dev || !user_pfn || !npage)
+		return -EINVAL;
+
+	if (npage > VFIO_PIN_PAGES_MAX_ENTRIES)
+		return -E2BIG;
+
+	group = vfio_group_get_from_dev(dev);
+	if (!group)
+		return -ENODEV;
+
+	ret = vfio_group_add_container_user(group);
+	if (ret)
+		goto err_unpin_pages;
+
+	container = group->container;
+	down_read(&container->group_lock);
+
+	driver = container->iommu_driver;
+	if (likely(driver && driver->ops->unpin_pages))
+		ret = driver->ops->unpin_pages(container->iommu_data, user_pfn,
+					       npage);
+	else
+		ret = -ENOTTY;
+
+	up_read(&container->group_lock);
+	vfio_group_try_dissolve_container(group);
+
+err_unpin_pages:
+	vfio_group_put(group);
+	return ret;
+}
+EXPORT_SYMBOL(vfio_unpin_pages);
 
 /**
  * Module/class support

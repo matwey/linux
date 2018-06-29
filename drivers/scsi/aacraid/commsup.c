@@ -2434,6 +2434,9 @@ int aac_command_thread(void *data)
 	set_current_state(TASK_INTERRUPTIBLE);
 	dprintk ((KERN_INFO "aac_command_thread start\n"));
 	while (1) {
+
+		klp_kgraft_mark_task_safe(current);
+
 		aac_process_events(dev);
 		/*
 		 *	Background activity

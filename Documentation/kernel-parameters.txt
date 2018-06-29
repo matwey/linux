@@ -452,6 +452,15 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			driver will print ACPI tables for AMD IOMMU during
 			IOMMU initialization.
 
+	amd_iommu_intr=	[HW,X86-64]
+			Specifies one of the following AMD IOMMU interrupt
+			remapping modes:
+			legacy     - Use legacy interrupt remapping mode.
+			vapic      - Use virtual APIC mode, which allows IOMMU
+			             to inject interrupts directly into guest.
+			             This mode requires kvm-amd.avic=1.
+			             (Default when IOMMU HW support is present.)
+
 	amijoy.map=	[HW,JOY] Amiga joystick support
 			Map of devices attached to JOY0DAT and JOY1DAT
 			Format: <a>,<b>
@@ -574,6 +583,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	bootmem_debug	[KNL] Enable bootmem allocator debug messages.
 
+	bert_disable	[ACPI]
+			Disable BERT OS support on buggy BIOSes.
+
 	bttv.card=	[HW,V4L] bttv (bt848 + bt878 based grabber cards)
 	bttv.radio=	Most important insmod options are available as
 			kernel args too.
@@ -669,6 +681,14 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			[SPARC64] tick
 			[X86-64] hpet,tsc
 
+	clocksource.arm_arch_timer.evtstrm=
+			[ARM,ARM64]
+			Format: <bool>
+			Enable/disable the eventstream feature of the ARM
+			architected timer so that code using WFE-based polling
+			loops can be debugged more effectively on production
+			systems.
+
 	clocksource.arm_arch_timer.fsl-a008585=
 			[ARM64]
 			Format: <bool>
@@ -751,16 +771,17 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 		uart[8250],io,<addr>[,options]
 		uart[8250],mmio,<addr>[,options]
+		uart[8250],mmio16,<addr>[,options]
 		uart[8250],mmio32,<addr>[,options]
 		uart[8250],0x<addr>[,options]
 			Start an early, polled-mode console on the 8250/16550
 			UART at the specified I/O port or MMIO address,
 			switching to the matching ttyS device later.
 			MMIO inter-register address stride is either 8-bit
-			(mmio) or 32-bit (mmio32).
-			If none of [io|mmio|mmio32], <addr> is assumed to be
-			equivalent to 'mmio'. 'options' are specified in the
-			same format described for ttyS above; if unspecified,
+			(mmio), 16-bit (mmio16), or 32-bit (mmio32).
+			If none of [io|mmio|mmio16|mmio32], <addr> is assumed
+			to be equivalent to 'mmio'. 'options' are specified in
+			the same format described for ttyS above; if unspecified,
 			the h/w is not re-initialized.
 
 		hvc<n>	Use the hypervisor console device <n>. This is for
@@ -1035,10 +1056,13 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			unspecified, the h/w is not initialized.
 
 		pl011,<addr>
+		pl011,mmio32,<addr>
 			Start an early, polled-mode console on a pl011 serial
 			port at the specified address. The pl011 serial port
 			must already be setup and configured. Options are not
-			yet supported.
+			yet supported.  If 'mmio32' is specified, then only
+			the driver will use only 32-bit accessors to read/write
+			the device registers.
 
 		msm_serial,<addr>
 			Start an early, polled-mode console on an msm serial
@@ -1735,6 +1759,13 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			PCI device 00:14.0 write the parameter as:
 				ivrs_hpet[0]=00:14.0
 
+	ivrs_acpihid	[HW,X86_64]
+			Provide an override to the ACPI-HID:UID<->DEVICE-ID
+			mapping provided in the IVRS ACPI table. For
+			example, to map UART-HID:UID AMD0020:0 to
+			PCI device 00:14.5 write the parameter as:
+				ivrs_acpihid[00:14.5]=AMD0020:0
+
 	js=		[HW,JOY] Analog joystick
 			See Documentation/input/joystick.txt.
 
@@ -1855,6 +1886,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	kvm-intel.vpid=	[KVM,Intel] Disable Virtual Processor Identification
 			feature (tagged TLBs) on capable Intel chips.
 			Default is 1 (enabled)
+
+	kvm_nopvspin	[X86,KVM]
+			Disables the paravirtualized spinlock slowpath
+			optimizations for KVM.
 
 	l2cr=		[PPC]
 
@@ -2493,6 +2528,12 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	nosmep		[X86]
 			Disable SMEP (Supervisor Mode Execution Prevention)
 			even if it is supported by processor.
+			
+	nospec		[X86]
+			Disable indirect branch restricted speculation and
+			indirect branch prediction barrier to avoid performance
+			penalties in trusted environments.
+
 
 	noexec32	[X86-64]
 			This affects only 32-bit executables.
@@ -2513,6 +2554,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			(indirect branch prediction) vulnerability. System may
 			allow data leaks with this option, which is equivalent
 			to spectre_v2=off.
+
+	nospec_store_bypass_disable
+			[HW] Disable all mitigations for the Speculative Store Bypass vulnerability
 
 	noxsave		[BUGS=X86] Disables x86 extended register state save
 			and restore using xsave. The kernel will fallback to
@@ -3503,6 +3547,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 				present during boot.
 		nocompress	Don't compress/decompress hibernation images.
 		no		Disable hibernation and resume.
+		sigenforce      When CONFIG_HIBERNATE_VERIFICATION is set, this
+				menas that snapshot image without (valid)
+				signature will fail to restore. Note that if
+				HIBERNATE_VERIFICATION_FORCE is set, that is
+				always true, so this option does nothing.
 
 	retain_initrd	[RAM] Keep initrd memory after extraction
 
@@ -3720,6 +3769,48 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			Not specifying this option is equivalent to
 			spectre_v2=auto.
 
+	spec_store_bypass_disable=
+			[HW] Control Speculative Store Bypass (SSB) Disable mitigation
+			(Speculative Store Bypass vulnerability)
+
+			Certain CPUs are vulnerable to an exploit against a
+			a common industry wide performance optimization known
+			as "Speculative Store Bypass" in which recent stores
+			to the same memory location may not be observed by
+			later loads during speculative execution. The idea
+			is that such stores are unlikely and that they can
+			be detected prior to instruction retirement at the
+			end of a particular speculation execution window.
+
+			In vulnerable processors, the speculatively forwarded
+			store can be used in a cache side channel attack, for
+			example to read memory to which the attacker does not
+			directly have access (e.g. inside sandboxed code).
+
+			This parameter controls whether the Speculative Store
+			Bypass optimization is used.
+
+			on      - Unconditionally disable Speculative Store Bypass
+			off     - Unconditionally enable Speculative Store Bypass
+			auto    - Kernel detects whether the CPU model contains an
+				  implementation of Speculative Store Bypass and
+				  picks the most appropriate mitigation. If the
+				  CPU is not vulnerable, "off" is selected. If the
+				  CPU is vulnerable the default mitigation is
+				  architecture and Kconfig dependent. See below.
+			prctl   - Control Speculative Store Bypass per thread
+				  via prctl. Speculative Store Bypass is enabled
+				  for a process by default. The state of the control
+				  is inherited on fork.
+			seccomp - Same as "prctl" above, but all seccomp threads
+				  will disable SSB unless they explicitly opt out.
+
+			Not specifying this option is equivalent to
+			spec_store_bypass_disable=auto.
+
+			Default mitigations:
+			X86:	If CONFIG_SECCOMP=y "seccomp", otherwise "prctl"
+
 	spia_io_base=	[HW,MTD]
 	spia_fio_base=
 	spia_pedr=
@@ -3806,10 +3897,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			it if 0 is given (See Documentation/cgroups/memory.txt)
 
 	swiotlb=	[ARM,IA-64,PPC,MIPS,X86]
-			Format: { <int> | force }
+			Format: { <int> | force | noforce }
 			<int> -- Number of I/O TLB slabs
 			force -- force using of bounce buffers even if they
 			         wouldn't be automatically used by the kernel
+			noforce -- Never use bounce buffers (for debugging)
 
 	switches=	[HW,M68k]
 

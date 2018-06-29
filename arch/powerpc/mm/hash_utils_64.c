@@ -41,7 +41,7 @@
 #include <asm/mmu_context.h>
 #include <asm/page.h>
 #include <asm/types.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/machdep.h>
 #include <asm/prom.h>
 #include <asm/tlbflush.h>
@@ -563,8 +563,10 @@ static void __init htab_init_page_sizes(void)
 	       );
 
 #ifdef CONFIG_HUGETLB_PAGE
-	/* Reserve 16G huge page memory sections for huge pages */
-	of_scan_flat_dt(htab_dt_scan_hugepage_blocks, NULL);
+	if (!hugetlb_disabled) {
+		/* Reserve 16G huge page memory sections for huge pages */
+		of_scan_flat_dt(htab_dt_scan_hugepage_blocks, NULL);
+	}
 #endif /* CONFIG_HUGETLB_PAGE */
 }
 

@@ -47,7 +47,7 @@
  *  Overall revision about smaps.
  */
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <linux/errno.h>
 #include <linux/time.h>
@@ -2274,6 +2274,37 @@ static const struct file_operations proc_timers_operations = {
 	.release	= seq_release_private,
 };
 
+#if IS_ENABLED(CONFIG_LIVEPATCH)
+static int proc_pid_kgr_in_progress(struct seq_file *m,
+		struct pid_namespace *ns, struct pid *pid,
+		struct task_struct *task)
+{
+	struct task_struct *t;
+	bool in_progress = false;
+
+	rcu_read_lock();
+	for_each_thread(task, t)
+		if (klp_kgraft_task_in_progress(t)) {
+			in_progress = true;
+			break;
+		}
+	rcu_read_unlock();
+
+	seq_printf(m, "%d\n", in_progress);
+
+	return 0;
+}
+
+static int proc_task_kgr_in_progress(struct seq_file *m,
+		struct pid_namespace *ns, struct pid *pid,
+		struct task_struct *task)
+{
+	seq_printf(m, "%d\n", klp_kgraft_task_in_progress(task));
+
+	return 0;
+}
+#endif /* IS_ENABLED(CONFIG_LIVEPATCH) */
+
 static int proc_pident_instantiate(struct inode *dir,
 	struct dentry *dentry, struct task_struct *task, const void *ptr)
 {
@@ -2851,6 +2882,9 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_CHECKPOINT_RESTORE
 	REG("timers",	  S_IRUGO, proc_timers_operations),
 #endif
+#if IS_ENABLED(CONFIG_LIVEPATCH)
+	ONE("kgr_in_progress",	S_IRUSR, proc_pid_kgr_in_progress),
+#endif
 };
 
 static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
@@ -3234,6 +3268,9 @@ static const struct pid_entry tid_base_stuff[] = {
 	REG("gid_map",    S_IRUGO|S_IWUSR, proc_gid_map_operations),
 	REG("projid_map", S_IRUGO|S_IWUSR, proc_projid_map_operations),
 	REG("setgroups",  S_IRUGO|S_IWUSR, proc_setgroups_operations),
+#endif
+#if IS_ENABLED(CONFIG_LIVEPATCH)
+	ONE("kgr_in_progress",	S_IRUSR, proc_task_kgr_in_progress),
 #endif
 };
 

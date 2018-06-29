@@ -25,15 +25,18 @@
 #include <linux/pvclock_gtod.h>
 #include <linux/clocksource.h>
 #include <linux/irqbypass.h>
+#include <linux/hyperv.h>
 
+#include <asm/apic.h>
 #include <asm/pvclock-abi.h>
 #include <asm/desc.h>
 #include <asm/mtrr.h>
 #include <asm/msr-index.h>
 #include <asm/asm.h>
 
-#define KVM_MAX_VCPUS 255
-#define KVM_SOFT_MAX_VCPUS 160
+#define KVM_MAX_VCPUS 288
+#define KVM_SOFT_MAX_VCPUS 240
+#define KVM_MAX_VCPU_ID 1023
 #define KVM_USER_MEM_SLOTS 509
 /* memory slots that are not exposed to userspace */
 #define KVM_PRIVATE_MEM_SLOTS 3
@@ -57,7 +60,8 @@
 			  | X86_CR4_PSE | X86_CR4_PAE | X86_CR4_MCE     \
 			  | X86_CR4_PGE | X86_CR4_PCE | X86_CR4_OSFXSR | X86_CR4_PCIDE \
 			  | X86_CR4_OSXSAVE | X86_CR4_SMEP | X86_CR4_FSGSBASE \
-			  | X86_CR4_OSXMMEXCPT | X86_CR4_VMXE | X86_CR4_SMAP))
+			  | X86_CR4_OSXMMEXCPT | X86_CR4_VMXE | X86_CR4_SMAP \
+			  | X86_CR4_PKE))
 
 #define CR8_RESERVED_BITS (~(unsigned long)X86_CR8_TPR)
 
@@ -162,12 +166,14 @@ enum {
 #define PFERR_USER_BIT 2
 #define PFERR_RSVD_BIT 3
 #define PFERR_FETCH_BIT 4
+#define PFERR_PK_BIT 5
 
 #define PFERR_PRESENT_MASK (1U << PFERR_PRESENT_BIT)
 #define PFERR_WRITE_MASK (1U << PFERR_WRITE_BIT)
 #define PFERR_USER_MASK (1U << PFERR_USER_BIT)
 #define PFERR_RSVD_MASK (1U << PFERR_RSVD_BIT)
 #define PFERR_FETCH_MASK (1U << PFERR_FETCH_BIT)
+#define PFERR_PK_MASK (1U << PFERR_PK_BIT)
 
 /* apic attention bits */
 #define KVM_APIC_CHECK_VAPIC	0
@@ -298,6 +304,14 @@ struct kvm_mmu {
 	 */
 	u8 permissions[16];
 
+	/*
+	* The pkru_mask indicates if protection key checks are needed.  It
+	* consists of 16 domains indexed by page fault error code bits [4:1],
+	* with PFEC.RSVD replaced by ACC_USER_MASK from the page tables.
+	* Each domain has 2 bits which are ANDed with AD and WD from PKRU.
+	*/
+	u32 pkru_mask;
+
 	u64 *pae_root;
 	u64 *lm_root;
 
@@ -376,10 +390,24 @@ struct kvm_mtrr {
 	struct list_head head;
 };
 
+/* Hyper-V synthetic interrupt controller (SynIC)*/
+struct kvm_vcpu_hv_synic {
+	u64 version;
+	u64 control;
+	u64 msg_page;
+	u64 evt_page;
+	atomic64_t sint[HV_SYNIC_SINT_COUNT];
+	atomic_t sint_to_gsi[HV_SYNIC_SINT_COUNT];
+	DECLARE_BITMAP(auto_eoi_bitmap, 256);
+	DECLARE_BITMAP(vec_bitmap, 256);
+	bool active;
+};
+
 /* Hyper-V per vcpu emulation context */
 struct kvm_vcpu_hv {
 	u64 hv_vapic;
 	s64 runtime_offset;
+	struct kvm_vcpu_hv_synic synic;
 };
 
 struct kvm_vcpu_arch {
@@ -402,7 +430,8 @@ struct kvm_vcpu_arch {
 	u64 efer;
 	u64 apic_base;
 	struct kvm_lapic *apic;    /* kernel irqchip context */
-	u64 eoi_exit_bitmap[4];
+	bool apicv_active;
+	DECLARE_BITMAP(ioapic_handled_vectors, 256);
 	unsigned long apic_attention;
 	int32_t apic_arb_prio;
 	int mp_state;
@@ -527,6 +556,7 @@ struct kvm_vcpu_arch {
 	u64 mcg_cap;
 	u64 mcg_status;
 	u64 mcg_ctl;
+	u64 mcg_ext_ctl;
 	u64 *mce_banks;
 
 	/* Cache MMIO info */
@@ -609,9 +639,12 @@ struct kvm_arch_memory_slot {
 struct kvm_apic_map {
 	struct rcu_head rcu;
 	u8 mode;
-	struct kvm_lapic *phys_map[256];
-	/* first index is cluster id second is cpu id in a cluster */
-	struct kvm_lapic *logical_map[16][16];
+	u32 max_apic_id;
+	union {
+		struct kvm_lapic *xapic_flat_map[8];
+		struct kvm_lapic *xapic_cluster_map[16][4];
+	};
+	struct kvm_lapic *phys_map[];
 };
 
 /* Hyper-V emulation context */
@@ -697,6 +730,18 @@ struct kvm_arch {
 
 	bool irqchip_split;
 	u8 nr_reserved_ioapic_pins;
+
+	/* Struct members for AVIC */
+	u32 avic_vm_id;
+	u32 ldr_mode;
+	struct page *avic_logical_id_table_page;
+	struct page *avic_physical_id_table_page;
+	struct hlist_node hnode;
+
+	bool disabled_lapic_found;
+
+	bool x2apic_format;
+	bool x2apic_broadcast_quirk_disabled;
 };
 
 struct kvm_vm_stat {
@@ -771,6 +816,9 @@ struct kvm_x86_ops {
 	bool (*cpu_has_high_real_mode_segbase)(void);
 	void (*cpuid_update)(struct kvm_vcpu *vcpu);
 
+	int (*vm_init)(struct kvm *kvm);
+	void (*vm_destroy)(struct kvm *kvm);
+
 	/* Create, but do not attach this VCPU */
 	struct kvm_vcpu *(*vcpu_create)(struct kvm *kvm, unsigned id);
 	void (*vcpu_free)(struct kvm_vcpu *vcpu);
@@ -808,6 +856,7 @@ struct kvm_x86_ops {
 	void (*cache_reg)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
 	unsigned long (*get_rflags)(struct kvm_vcpu *vcpu);
 	void (*set_rflags)(struct kvm_vcpu *vcpu, unsigned long rflags);
+	u32 (*get_pkru)(struct kvm_vcpu *vcpu);
 	void (*fpu_activate)(struct kvm_vcpu *vcpu);
 	void (*fpu_deactivate)(struct kvm_vcpu *vcpu);
 
@@ -833,10 +882,11 @@ struct kvm_x86_ops {
 	void (*enable_nmi_window)(struct kvm_vcpu *vcpu);
 	void (*enable_irq_window)(struct kvm_vcpu *vcpu);
 	void (*update_cr8_intercept)(struct kvm_vcpu *vcpu, int tpr, int irr);
-	int (*cpu_uses_apicv)(struct kvm_vcpu *vcpu);
+	bool (*get_enable_apicv)(void);
+	void (*refresh_apicv_exec_ctrl)(struct kvm_vcpu *vcpu);
 	void (*hwapic_irr_update)(struct kvm_vcpu *vcpu, int max_irr);
 	void (*hwapic_isr_update)(struct kvm *kvm, int isr);
-	void (*load_eoi_exitmap)(struct kvm_vcpu *vcpu);
+	void (*load_eoi_exitmap)(struct kvm_vcpu *vcpu, u64 *eoi_exit_bitmap);
 	void (*set_virtual_x2apic_mode)(struct kvm_vcpu *vcpu, bool set);
 	void (*set_apic_access_page_addr)(struct kvm_vcpu *vcpu, hpa_t hpa);
 	void (*deliver_posted_interrupt)(struct kvm_vcpu *vcpu, int vector);
@@ -911,8 +961,22 @@ struct kvm_x86_ops {
 	 */
 	int (*pre_block)(struct kvm_vcpu *vcpu);
 	void (*post_block)(struct kvm_vcpu *vcpu);
+
+	void (*vcpu_blocking)(struct kvm_vcpu *vcpu);
+	void (*vcpu_unblocking)(struct kvm_vcpu *vcpu);
+
 	int (*update_pi_irte)(struct kvm *kvm, unsigned int host_irq,
 			      uint32_t guest_irq, bool set);
+	void (*apicv_post_state_restore)(struct kvm_vcpu *vcpu);
+
+	void (*setup_mce)(struct kvm_vcpu *vcpu);
+
+	/* kABI compatibility hacks */
+#ifndef __GENKSYMS__
+	void (*set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
+	bool (*get_enable_apicv_new)(struct kvm_vcpu *vcpu);
+	bool (*has_emulated_msr)(int index);
+#endif
 };
 
 struct kvm_arch_async_pf {
@@ -982,6 +1046,8 @@ extern u32  kvm_max_guest_tsc_khz;
 extern u8   kvm_tsc_scaling_ratio_frac_bits;
 /* maximum allowed value of TSC scaling ratio */
 extern u64  kvm_max_tsc_scaling_ratio;
+
+extern u64 kvm_mce_cap_supported;
 
 enum emulation_result {
 	EMULATE_DONE,         /* no further processing */
@@ -1088,6 +1154,8 @@ gpa_t kvm_mmu_gva_to_gpa_write(struct kvm_vcpu *vcpu, gva_t gva,
 			       struct x86_exception *exception);
 gpa_t kvm_mmu_gva_to_gpa_system(struct kvm_vcpu *vcpu, gva_t gva,
 				struct x86_exception *exception);
+
+void kvm_vcpu_deactivate_apicv(struct kvm_vcpu *vcpu);
 
 int kvm_emulate_hypercall(struct kvm_vcpu *vcpu);
 
@@ -1255,10 +1323,29 @@ bool kvm_vcpu_is_bsp(struct kvm_vcpu *vcpu);
 bool kvm_intr_is_single_vcpu(struct kvm *kvm, struct kvm_lapic_irq *irq,
 			     struct kvm_vcpu **dest_vcpu);
 
-void kvm_set_msi_irq(struct kvm_kernel_irq_routing_entry *e,
+void kvm_set_msi_irq(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e,
 		     struct kvm_lapic_irq *irq);
 
-static inline void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu) {}
-static inline void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu) {}
+static inline void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu)
+{
+	if (kvm_x86_ops->vcpu_blocking)
+		kvm_x86_ops->vcpu_blocking(vcpu);
+}
+
+static inline void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu)
+{
+	if (kvm_x86_ops->vcpu_unblocking)
+		kvm_x86_ops->vcpu_unblocking(vcpu);
+}
+
+static inline int kvm_cpu_get_apicid(int mps_cpu)
+{
+#ifdef CONFIG_X86_LOCAL_APIC
+	return __default_cpu_present_to_apicid(mps_cpu);
+#else
+	WARN_ON_ONCE(1);
+	return BAD_APICID;
+#endif
+}
 
 #endif /* _ASM_X86_KVM_HOST_H */

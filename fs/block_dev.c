@@ -32,7 +32,7 @@
 #include <linux/badblocks.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/falloc.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include "internal.h"
 
 struct bdev_inode {
@@ -240,6 +240,8 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 		bio.bi_opf = dio_bio_write_op(iocb);
 		task_io_account_write(ret);
 	}
+	if (file->f_flags & O_NONBLOCK)
+		bio.bi_opf |= REQ_FAILFAST_DEV;
 
 	qc = submit_bio(&bio);
 	for (;;) {
@@ -378,6 +380,8 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 			bio->bi_opf = dio_bio_write_op(iocb);
 			task_io_account_write(bio->bi_iter.bi_size);
 		}
+		if (file->f_flags & O_NONBLOCK)
+			bio->bi_opf |= REQ_FAILFAST_DEV;
 
 		dio->size += bio->bi_iter.bi_size;
 		pos += bio->bi_iter.bi_size;
@@ -2109,7 +2113,7 @@ static const struct address_space_operations def_blk_aops = {
  */
 static int blkdev_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-	return __dax_fault(vma, vmf, blkdev_get_block, NULL);
+	return __dax_fault(vma, vmf, blkdev_get_block);
 }
 
 static int blkdev_dax_pfn_mkwrite(struct vm_area_struct *vma,
@@ -2121,7 +2125,7 @@ static int blkdev_dax_pfn_mkwrite(struct vm_area_struct *vma,
 static int blkdev_dax_pmd_fault(struct vm_area_struct *vma, unsigned long addr,
 		pmd_t *pmd, unsigned int flags)
 {
-	return __dax_pmd_fault(vma, addr, pmd, flags, blkdev_get_block, NULL);
+	return __dax_pmd_fault(vma, addr, pmd, flags, blkdev_get_block);
 }
 
 static const struct vm_operations_struct blkdev_dax_vm_ops = {

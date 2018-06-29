@@ -14,6 +14,7 @@
 #include <linux/bug.h>
 #include <linux/nmi.h>
 
+#include <linux/unwind.h>
 #include <asm/stacktrace.h>
 
 
@@ -152,9 +153,9 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
 		const struct stacktrace_ops *ops, void *data)
 {
-	const unsigned cpu = get_cpu();
+	unsigned cpu;
 	struct thread_info *tinfo;
-	unsigned long *irq_stack = (unsigned long *)per_cpu(irq_stack_ptr, cpu);
+	unsigned long *irq_stack;
 	unsigned long dummy;
 	unsigned used = 0;
 	int graph = 0;
@@ -162,6 +163,10 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 
 	if (!task)
 		task = current;
+
+	bp = stack_frame(task, regs);
+	if (try_stack_unwind(task, regs, &stack, &bp, ops, data))
+		return;
 
 	if (!stack) {
 		if (regs)
@@ -180,6 +185,8 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	 * exceptions
 	 */
 	tinfo = task_thread_info(task);
+	cpu = get_cpu();
+	irq_stack = (unsigned long *)per_cpu(irq_stack_ptr, cpu);
 	while (!done) {
 		unsigned long *stack_end;
 		enum stack_type stype;

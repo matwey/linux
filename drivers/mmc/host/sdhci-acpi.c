@@ -230,8 +230,6 @@ static int bxt_get_cd(struct mmc_host *mmc)
 	if (!gpio_cd)
 		return 0;
 
-	pm_runtime_get_sync(mmc->parent);
-
 	spin_lock_irqsave(&host->lock, flags);
 
 	if (host->flags & SDHCI_DEVICE_DEAD)
@@ -240,9 +238,6 @@ static int bxt_get_cd(struct mmc_host *mmc)
 	ret = !!(sdhci_readl(host, SDHCI_PRESENT_STATE) & SDHCI_CARD_PRESENT);
 out:
 	spin_unlock_irqrestore(&host->lock, flags);
-
-	pm_runtime_mark_last_busy(mmc->parent);
-	pm_runtime_put_autosuspend(mmc->parent);
 
 	return ret;
 }
@@ -338,6 +333,17 @@ static const struct sdhci_acpi_slot sdhci_acpi_slot_int_sd = {
 	.probe_slot	= sdhci_acpi_sd_probe_slot,
 };
 
+static const struct sdhci_acpi_slot sdhci_acpi_slot_qcom_sd_3v = {
+	.quirks  = SDHCI_QUIRK_BROKEN_CARD_DETECTION,
+	.quirks2 = SDHCI_QUIRK2_NO_1_8_V,
+	.caps    = MMC_CAP_NONREMOVABLE,
+};
+
+static const struct sdhci_acpi_slot sdhci_acpi_slot_qcom_sd = {
+	.quirks  = SDHCI_QUIRK_BROKEN_CARD_DETECTION,
+	.caps    = MMC_CAP_NONREMOVABLE,
+};
+
 struct sdhci_acpi_uid_slot {
 	const char *hid;
 	const char *uid;
@@ -358,6 +364,8 @@ static const struct sdhci_acpi_uid_slot sdhci_acpi_uids[] = {
 	{ "INT344D"  , NULL, &sdhci_acpi_slot_int_sdio },
 	{ "PNP0FFF"  , "3" , &sdhci_acpi_slot_int_sd   },
 	{ "PNP0D40"  },
+	{ "QCOM8051", NULL, &sdhci_acpi_slot_qcom_sd_3v },
+	{ "QCOM8052", NULL, &sdhci_acpi_slot_qcom_sd },
 	{ },
 };
 
@@ -372,6 +380,8 @@ static const struct acpi_device_id sdhci_acpi_ids[] = {
 	{ "INT3436"  },
 	{ "INT344D"  },
 	{ "PNP0D40"  },
+	{ "QCOM8051" },
+	{ "QCOM8052" },
 	{ },
 };
 MODULE_DEVICE_TABLE(acpi, sdhci_acpi_ids);

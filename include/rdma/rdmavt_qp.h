@@ -2,7 +2,7 @@
 #define DEF_RDMAVT_INCQP_H
 
 /*
- * Copyright(c) 2016 Intel Corporation.
+ * Copyright(c) 2016, 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -118,8 +118,9 @@
 /*
  * Wait flags that would prevent any packet type from being sent.
  */
-#define RVT_S_ANY_WAIT_IO (RVT_S_WAIT_PIO | RVT_S_WAIT_TX | \
-	RVT_S_WAIT_DMA_DESC | RVT_S_WAIT_KMEM)
+#define RVT_S_ANY_WAIT_IO \
+	(RVT_S_WAIT_PIO | RVT_S_WAIT_PIO_DRAIN | RVT_S_WAIT_TX | \
+	 RVT_S_WAIT_DMA_DESC | RVT_S_WAIT_KMEM)
 
 /*
  * Wait flags that would prevent send work requests from making progress.
@@ -143,6 +144,8 @@
 #define RVT_FLUSH_RECV			0x40
 #define RVT_PROCESS_OR_FLUSH_SEND \
 	(RVT_PROCESS_SEND_OK | RVT_FLUSH_SEND)
+#define RVT_SEND_OR_FLUSH_OR_RECV_OK \
+	(RVT_PROCESS_SEND_OK | RVT_FLUSH_SEND | RVT_PROCESS_RECV_OK)
 
 /*
  * Internal send flags
@@ -369,6 +372,7 @@ struct rvt_qp {
 
 	struct rvt_sge_state s_ack_rdma_sge;
 	struct timer_list s_timer;
+	struct hrtimer s_rnr_timer;
 
 	atomic_t local_ops_pending; /* number of fast_reg/local_inv reqs */
 
@@ -466,6 +470,15 @@ static inline struct rvt_rwqe *rvt_get_rwqe_ptr(struct rvt_rq *rq, unsigned n)
 }
 
 /**
+ * rvt_is_user_qp - return if this is user mode QP
+ * @qp - the target QP
+ */
+static inline bool rvt_is_user_qp(struct rvt_qp *qp)
+{
+	return !!qp->pid;
+}
+
+/**
  * rvt_get_qp - get a QP reference
  * @qp - the QP to hold
  */
@@ -513,7 +526,6 @@ static inline void rvt_qp_wqe_reserve(
 	struct rvt_qp *qp,
 	struct rvt_swqe *wqe)
 {
-	wqe->wr.send_flags |= RVT_SEND_RESERVE_USED;
 	atomic_inc(&qp->s_reserved_used);
 }
 
@@ -537,7 +549,6 @@ static inline void rvt_qp_wqe_unreserve(
 	struct rvt_swqe *wqe)
 {
 	if (unlikely(wqe->wr.send_flags & RVT_SEND_RESERVE_USED)) {
-		wqe->wr.send_flags &= ~RVT_SEND_RESERVE_USED;
 		atomic_dec(&qp->s_reserved_used);
 		/* insure no compiler re-order up to s_last change */
 		smp_mb__after_atomic();
@@ -561,6 +572,7 @@ extern const enum ib_wc_opcode ib_rvt_wc_opcode[];
 static inline void rvt_qp_swqe_complete(
 	struct rvt_qp *qp,
 	struct rvt_swqe *wqe,
+	enum ib_wc_opcode opcode,
 	enum ib_wc_status status)
 {
 	if (unlikely(wqe->wr.send_flags & RVT_SEND_RESERVE_USED))
@@ -573,13 +585,39 @@ static inline void rvt_qp_swqe_complete(
 		memset(&wc, 0, sizeof(wc));
 		wc.wr_id = wqe->wr.wr_id;
 		wc.status = status;
-		wc.opcode = ib_rvt_wc_opcode[wqe->wr.opcode];
+		wc.opcode = opcode;
 		wc.qp = &qp->ibqp;
 		wc.byte_len = wqe->length;
 		rvt_cq_enter(ibcq_to_rvtcq(qp->ibqp.send_cq), &wc,
 			     status != IB_WC_SUCCESS);
 	}
 }
+
+/*
+ * Compare the lower 24 bits of the msn values.
+ * Returns an integer <, ==, or > than zero.
+ */
+static inline int rvt_cmp_msn(u32 a, u32 b)
+{
+	return (((int)a) - ((int)b)) << 8;
+}
+
+/**
+ * rvt_compute_aeth - compute the AETH (syndrome + MSN)
+ * @qp: the queue pair to compute the AETH for
+ *
+ * Returns the AETH.
+ */
+__be32 rvt_compute_aeth(struct rvt_qp *qp);
+
+/**
+ * rvt_get_credit - flush the send work queue of a QP
+ * @qp: the qp who's send work queue to flush
+ * @aeth: the Acknowledge Extended Transport Header
+ *
+ * The QP s_lock should be held.
+ */
+void rvt_get_credit(struct rvt_qp *qp, u32 aeth);
 
 /**
  * @qp - the qp pair
@@ -606,6 +644,14 @@ static inline u32 rvt_div_mtu(struct rvt_qp *qp, u32 len)
 extern const int  ib_rvt_state_ops[];
 
 struct rvt_dev_info;
+void rvt_comm_est(struct rvt_qp *qp);
 int rvt_error_qp(struct rvt_qp *qp, enum ib_wc_status err);
+void rvt_rc_error(struct rvt_qp *qp, enum ib_wc_status err);
+unsigned long rvt_rnr_tbl_to_usec(u32 index);
+enum hrtimer_restart rvt_rc_rnr_retry(struct hrtimer *t);
+void rvt_add_rnr_timer(struct rvt_qp *qp, u32 aeth);
+void rvt_del_timers_sync(struct rvt_qp *qp);
+void rvt_stop_rc_timers(struct rvt_qp *qp);
+void rvt_add_retry_timer(struct rvt_qp *qp);
 
 #endif          /* DEF_RDMAVT_INCQP_H */

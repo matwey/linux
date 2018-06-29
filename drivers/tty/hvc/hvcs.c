@@ -81,7 +81,7 @@
 #include <linux/tty_flip.h>
 #include <asm/hvconsole.h>
 #include <asm/hvcserver.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/vio.h>
 
 /*
@@ -647,6 +647,7 @@ static int khvcsd(void *unused)
 	__set_current_state(TASK_RUNNING);
 
 	do {
+		klp_kgraft_mark_task_safe(current);
 		hvcs_todo_mask = 0;
 		hvcs_kicked = 0;
 		wmb();

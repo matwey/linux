@@ -23,8 +23,6 @@ static DEFINE_MUTEX(irq_domain_mutex);
 static DEFINE_MUTEX(revmap_trees_mutex);
 static struct irq_domain *irq_default_domain;
 
-static int irq_domain_alloc_descs(int virq, unsigned int nr_irqs,
-				  irq_hw_number_t hwirq, int node);
 static void irq_domain_check_hierarchy(struct irq_domain *domain);
 
 struct irqchip_fwid {
@@ -245,14 +243,15 @@ struct irq_domain *irq_domain_add_legacy(struct device_node *of_node,
 EXPORT_SYMBOL_GPL(irq_domain_add_legacy);
 
 /**
- * irq_find_matching_fwnode() - Locates a domain for a given fwnode
- * @fwnode: FW descriptor of the interrupt controller
+ * irq_find_matching_fwspec() - Locates a domain for a given fwspec
+ * @fwspec: FW specifier for an interrupt
  * @bus_token: domain-specific data
  */
-struct irq_domain *irq_find_matching_fwnode(struct fwnode_handle *fwnode,
+struct irq_domain *irq_find_matching_fwspec(struct irq_fwspec *fwspec,
 					    enum irq_domain_bus_token bus_token)
 {
 	struct irq_domain *h, *found = NULL;
+	struct fwnode_handle *fwnode = fwspec->fwnode;
 	int rc;
 
 	/* We might want to match the legacy controller last since
@@ -266,7 +265,9 @@ struct irq_domain *irq_find_matching_fwnode(struct fwnode_handle *fwnode,
 	 */
 	mutex_lock(&irq_domain_mutex);
 	list_for_each_entry(h, &irq_domain_list, link) {
-		if (h->ops->match)
+		if (h->ops->select && fwspec->param_count)
+			rc = h->ops->select(h, fwspec, bus_token);
+		else if (h->ops->match)
 			rc = h->ops->match(h, to_of_node(fwnode), bus_token);
 		else
 			rc = ((fwnode != NULL) && (h->fwnode == fwnode) &&
@@ -281,7 +282,32 @@ struct irq_domain *irq_find_matching_fwnode(struct fwnode_handle *fwnode,
 	mutex_unlock(&irq_domain_mutex);
 	return found;
 }
-EXPORT_SYMBOL_GPL(irq_find_matching_fwnode);
+EXPORT_SYMBOL_GPL(irq_find_matching_fwspec);
+
+/**
+ * irq_domain_check_msi_remap - Check whether all MSI irq domains implement
+ * IRQ remapping
+ *
+ * Return: false if any MSI irq domain does not support IRQ remapping,
+ * true otherwise (including if there is no MSI irq domain)
+ */
+bool irq_domain_check_msi_remap(void)
+{
+	struct irq_domain *h;
+	bool ret = true;
+
+	mutex_lock(&irq_domain_mutex);
+	list_for_each_entry(h, &irq_domain_list, link) {
+		if (irq_domain_is_msi(h) &&
+		    !irq_domain_hierarchical_is_msi_remap(h)) {
+			ret = false;
+			break;
+		}
+	}
+	mutex_unlock(&irq_domain_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(irq_domain_check_msi_remap);
 
 /**
  * irq_set_default_host() - Set a "default" irq domain
@@ -485,7 +511,7 @@ unsigned int irq_create_mapping(struct irq_domain *domain,
 	}
 
 	/* Allocate a virtual interrupt number */
-	virq = irq_domain_alloc_descs(-1, 1, hwirq, of_node_to_nid(of_node));
+	virq = irq_domain_alloc_descs(-1, 1, hwirq, of_node_to_nid(of_node), NULL);
 	if (virq <= 0) {
 		pr_debug("-> virq allocation failed\n");
 		return 0;
@@ -571,14 +597,18 @@ static void of_phandle_args_to_fwspec(struct of_phandle_args *irq_data,
 unsigned int irq_create_fwspec_mapping(struct irq_fwspec *fwspec)
 {
 	struct irq_domain *domain;
+	struct irq_data *irq_data;
 	irq_hw_number_t hwirq;
 	unsigned int type = IRQ_TYPE_NONE;
 	int virq;
 
-	if (fwspec->fwnode)
-		domain = irq_find_matching_fwnode(fwspec->fwnode, DOMAIN_BUS_ANY);
-	else
+	if (fwspec->fwnode) {
+		domain = irq_find_matching_fwspec(fwspec, DOMAIN_BUS_WIRED);
+		if (!domain)
+			domain = irq_find_matching_fwspec(fwspec, DOMAIN_BUS_ANY);
+	} else {
 		domain = irq_default_domain;
+	}
 
 	if (!domain) {
 		pr_warn("no irq domain found for %s !\n",
@@ -589,15 +619,46 @@ unsigned int irq_create_fwspec_mapping(struct irq_fwspec *fwspec)
 	if (irq_domain_translate(domain, fwspec, &hwirq, &type))
 		return 0;
 
-	if (irq_domain_is_hierarchy(domain)) {
+	/*
+	 * WARN if the irqchip returns a type with bits
+	 * outside the sense mask set and clear these bits.
+	 */
+	if (WARN_ON(type & ~IRQ_TYPE_SENSE_MASK))
+		type &= IRQ_TYPE_SENSE_MASK;
+
+	/*
+	 * If we've already configured this interrupt,
+	 * don't do it again, or hell will break loose.
+	 */
+	virq = irq_find_mapping(domain, hwirq);
+	if (virq) {
 		/*
-		 * If we've already configured this interrupt,
-		 * don't do it again, or hell will break loose.
+		 * If the trigger type is not specified or matches the
+		 * current trigger type then we are done so return the
+		 * interrupt number.
 		 */
-		virq = irq_find_mapping(domain, hwirq);
-		if (virq)
+		if (type == IRQ_TYPE_NONE || type == irq_get_trigger_type(virq))
 			return virq;
 
+		/*
+		 * If the trigger type has not been set yet, then set
+		 * it now and return the interrupt number.
+		 */
+		if (irq_get_trigger_type(virq) == IRQ_TYPE_NONE) {
+			irq_data = irq_get_irq_data(virq);
+			if (!irq_data)
+				return 0;
+
+			irqd_set_trigger_type(irq_data, type);
+			return virq;
+		}
+
+		pr_warn("type mismatch, failed to map hwirq-%lu for %s!\n",
+			hwirq, of_node_full_name(to_of_node(fwspec->fwnode)));
+		return 0;
+	}
+
+	if (irq_domain_is_hierarchy(domain)) {
 		virq = irq_domain_alloc_irqs(domain, 1, NUMA_NO_NODE, fwspec);
 		if (virq <= 0)
 			return 0;
@@ -608,10 +669,18 @@ unsigned int irq_create_fwspec_mapping(struct irq_fwspec *fwspec)
 			return virq;
 	}
 
-	/* Set type if specified and different than the current one */
-	if (type != IRQ_TYPE_NONE &&
-	    type != irq_get_trigger_type(virq))
-		irq_set_irq_type(virq, type);
+	irq_data = irq_get_irq_data(virq);
+	if (!irq_data) {
+		if (irq_domain_is_hierarchy(domain))
+			irq_domain_free_irqs(virq, 1);
+		else
+			irq_dispose_mapping(virq);
+		return 0;
+	}
+
+	/* Store trigger type */
+	irqd_set_trigger_type(irq_data, type);
+
 	return virq;
 }
 EXPORT_SYMBOL_GPL(irq_create_fwspec_mapping);
@@ -835,20 +904,24 @@ const struct irq_domain_ops irq_domain_simple_ops = {
 };
 EXPORT_SYMBOL_GPL(irq_domain_simple_ops);
 
-static int irq_domain_alloc_descs(int virq, unsigned int cnt,
-				  irq_hw_number_t hwirq, int node)
+int irq_domain_alloc_descs(int virq, unsigned int cnt, irq_hw_number_t hwirq,
+			   int node, const struct cpumask *affinity)
 {
 	unsigned int hint;
 
 	if (virq >= 0) {
-		virq = irq_alloc_descs(virq, virq, cnt, node);
+		virq = __irq_alloc_descs(virq, virq, cnt, node, THIS_MODULE,
+					 affinity);
 	} else {
 		hint = hwirq % nr_irqs;
 		if (hint == 0)
 			hint++;
-		virq = irq_alloc_descs_from(hint, cnt, node);
-		if (virq <= 0 && hint > 1)
-			virq = irq_alloc_descs_from(1, cnt, node);
+		virq = __irq_alloc_descs(-1, hint, cnt, node, THIS_MODULE,
+					 affinity);
+		if (virq <= 0 && hint > 1) {
+			virq = __irq_alloc_descs(-1, 1, cnt, node, THIS_MODULE,
+						 affinity);
+		}
 	}
 
 	return virq;
@@ -1161,6 +1234,7 @@ int irq_domain_alloc_irqs_recursive(struct irq_domain *domain,
  * @node:	NUMA node id for memory allocation
  * @arg:	domain specific argument
  * @realloc:	IRQ descriptors have already been allocated if true
+ * @affinity:	Optional irq affinity mask for multiqueue devices
  *
  * Allocate IRQ numbers and initialized all data structures to support
  * hierarchy IRQ domains.
@@ -1176,7 +1250,7 @@ int irq_domain_alloc_irqs_recursive(struct irq_domain *domain,
  */
 int __irq_domain_alloc_irqs(struct irq_domain *domain, int irq_base,
 			    unsigned int nr_irqs, int node, void *arg,
-			    bool realloc)
+			    bool realloc, const struct cpumask *affinity)
 {
 	int i, ret, virq;
 
@@ -1194,7 +1268,8 @@ int __irq_domain_alloc_irqs(struct irq_domain *domain, int irq_base,
 	if (realloc && irq_base >= 0) {
 		virq = irq_base;
 	} else {
-		virq = irq_domain_alloc_descs(irq_base, nr_irqs, 0, node);
+		virq = irq_domain_alloc_descs(irq_base, nr_irqs, 0, node,
+					      affinity);
 		if (virq < 0) {
 			pr_debug("cannot allocate IRQ(base %d, count %d)\n",
 				 irq_base, nr_irqs);
@@ -1339,6 +1414,20 @@ static void irq_domain_check_hierarchy(struct irq_domain *domain)
 	/* Hierarchy irq_domains must implement callback alloc() */
 	if (domain->ops->alloc)
 		domain->flags |= IRQ_DOMAIN_FLAG_HIERARCHY;
+}
+
+/**
+ * irq_domain_hierarchical_is_msi_remap - Check if the domain or any
+ * parent has MSI remapping support
+ * @domain: domain pointer
+ */
+bool irq_domain_hierarchical_is_msi_remap(struct irq_domain *domain)
+{
+	for (; domain; domain = domain->parent) {
+		if (irq_domain_is_msi_remap(domain))
+			return true;
+	}
+	return false;
 }
 #else	/* CONFIG_IRQ_DOMAIN_HIERARCHY */
 /**

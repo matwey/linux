@@ -46,6 +46,7 @@ acpi-y				+= acpi_pnp.o
 acpi-y				+= int340x_thermal.o
 acpi-y				+= power.o
 acpi-y				+= event.o
+acpi-$(CONFIG_ACPI_REDUCED_HARDWARE_ONLY) += evged.o
 acpi-y				+= sysfs.o
 acpi-y				+= property.o
 acpi-$(CONFIG_X86)		+= acpi_cmos_rtc.o
@@ -53,7 +54,7 @@ acpi-$(CONFIG_DEBUG_FS)		+= debugfs.o
 acpi-$(CONFIG_ACPI_NUMA)	+= numa.o
 acpi-$(CONFIG_ACPI_PROCFS_POWER) += cm_sbs.o
 acpi-y				+= acpi_lpat.o
-acpi-$(CONFIG_ACPI_GENERIC_GSI) += gsi.o
+acpi-$(CONFIG_ACPI_GENERIC_GSI) += irq.o
 
 # These are (potentially) separate modules
 
@@ -79,6 +80,7 @@ obj-$(CONFIG_ACPI_EC_DEBUGFS)	+= ec_sys.o
 obj-$(CONFIG_ACPI_CUSTOM_METHOD)+= custom_method.o
 obj-$(CONFIG_ACPI_BGRT)		+= bgrt.o
 obj-$(CONFIG_ACPI_CPPC_LIB)	+= cppc_acpi.o
+obj-$(CONFIG_ACPI_SPCR_TABLE)	+= spcr.o
 
 # processor has its own "processor." module_param namespace
 processor-y			:= processor_driver.o
@@ -98,3 +100,5 @@ obj-$(CONFIG_CRC_PMIC_OPREGION) += pmic/intel_pmic_crc.o
 obj-$(CONFIG_XPOWER_PMIC_OPREGION) += pmic/intel_pmic_xpower.o
 
 video-objs			+= acpi_video.o video_detect.o
+
+obj-$(CONFIG_ARM64)		+= arm64/

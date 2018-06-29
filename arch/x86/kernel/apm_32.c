@@ -234,7 +234,7 @@
 #include <linux/i8253.h>
 #include <linux/cpuidle.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/desc.h>
 #include <asm/olpc.h>
 #include <asm/paravirt.h>
@@ -1438,6 +1438,7 @@ static void apm_mainloop(void)
 	set_current_state(TASK_INTERRUPTIBLE);
 	for (;;) {
 		schedule_timeout(APM_CHECK_TIMEOUT);
+		klp_kgraft_mark_task_safe(current);
 		if (kthread_should_stop())
 			break;
 		/*

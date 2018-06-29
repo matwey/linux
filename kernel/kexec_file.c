@@ -22,6 +22,7 @@
 #include <crypto/sha.h>
 #include <linux/syscalls.h>
 #include <linux/vmalloc.h>
+#include <linux/security.h>
 #include "kexec_internal.h"
 
 /*
@@ -317,6 +318,15 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 	if (!capable(CAP_SYS_BOOT) || kexec_load_disabled)
 		return -EPERM;
 
+#ifndef CONFIG_KEXEC_VERIFY_SIG
+	/*
+	 * Don't permit images to be loaded into trusted kernels if we're not
+	 * going to verify the signature on them
+	 */
+	if (get_securelevel() > 0)
+		return -EPERM;
+#endif
+
 	/* Make sure we have a legal set of flags */
 	if (flags != (flags & KEXEC_FILE_FLAGS))
 		return -EINVAL;
@@ -327,8 +337,11 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 		return -EBUSY;
 
 	dest_image = &kexec_image;
-	if (flags & KEXEC_FILE_ON_CRASH)
+	if (flags & KEXEC_FILE_ON_CRASH) {
 		dest_image = &kexec_crash_image;
+		if (kexec_crash_image)
+			arch_kexec_unprotect_crashkres();
+	}
 
 	if (flags & KEXEC_FILE_UNLOAD)
 		goto exchange;
@@ -377,6 +390,9 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 exchange:
 	image = xchg(dest_image, image);
 out:
+	if ((flags & KEXEC_FILE_ON_CRASH) && kexec_crash_image)
+		arch_kexec_protect_crashkres();
+
 	mutex_unlock(&kexec_mutex);
 	kimage_free(image);
 	return ret;

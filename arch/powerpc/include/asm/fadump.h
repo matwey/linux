@@ -77,6 +77,8 @@
 	reg_entry++;							\
 })
 
+extern int crashing_cpu;
+
 /* Kernel Dump section info */
 struct fadump_section {
 	__be32	request_flag;
@@ -202,6 +204,7 @@ struct fad_crash_memory_ranges {
 	unsigned long long	size;
 };
 
+extern int is_fadump_boot_memory_area(u64 addr, ulong size);
 extern int early_init_dt_scan_fw_dump(unsigned long node,
 		const char *uname, int depth, void *data);
 extern int fadump_reserve_mem(void);

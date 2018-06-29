@@ -53,6 +53,7 @@ struct fsl_mc_msi_desc {
  * @nvec_used:	The number of vectors used
  * @dev:	Pointer to the device which uses this descriptor
  * @msg:	The last set MSI message cached for reuse
+ * @affinity:	Optional pointer to a cpu affinity mask for this descriptor
  *
  * @masked:	[PCI MSI/X] Mask bits
  * @is_msix:	[PCI MSI/X] True if MSI-X
@@ -73,6 +74,7 @@ struct msi_desc {
 	unsigned int			nvec_used;
 	struct device			*dev;
 	struct msi_msg			msg;
+	struct cpumask			*affinity;
 
 	union {
 		/* PCI MSI/X specific data */
@@ -131,7 +133,8 @@ static inline void pci_write_msi_msg(unsigned int irq, struct msi_msg *msg)
 }
 #endif /* CONFIG_PCI_MSI */
 
-struct msi_desc *alloc_msi_entry(struct device *dev);
+struct msi_desc *alloc_msi_entry(struct device *dev, int nvec,
+				 const struct cpumask *affinity);
 void free_msi_entry(struct msi_desc *entry);
 void __pci_read_msi_msg(struct msi_desc *entry, struct msi_msg *msg);
 void __pci_write_msi_msg(struct msi_desc *entry, struct msi_msg *msg);

@@ -28,6 +28,7 @@
 #include <crypto/internal/skcipher.h>
 #include <crypto/internal/rng.h>
 #include <crypto/akcipher.h>
+#include <crypto/kpp.h>
 
 #include "internal.h"
 
@@ -111,6 +112,21 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+static int crypto_report_acomp(struct sk_buff *skb, struct crypto_alg *alg)
+{
+	struct crypto_report_acomp racomp;
+
+	strncpy(racomp.type, "acomp", sizeof(racomp.type));
+
+	if (nla_put(skb, CRYPTOCFGA_REPORT_ACOMP,
+		    sizeof(struct crypto_report_acomp), &racomp))
+		goto nla_put_failure;
+	return 0;
+
+nla_put_failure:
+	return -EMSGSIZE;
+}
+
 static int crypto_report_akcipher(struct sk_buff *skb, struct crypto_alg *alg)
 {
 	struct crypto_report_akcipher rakcipher;
@@ -119,6 +135,21 @@ static int crypto_report_akcipher(struct sk_buff *skb, struct crypto_alg *alg)
 
 	if (nla_put(skb, CRYPTOCFGA_REPORT_AKCIPHER,
 		    sizeof(struct crypto_report_akcipher), &rakcipher))
+		goto nla_put_failure;
+	return 0;
+
+nla_put_failure:
+	return -EMSGSIZE;
+}
+
+static int crypto_report_kpp(struct sk_buff *skb, struct crypto_alg *alg)
+{
+	struct crypto_report_kpp rkpp;
+
+	strncpy(rkpp.type, "kpp", sizeof(rkpp.type));
+
+	if (nla_put(skb, CRYPTOCFGA_REPORT_KPP,
+		    sizeof(struct crypto_report_kpp), &rkpp))
 		goto nla_put_failure;
 	return 0;
 
@@ -170,11 +201,19 @@ static int crypto_report_one(struct crypto_alg *alg,
 			goto nla_put_failure;
 
 		break;
+	case CRYPTO_ALG_TYPE_ACOMPRESS:
+		if (crypto_report_acomp(skb, alg))
+			goto nla_put_failure;
 
+		break;
 	case CRYPTO_ALG_TYPE_AKCIPHER:
 		if (crypto_report_akcipher(skb, alg))
 			goto nla_put_failure;
 
+		break;
+	case CRYPTO_ALG_TYPE_KPP:
+		if (crypto_report_kpp(skb, alg))
+			goto nla_put_failure;
 		break;
 	}
 

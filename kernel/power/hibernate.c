@@ -29,6 +29,7 @@
 #include <linux/ctype.h>
 #include <linux/genhd.h>
 #include <linux/ktime.h>
+#include <linux/security.h>
 #include <trace/events/power.h>
 
 #include "power.h"
@@ -43,6 +44,11 @@ static char resume_file[256] = CONFIG_PM_STD_PARTITION;
 dev_t swsusp_resume_device;
 sector_t swsusp_resume_block;
 __visible int in_suspend __nosavedata;
+#ifdef CONFIG_HIBERNATE_VERIFICATION_FORCE
+int sigenforce = 1;
+#else
+int sigenforce;
+#endif
 
 enum {
 	HIBERNATION_INVALID,
@@ -66,7 +72,19 @@ static const struct platform_hibernation_ops *hibernation_ops;
 
 bool hibernation_available(void)
 {
-	return (nohibernate == 0);
+	if (nohibernate != 0)
+		return false;
+
+	if (get_securelevel() <= 0)
+		return true;
+	else {
+#ifdef CONFIG_HIBERNATE_VERIFICATION
+		sigenforce = 1;
+		return true;
+#else
+		return false;
+#endif
+	}
 }
 
 /**
@@ -268,11 +286,15 @@ static int create_image(int platform_mode)
 {
 	int error;
 
+	error = swsusp_prepare_hash(false);
+	if (error)
+		return error;
+
 	error = dpm_suspend_end(PMSG_FREEZE);
 	if (error) {
 		printk(KERN_ERR "PM: Some devices failed to power down, "
 			"aborting hibernation\n");
-		return error;
+		goto finish_hash;
 	}
 
 	error = platform_pre_snapshot(platform_mode);
@@ -324,6 +346,9 @@ static int create_image(int platform_mode)
 
 	dpm_resume_start(in_suspend ?
 		(error ? PMSG_RECOVER : PMSG_THAW) : PMSG_RESTORE);
+
+ finish_hash:
+	swsusp_finish_hash();
 
 	return error;
 }
@@ -659,6 +684,8 @@ int hibernate(void)
 		return -EPERM;
 	}
 
+	set_hibernation_key_regen_flag = false;
+
 	lock_system_sleep();
 	/* The snapshot device should not be opened while we're running */
 	if (!atomic_add_unless(&snapshot_device_available, -1, 0)) {
@@ -708,6 +735,7 @@ int hibernate(void)
 		pm_restore_gfp_mask();
 	} else {
 		pr_debug("PM: Image restored successfully.\n");
+		restore_sig_forward_info();
 	}
 
  Free_bitmaps:
@@ -1128,6 +1156,8 @@ static int __init hibernate_setup(char *str)
 		noresume = 1;
 		nohibernate = 1;
 	}
+	else if (!strncmp(str, "sigenforce", 10))
+		sigenforce = 1;
 	return 1;
 }
 

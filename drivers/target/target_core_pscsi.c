@@ -690,6 +690,26 @@ after_mode_select:
 	if (sense_buffer && (status_byte(result) & CHECK_CONDITION)) {
 		memcpy(sense_buffer, pt->pscsi_sense, TRANSPORT_SENSE_BUFFER);
 		cmd->se_cmd_flags |= SCF_TRANSPORT_TASK_SENSE;
+
+		/*
+		 * check for TAPE device reads with
+		 * FM/EOM/ILI set, so that we can get data
+		 * back despite framework assumption that a
+		 * check condition means there is no data
+		 */
+		if (sd->type == TYPE_TAPE &&
+		    cmd->data_direction == DMA_FROM_DEVICE) {
+			/*
+			 * is sense data valid, fixed format,
+			 * and have FM, EOM, or ILI set?
+			 */
+			if (sense_buffer[0] == 0xf0 &&	/* valid, fixed format */
+			    sense_buffer[2] & 0xe0 &&	/* FM, EOM, or ILI */
+			    (sense_buffer[2] & 0xf) == 0) { /* key==NO_SENSE */
+				pr_debug("Tape FM/EOM/ILI status detected. Treat as normal read.\n");
+				cmd->se_cmd_flags |= SCF_TREAT_READ_AS_NORMAL;
+			}
+		}
 	}
 }
 
@@ -1063,7 +1083,8 @@ static void pscsi_req_done(struct request *req, int uptodate)
 
 	switch (host_byte(pt->pscsi_result)) {
 	case DID_OK:
-		target_complete_cmd(cmd, cmd->scsi_status);
+		target_complete_cmd_with_length(cmd, cmd->scsi_status,
+			    cmd->data_length - req->resid_len);
 		break;
 	default:
 		pr_debug("PSCSI Host Byte exception at cmd: %p CDB:"

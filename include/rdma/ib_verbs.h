@@ -59,7 +59,7 @@
 #include <linux/if_link.h>
 #include <linux/atomic.h>
 #include <linux/mmu_notifier.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 extern struct workqueue_struct *ib_wq;
 extern struct workqueue_struct *ib_comp_wq;
@@ -354,6 +354,20 @@ static inline int ib_mtu_enum_to_int(enum ib_mtu mtu)
 	case IB_MTU_4096: return 4096;
 	default: 	  return -1;
 	}
+}
+
+static inline enum ib_mtu ib_mtu_int_to_enum(int mtu)
+{
+	if (mtu >= 4096)
+		return IB_MTU_4096;
+	else if (mtu >= 2048)
+		return IB_MTU_2048;
+	else if (mtu >= 1024)
+		return IB_MTU_1024;
+	else if (mtu >= 512)
+		return IB_MTU_512;
+	else
+		return IB_MTU_256;
 }
 
 enum ib_port_state {
@@ -1560,6 +1574,10 @@ struct ib_rwq_ind_table_init_attr {
 	struct ib_wq	**ind_tbl;
 };
 
+/*
+ * @max_write_sge: Maximum SGE elements per RDMA WRITE request.
+ * @max_read_sge:  Maximum SGE elements per RDMA READ request.
+ */
 struct ib_qp {
 	struct ib_device       *device;
 	struct ib_pd	       *pd;
@@ -1581,6 +1599,8 @@ struct ib_qp {
 	void                  (*event_handler)(struct ib_event *, void *);
 	void		       *qp_context;
 	u32			qp_num;
+	u32			max_write_sge;
+	u32			max_read_sge;
 	enum ib_qp_type		qp_type;
 	struct ib_rwq_ind_table *rwq_ind_tbl;
 };
@@ -1825,12 +1845,17 @@ enum ib_mad_result {
 
 #define IB_DEVICE_NAME_MAX 64
 
+struct ib_port_cache {
+	struct ib_pkey_cache  *pkey;
+	struct ib_gid_table   *gid;
+	u8                     lmc;
+	enum ib_port_state     port_state;
+};
+
 struct ib_cache {
 	rwlock_t                lock;
 	struct ib_event_handler event_handler;
-	struct ib_pkey_cache  **pkey_cache;
-	struct ib_gid_table   **gid_cache;
-	u8                     *lmc_cache;
+	struct ib_port_cache   *ports;
 };
 
 struct ib_dma_mapping_ops {
@@ -2242,22 +2267,17 @@ static inline bool ib_is_udata_cleared(struct ib_udata *udata,
 				       size_t len)
 {
 	const void __user *p = udata->inbuf + offset;
-	bool ret = false;
+	bool ret;
 	u8 *buf;
 
 	if (len > USHRT_MAX)
 		return false;
 
-	buf = kmalloc(len, GFP_KERNEL);
-	if (!buf)
+	buf = memdup_user(p, len);
+	if (IS_ERR(buf))
 		return false;
 
-	if (copy_from_user(buf, p, len))
-		goto free;
-
 	ret = !memchr_inv(buf, 0, len);
-
-free:
 	kfree(buf);
 	return ret;
 }
@@ -2330,6 +2350,13 @@ static inline u8 rdma_start_port(const struct ib_device *device)
 static inline u8 rdma_end_port(const struct ib_device *device)
 {
 	return rdma_cap_ib_switch(device) ? 0 : device->phys_port_cnt;
+}
+
+static inline int rdma_is_port_valid(const struct ib_device *device,
+				     unsigned int port)
+{
+	return (port >= rdma_start_port(device) &&
+		port <= rdma_end_port(device));
 }
 
 static inline bool rdma_protocol_ib(const struct ib_device *device, u8 port_num)
@@ -3083,24 +3110,6 @@ static inline void ib_dma_unmap_single(struct ib_device *dev,
 		dma_unmap_single(dev->dma_device, addr, size, direction);
 }
 
-static inline u64 ib_dma_map_single_attrs(struct ib_device *dev,
-					  void *cpu_addr, size_t size,
-					  enum dma_data_direction direction,
-					  struct dma_attrs *attrs)
-{
-	return dma_map_single_attrs(dev->dma_device, cpu_addr, size,
-				    direction, attrs);
-}
-
-static inline void ib_dma_unmap_single_attrs(struct ib_device *dev,
-					     u64 addr, size_t size,
-					     enum dma_data_direction direction,
-					     struct dma_attrs *attrs)
-{
-	return dma_unmap_single_attrs(dev->dma_device, addr, size,
-				      direction, attrs);
-}
-
 /**
  * ib_dma_map_page - Map a physical page to DMA address
  * @dev: The device for which the dma_addr is to be created
@@ -3268,19 +3277,18 @@ static inline void ib_dma_sync_single_for_device(struct ib_device *dev,
  */
 static inline void *ib_dma_alloc_coherent(struct ib_device *dev,
 					   size_t size,
-					   u64 *dma_handle,
+					   dma_addr_t *dma_handle,
 					   gfp_t flag)
 {
-	if (dev->dma_ops)
-		return dev->dma_ops->alloc_coherent(dev, size, dma_handle, flag);
-	else {
-		dma_addr_t handle;
+	if (dev->dma_ops) {
+		u64 handle;
 		void *ret;
 
-		ret = dma_alloc_coherent(dev->dma_device, size, &handle, flag);
+		ret = dev->dma_ops->alloc_coherent(dev, size, &handle, flag);
 		*dma_handle = handle;
 		return ret;
 	}
+	return dma_alloc_coherent(dev->dma_device, size, dma_handle, flag);
 }
 
 /**
@@ -3292,7 +3300,7 @@ static inline void *ib_dma_alloc_coherent(struct ib_device *dev,
  */
 static inline void ib_dma_free_coherent(struct ib_device *dev,
 					size_t size, void *cpu_addr,
-					u64 dma_handle)
+					dma_addr_t dma_handle)
 {
 	if (dev->dma_ops)
 		dev->dma_ops->free_coherent(dev, size, cpu_addr, dma_handle);

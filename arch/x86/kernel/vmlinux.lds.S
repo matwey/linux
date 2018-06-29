@@ -332,6 +332,7 @@ SECTIONS
 		__brk_limit = .;
 	}
 
+	. = ALIGN(PAGE_SIZE);
 	_end = .;
 
         STABS_DEBUG
@@ -339,7 +340,9 @@ SECTIONS
 
 	/* Sections to be discarded */
 	DISCARDS
+#ifndef CONFIG_UNWIND_INFO
 	/DISCARD/ : { *(.eh_frame) }
+#endif
 }
 
 

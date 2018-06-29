@@ -505,6 +505,7 @@ static int bnx2fc_l2_rcv_thread(void *arg)
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (!kthread_should_stop()) {
 		schedule();
+		klp_kgraft_mark_task_safe(current);
 		spin_lock_bh(&bg->fcoe_rx_list.lock);
 		while ((skb = __skb_dequeue(&bg->fcoe_rx_list)) != NULL) {
 			spin_unlock_bh(&bg->fcoe_rx_list.lock);
@@ -635,6 +636,7 @@ static int bnx2fc_percpu_io_thread(void *arg)
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (!kthread_should_stop()) {
 		schedule();
+		klp_kgraft_mark_task_safe(current);
 		spin_lock_bh(&p->fp_work_lock);
 		while (!list_empty(&p->work_list)) {
 			list_splice_init(&p->work_list, &work_list);

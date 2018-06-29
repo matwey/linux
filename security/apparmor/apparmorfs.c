@@ -380,6 +380,8 @@ void __aa_fs_profile_migrate_dents(struct aa_profile *old,
 
 	for (i = 0; i < AAFS_PROF_SIZEOF; i++) {
 		new->dents[i] = old->dents[i];
+		if (new->dents[i])
+			new->dents[i]->d_inode->i_mtime = CURRENT_TIME;
 		old->dents[i] = NULL;
 	}
 }
@@ -551,8 +553,6 @@ fail2:
 }
 
 
-#define list_entry_next(pos, member) \
-	list_entry(pos->member.next, typeof(*pos), member)
 #define list_entry_is_head(pos, head, member) (&pos->member == (head))
 
 /**
@@ -583,7 +583,7 @@ static struct aa_namespace *__next_namespace(struct aa_namespace *root,
 	parent = ns->parent;
 	while (ns != root) {
 		mutex_unlock(&ns->lock);
-		next = list_entry_next(ns, base.list);
+		next = list_next_entry(ns, base.list);
 		if (!list_entry_is_head(next, &parent->sub_ns, base.list)) {
 			mutex_lock(&next->lock);
 			return next;
@@ -637,7 +637,7 @@ static struct aa_profile *__next_profile(struct aa_profile *p)
 	parent = rcu_dereference_protected(p->parent,
 					   mutex_is_locked(&p->ns->lock));
 	while (parent) {
-		p = list_entry_next(p, base.list);
+		p = list_next_entry(p, base.list);
 		if (!list_entry_is_head(p, &parent->base.profiles, base.list))
 			return p;
 		p = parent;
@@ -646,7 +646,7 @@ static struct aa_profile *__next_profile(struct aa_profile *p)
 	}
 
 	/* is next another profile in the namespace */
-	p = list_entry_next(p, base.list);
+	p = list_next_entry(p, base.list);
 	if (!list_entry_is_head(p, &ns->base.profiles, base.list))
 		return p;
 
@@ -810,6 +810,7 @@ static struct aa_fs_entry aa_fs_entry_features[] = {
 	AA_FS_FILE_U64("capability",		VFS_CAP_FLAGS_MASK),
 	AA_FS_DIR("rlimit",			aa_fs_entry_rlimit),
 	AA_FS_DIR("caps",			aa_fs_entry_caps),
+	AA_FS_FILE_BOOLEAN("network",		1),
 	{ }
 };
 
@@ -819,6 +820,8 @@ static struct aa_fs_entry aa_fs_entry_apparmor[] = {
 	AA_FS_FILE_FOPS(".remove", 0640, &aa_fs_profile_remove),
 	AA_FS_FILE_FOPS("profiles", 0640, &aa_fs_profiles_fops),
 	AA_FS_DIR("features", aa_fs_entry_features),
+	AA_FS_FILE_STRING("matching", "pattern=aadfa audit perms=crwxamlk/ "
+			  "user::other"),
 	{ }
 };
 

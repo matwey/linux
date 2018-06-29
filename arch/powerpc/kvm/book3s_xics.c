@@ -14,7 +14,7 @@
 #include <linux/anon_inodes.h>
 #include <linux/spinlock.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/kvm_book3s.h>
 #include <asm/kvm_ppc.h>
 #include <asm/hvcall.h>
@@ -1324,12 +1324,10 @@ static int kvmppc_xics_create(struct kvm_device *dev, u32 type)
 	xics->kvm = kvm;
 
 	/* Already there ? */
-	mutex_lock(&kvm->lock);
 	if (kvm->arch.xics)
 		ret = -EEXIST;
 	else
 		kvm->arch.xics = xics;
-	mutex_unlock(&kvm->lock);
 
 	if (ret) {
 		kfree(xics);

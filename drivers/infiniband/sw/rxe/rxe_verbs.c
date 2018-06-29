@@ -194,7 +194,7 @@ static enum rdma_link_layer rxe_get_link_layer(struct ib_device *dev,
 {
 	struct rxe_dev *rxe = to_rdev(dev);
 
-	return rxe->ifc_ops->link_layer(rxe, port_num);
+	return rxe_link_layer(rxe, port_num);
 }
 
 static struct ib_ucontext *rxe_alloc_ucontext(struct ib_device *dev,
@@ -711,9 +711,8 @@ static int init_send_wqe(struct rxe_qp *qp, struct ib_send_wr *ibwr,
 		memcpy(wqe->dma.sge, ibwr->sg_list,
 		       num_sge * sizeof(struct ib_sge));
 
-	wqe->iova		= (mask & WR_ATOMIC_MASK) ?
-					atomic_wr(ibwr)->remote_addr :
-					rdma_wr(ibwr)->remote_addr;
+	wqe->iova = mask & WR_ATOMIC_MASK ? atomic_wr(ibwr)->remote_addr :
+		mask & WR_READ_OR_WRITE_MASK ? rdma_wr(ibwr)->remote_addr : 0;
 	wqe->mask		= mask;
 	wqe->dma.length		= length;
 	wqe->dma.resid		= length;
@@ -914,6 +913,8 @@ err1:
 static int rxe_destroy_cq(struct ib_cq *ibcq)
 {
 	struct rxe_cq *cq = to_rcq(ibcq);
+
+	rxe_cq_disable(cq);
 
 	rxe_drop_ref(cq);
 	return 0;
@@ -1170,10 +1171,8 @@ static ssize_t rxe_show_parent(struct device *device,
 {
 	struct rxe_dev *rxe = container_of(device, struct rxe_dev,
 					   ib_dev.dev);
-	char *name;
 
-	name = rxe->ifc_ops->parent_name(rxe, 1);
-	return snprintf(buf, 16, "%s\n", name);
+	return snprintf(buf, 16, "%s\n", rxe_parent_name(rxe, 1));
 }
 
 static DEVICE_ATTR(parent, S_IRUGO, rxe_show_parent, NULL);
@@ -1196,10 +1195,12 @@ int rxe_register_device(struct rxe_dev *rxe)
 	dev->node_type = RDMA_NODE_IB_CA;
 	dev->phys_port_cnt = 1;
 	dev->num_comp_vectors = RXE_NUM_COMP_VECTORS;
-	dev->dma_device = rxe->ifc_ops->dma_device(rxe);
+	dev->dma_device = rxe_dma_device(rxe);
 	dev->local_dma_lkey = 0;
-	dev->node_guid = rxe->ifc_ops->node_guid(rxe);
+	dev->node_guid = rxe_node_guid(rxe);
 	dev->dma_ops = &rxe_dma_mapping_ops;
+	dma_coerce_mask_and_coherent(&dev->dev,
+			dma_get_required_mask(dev->dev.parent));
 
 	dev->uverbs_abi_ver = RXE_UVERBS_ABI_VERSION;
 	dev->uverbs_cmd_mask = BIT_ULL(IB_USER_VERBS_CMD_GET_CONTEXT)

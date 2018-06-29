@@ -2960,8 +2960,10 @@ static int mtip_service_thread(void *data)
 		 * the condition is to check neither an internal command is
 		 * is in progress nor error handling is active
 		 */
-		wait_event_interruptible(port->svc_wait, (port->flags) &&
-			(port->flags & MTIP_PF_SVC_THD_WORK));
+		wait_event_interruptible(port->svc_wait, ({
+			klp_kgraft_mark_task_safe(current);
+			(port->flags) &&
+			(port->flags & MTIP_PF_SVC_THD_WORK); }));
 
 		if (kthread_should_stop() ||
 			test_bit(MTIP_PF_SVC_THD_STOP_BIT, &port->flags))

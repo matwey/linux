@@ -583,7 +583,6 @@ void nvme_start_keep_alive(struct nvme_ctrl *ctrl)
 	if (unlikely(ctrl->kato == 0))
 		return;
 
-	INIT_DELAYED_WORK(&ctrl->ka_work, nvme_keep_alive_work);
 	schedule_delayed_work(&ctrl->ka_work, ctrl->kato * HZ);
 }
 EXPORT_SYMBOL_GPL(nvme_start_keep_alive);
@@ -2204,6 +2203,8 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 	ctrl->quirks = quirks;
 	INIT_WORK(&ctrl->scan_work, nvme_scan_work);
 	INIT_WORK(&ctrl->async_event_work, nvme_async_event_work);
+
+	INIT_DELAYED_WORK(&ctrl->ka_work, nvme_keep_alive_work);
 
 	ret = nvme_set_instance(ctrl);
 	if (ret)
