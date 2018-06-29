@@ -562,8 +562,9 @@ int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
 			 */
 			goto reject_or_queue_io;
 
-		if (queue_live ||
-		    (rq->cmd_type == REQ_TYPE_DRV_PRIV &&
+		if ((queue_live &&
+		     !(nvme_req(rq)->flags & NVME_REQ_USERCMD)) ||
+		    (!queue_live && rq->cmd_type == REQ_TYPE_DRV_PRIV &&
 		     cmd->common.opcode == nvme_fabrics_command &&
 		     cmd->fabrics.fctype == nvme_fabrics_type_connect))
 			/*
@@ -579,7 +580,6 @@ int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
 			return 0;
 
 		/*
-		 * q isn't live to accept the command.
 		 * fall-thru to the reject_or_queue_io clause
 		 */
 		break;
