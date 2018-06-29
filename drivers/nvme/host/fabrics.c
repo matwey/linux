@@ -584,6 +584,19 @@ bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
 }
 EXPORT_SYMBOL_GPL(__nvmf_check_ready);
 
+int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
+	struct request *rq, bool queue_live, bool is_connected)
+{
+	if (!is_connected)
+		return BLK_MQ_RQ_QUEUE_BUSY;
+	if (!nvmf_check_ready(ctrl, rq, queue_live)) {
+		nvme_req(rq)->status = NVME_SC_ABORT_REQ;
+		return BLK_MQ_RQ_QUEUE_ERROR;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nvmf_check_if_ready);
+
 static const match_table_t opt_tokens = {
 	{ NVMF_OPT_TRANSPORT,		"transport=%s"		},
 	{ NVMF_OPT_TRADDR,		"traddr=%s"		},
