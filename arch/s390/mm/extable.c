@@ -1,6 +1,6 @@
 #include <linux/module.h>
 #include <linux/sort.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 /*
  * Search one exception table for an entry corresponding to the

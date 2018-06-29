@@ -191,11 +191,8 @@ static int kgdbts_unreg_thread(void *ptr)
 	/* Wait until the tests are complete and then ungresiter the I/O
 	 * driver.
 	 */
-	while (!final_ack) {
-		klp_kgraft_mark_task_safe(current);
-
+	while (!final_ack)
 		msleep_interruptible(1500);
-	}
 	/* Pause for any other threads to exit after final ack. */
 	msleep_interruptible(1000);
 	if (configured)

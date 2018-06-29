@@ -21,7 +21,6 @@ config ARM
 	select GENERIC_ALLOCATOR
 	select GENERIC_ATOMIC64 if (CPU_V7M || CPU_V6 || !CPU_32v6K || !AEABI)
 	select GENERIC_CLOCKEVENTS_BROADCAST if SMP
-	select GENERIC_EARLY_IOREMAP
 	select GENERIC_IDLE_POLL_SETUP
 	select GENERIC_IRQ_PROBE
 	select GENERIC_IRQ_SHOW
@@ -39,7 +38,6 @@ config ARM
 	select HAVE_ARCH_KGDB if !CPU_ENDIAN_BE32
 	select HAVE_ARCH_SECCOMP_FILTER if (AEABI && !OABI_COMPAT)
 	select HAVE_ARCH_TRACEHOOK
-	select HAVE_ARM_SMCCC if CPU_V7
 	select HAVE_BPF_JIT
 	select HAVE_CC_STACKPROTECTOR
 	select HAVE_CONTEXT_TRACKING
@@ -802,7 +800,6 @@ config ARCH_VIRT
 	bool "Dummy Virtual Machine" if ARCH_MULTI_V7
 	select ARM_AMBA
 	select ARM_GIC
-	select ARM_GIC_V2M if PCI
 	select ARM_GIC_V3
 	select ARM_PSCI
 	select HAVE_ARM_ARCH_TIMER
@@ -1485,7 +1482,7 @@ config HOTPLUG_CPU
 
 config ARM_PSCI
 	bool "Support for the ARM Power State Coordination Interface (PSCI)"
-	depends on HAVE_ARM_SMCCC
+	depends on CPU_V7
 	select ARM_PSCI_FW
 	help
 	  Say Y here if you want Linux to communicate with system firmware
@@ -2044,25 +2041,6 @@ config AUTO_ZRELADDR
 	  0xf8000000. This assumes the zImage being placed in the first 128MB
 	  from start of memory.
 
-config EFI_STUB
-	bool
-
-config EFI
-	bool "UEFI runtime support"
-	depends on OF && !CPU_BIG_ENDIAN && MMU && AUTO_ZRELADDR && !XIP_KERNEL
-	select UCS2_STRING
-	select EFI_PARAMS_FROM_FDT
-	select EFI_STUB
-	select EFI_ARMSTUB
-	select EFI_RUNTIME_WRAPPERS
-	---help---
-	  This option provides support for runtime services provided
-	  by UEFI firmware (such as non-volatile variables, realtime
-	  clock, and platform reset). A UEFI stub is also provided to
-	  allow the kernel to be booted as an EFI application. This
-	  is only useful for kernels that may run on systems that have
-	  UEFI firmware.
-
 endmenu
 
 menu "CPU Power Management"
@@ -2163,7 +2141,7 @@ config ARCH_SUSPEND_POSSIBLE
 	def_bool y
 
 config ARM_CPU_SUSPEND
-	def_bool PM_SLEEP || ARM_PSCI_FW
+	def_bool PM_SLEEP
 
 config ARCH_HIBERNATION_POSSIBLE
 	bool

@@ -323,8 +323,6 @@ static int pcm20_thread(void *data)
 		if (kthread_should_stop())
 			break;
 
-		klp_kgraft_mark_task_safe(current);
-
 		res = rds_cmd(dev->aci, RDS_RXVALUE, &buf, 1);
 		if (res)
 			continue;

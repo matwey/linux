@@ -65,7 +65,9 @@ struct nicpf {
 	bool			mbx_lock[MAX_NUM_VFS_SUPPORTED];
 
 	/* MSI-X */
+	bool			msix_enabled;
 	u8			num_vec;
+	struct msix_entry	*msix_entries;
 	bool			irq_allocated[NIC_PF_MSIX_VECTORS];
 	char			irq_name[NIC_PF_MSIX_VECTORS][20];
 };
@@ -1086,7 +1088,7 @@ static irqreturn_t nic_mbx_intr_handler(int irq, void *nic_irq)
 	u64 intr;
 	u8  vf, vf_per_mbx_reg = 64;
 
-	if (irq == pci_irq_vector(nic->pdev, NIC_PF_INTR_ID_MBOX0))
+	if (irq == nic->msix_entries[NIC_PF_INTR_ID_MBOX0].vector)
 		mbx = 0;
 	else
 		mbx = 1;
@@ -1105,13 +1107,51 @@ static irqreturn_t nic_mbx_intr_handler(int irq, void *nic_irq)
 	return IRQ_HANDLED;
 }
 
+static int nic_enable_msix(struct nicpf *nic)
+{
+	int i, ret;
+
+	nic->num_vec = pci_msix_vec_count(nic->pdev);
+
+	nic->msix_entries = kmalloc_array(nic->num_vec,
+					  sizeof(struct msix_entry),
+					  GFP_KERNEL);
+	if (!nic->msix_entries)
+		return -ENOMEM;
+
+	for (i = 0; i < nic->num_vec; i++)
+		nic->msix_entries[i].entry = i;
+
+	ret = pci_enable_msix(nic->pdev, nic->msix_entries, nic->num_vec);
+	if (ret) {
+		dev_err(&nic->pdev->dev,
+			"Request for #%d msix vectors failed, returned %d\n",
+			   nic->num_vec, ret);
+		kfree(nic->msix_entries);
+		return ret;
+	}
+
+	nic->msix_enabled = 1;
+	return 0;
+}
+
+static void nic_disable_msix(struct nicpf *nic)
+{
+	if (nic->msix_enabled) {
+		pci_disable_msix(nic->pdev);
+		kfree(nic->msix_entries);
+		nic->msix_enabled = 0;
+		nic->num_vec = 0;
+	}
+}
+
 static void nic_free_all_interrupts(struct nicpf *nic)
 {
 	int irq;
 
 	for (irq = 0; irq < nic->num_vec; irq++) {
 		if (nic->irq_allocated[irq])
-			free_irq(pci_irq_vector(nic->pdev, irq), nic);
+			free_irq(nic->msix_entries[irq].vector, nic);
 		nic->irq_allocated[irq] = false;
 	}
 }
@@ -1119,24 +1159,18 @@ static void nic_free_all_interrupts(struct nicpf *nic)
 static int nic_register_interrupts(struct nicpf *nic)
 {
 	int i, ret;
-	nic->num_vec = pci_msix_vec_count(nic->pdev);
 
 	/* Enable MSI-X */
-	ret = pci_alloc_irq_vectors(nic->pdev, nic->num_vec, nic->num_vec,
-				    PCI_IRQ_MSIX);
-	if (ret < 0) {
-		dev_err(&nic->pdev->dev,
-			"Request for #%d msix vectors failed, returned %d\n",
-			   nic->num_vec, ret);
-		return 1;
-	}
+	ret = nic_enable_msix(nic);
+	if (ret)
+		return ret;
 
 	/* Register mailbox interrupt handler */
 	for (i = NIC_PF_INTR_ID_MBOX0; i < nic->num_vec; i++) {
 		sprintf(nic->irq_name[i],
 			"NICPF Mbox%d", (i - NIC_PF_INTR_ID_MBOX0));
 
-		ret = request_irq(pci_irq_vector(nic->pdev, i),
+		ret = request_irq(nic->msix_entries[i].vector,
 				  nic_mbx_intr_handler, 0,
 				  nic->irq_name[i], nic);
 		if (ret)
@@ -1152,16 +1186,14 @@ static int nic_register_interrupts(struct nicpf *nic)
 fail:
 	dev_err(&nic->pdev->dev, "Request irq failed\n");
 	nic_free_all_interrupts(nic);
-	pci_free_irq_vectors(nic->pdev);
-	nic->num_vec = 0;
+	nic_disable_msix(nic);
 	return ret;
 }
 
 static void nic_unregister_interrupts(struct nicpf *nic)
 {
 	nic_free_all_interrupts(nic);
-	pci_free_irq_vectors(nic->pdev);
-	nic->num_vec = 0;
+	nic_disable_msix(nic);
 }
 
 static int nic_num_sqs_en(struct nicpf *nic, int vf_en)

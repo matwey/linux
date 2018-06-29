@@ -50,7 +50,6 @@
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <linux/module.h>
-#include <linux/string.h>
 
 #include "hfi.h"
 #include "debugfs.h"
@@ -504,11 +503,18 @@ static ssize_t asic_flags_write(struct file *file, const char __user *buf,
 	ppd = private2ppd(file);
 	dd = ppd->dd;
 
-	/* zero terminate and read the expected integer */
-	buff = memdup_user_nul(buf, count);
-	if (IS_ERR(buff))
-		return PTR_ERR(buff);
+	buff = kmalloc(count + 1, GFP_KERNEL);
+	if (!buff)
+		return -ENOMEM;
 
+	ret = copy_from_user(buff, buf, count);
+	if (ret > 0) {
+		ret = -EFAULT;
+		goto do_free;
+	}
+
+	/* zero terminate and read the expected integer */
+	buff[count] = 0;
 	ret = kstrtoull(buff, 0, &value);
 	if (ret)
 		goto do_free;
@@ -686,9 +692,15 @@ static ssize_t __i2c_debugfs_write(struct file *file, const char __user *buf,
 	if (i2c_addr == 0)
 		return -EINVAL;
 
-	buff = memdup_user(buf, count);
-	if (IS_ERR(buff))
-		return PTR_ERR(buff);
+	buff = kmalloc(count, GFP_KERNEL);
+	if (!buff)
+		return -ENOMEM;
+
+	ret = copy_from_user(buff, buf, count);
+	if (ret > 0) {
+		ret = -EFAULT;
+		goto _free;
+	}
 
 	total_written = i2c_write(ppd, target, i2c_addr, offset, buff, count);
 	if (total_written < 0) {
@@ -793,10 +805,15 @@ static ssize_t __qsfp_debugfs_write(struct file *file, const char __user *buf,
 
 	ppd = private2ppd(file);
 
-	buff = memdup_user(buf, count);
-	if (IS_ERR(buff))
-		return PTR_ERR(buff);
+	buff = kmalloc(count, GFP_KERNEL);
+	if (!buff)
+		return -ENOMEM;
 
+	ret = copy_from_user(buff, buf, count);
+	if (ret > 0) {
+		ret = -EFAULT;
+		goto _free;
+	}
 	total_written = qsfp_write(ppd, target, *ppos, buff, count);
 	if (total_written < 0) {
 		ret = total_written;

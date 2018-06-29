@@ -113,14 +113,7 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		ext4_unwritten_wait(inode);
 	}
 
-	if (!mutex_trylock(&inode->i_mutex)) {
-		if (iocb->ki_flags & IOCB_NOWAIT) {
-			ret =  -EAGAIN;
-			goto unlock_aio_mutex;
-		}
-		mutex_lock(&inode->i_mutex);
-	}
-
+	mutex_lock(&inode->i_mutex);
 	ret = generic_write_checks(iocb, from);
 	if (ret <= 0)
 		goto out;
@@ -146,8 +139,8 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		blk_start_plug(&plug);
 
 		/* check whether we do a DIO overwrite or not */
-		if (!aio_mutex && !file->f_mapping->nrpages &&
-		    pos + length <= i_size_read(inode)) {
+		if (ext4_should_dioread_nolock(inode) && !aio_mutex &&
+		    !file->f_mapping->nrpages && pos + length <= i_size_read(inode)) {
 			struct ext4_map_blocks map;
 			unsigned int blkbits = inode->i_blkbits;
 			int err, len;
@@ -170,13 +163,8 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			 * non-flags are returned.  So we should check
 			 * these two conditions.
 			 */
-			if (err == len && (map.m_flags & EXT4_MAP_MAPPED)) {
-				if (ext4_should_dioread_nolock(inode))
-					overwrite = 1;
-			} else if (iocb->ki_flags & IOCB_NOWAIT) {
-				ret = -EAGAIN;
-				goto out;
-			}
+			if (err == len && (map.m_flags & EXT4_MAP_MAPPED))
+				overwrite = 1;
 		}
 	}
 
@@ -194,7 +182,6 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 out:
 	mutex_unlock(&inode->i_mutex);
-unlock_aio_mutex:
 	if (aio_mutex)
 		mutex_unlock(aio_mutex);
 	return ret;
@@ -203,8 +190,7 @@ unlock_aio_mutex:
 #ifdef CONFIG_FS_DAX
 static int ext4_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-	int result, error = 0;
-	int retries = 0;
+	int result;
 	handle_t *handle = NULL;
 	struct inode *inode = file_inode(vma->vm_file);
 	struct super_block *sb = inode->i_sb;
@@ -227,7 +213,6 @@ static int ext4_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		sb_start_pagefault(sb);
 		file_update_time(vma->vm_file);
 		down_read(&EXT4_I(inode)->i_mmap_sem);
-retry:
 		handle = ext4_journal_start_sb(sb, EXT4_HT_WRITE_PAGE,
 						EXT4_DATA_TRANS_BLOCKS(sb));
 	} else
@@ -236,14 +221,11 @@ retry:
 	if (IS_ERR(handle))
 		result = VM_FAULT_SIGBUS;
 	else
-		result = __dax_fault2(vma, vmf, &error, ext4_dax_get_block);
+		result = __dax_fault(vma, vmf, ext4_dax_mmap_get_block, NULL);
 
 	if (write) {
 		if (!IS_ERR(handle))
 			ext4_journal_stop(handle);
-		if ((result & VM_FAULT_ERROR) && error == -ENOSPC &&
-		    ext4_should_retry_alloc(sb, &retries))
-			goto retry;
 		up_read(&EXT4_I(inode)->i_mmap_sem);
 		sb_end_pagefault(sb);
 	} else
@@ -288,7 +270,7 @@ static int ext4_dax_pmd_fault(struct vm_area_struct *vma, unsigned long addr,
 		result = VM_FAULT_SIGBUS;
 	else
 		result = __dax_pmd_fault(vma, addr, pmd, flags,
-					 ext4_dax_get_block);
+				ext4_dax_mmap_get_block, NULL);
 
 	if (write) {
 		if (!IS_ERR(handle))
@@ -426,10 +408,6 @@ static int ext4_file_open(struct inode * inode, struct file * filp)
 		if (ret < 0)
 			return ret;
 	}
-
-	/* Set the flags to support nowait AIO */
-	filp->f_mode |= FMODE_AIO_NOWAIT;
-
 	return dquot_file_open(inode, filp);
 }
 

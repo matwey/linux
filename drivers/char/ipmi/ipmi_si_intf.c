@@ -1075,8 +1075,6 @@ static int ipmi_thread(void *data)
 	while (!kthread_should_stop()) {
 		int busy_wait;
 
-		klp_kgraft_mark_task_safe(current);
-
 		spin_lock_irqsave(&(smi_info->si_lock), flags);
 		smi_result = smi_event_handler(smi_info, 0);
 
@@ -1930,7 +1928,7 @@ static int hotmod_handler(const char *val, struct kernel_param *kp)
 				info->io.regspacing = DEFAULT_REGSPACING;
 			info->io.regsize = regsize;
 			if (!info->io.regsize)
-				info->io.regsize = DEFAULT_REGSIZE;
+				info->io.regsize = DEFAULT_REGSPACING;
 			info->io.regshift = regshift;
 			info->irq = irq;
 			if (info->irq)
@@ -2022,7 +2020,7 @@ static int hardcode_find_bmc(void)
 			info->io.regspacing = DEFAULT_REGSPACING;
 		info->io.regsize = regsizes[i];
 		if (!info->io.regsize)
-			info->io.regsize = DEFAULT_REGSIZE;
+			info->io.regsize = DEFAULT_REGSPACING;
 		info->io.regshift = regshifts[i];
 		info->irq = irqs[i];
 		if (info->irq)
@@ -2381,7 +2379,7 @@ static void try_init_dmi(struct dmi_ipmi_data *ipmi_data)
 	info->io.regspacing = ipmi_data->offset;
 	if (!info->io.regspacing)
 		info->io.regspacing = DEFAULT_REGSPACING;
-	info->io.regsize = DEFAULT_REGSIZE;
+	info->io.regsize = DEFAULT_REGSPACING;
 	info->io.regshift = 0;
 
 	info->slave_addr = ipmi_data->slave_addr;
@@ -2680,9 +2678,6 @@ static int acpi_ipmi_probe(struct platform_device *dev)
 	unsigned long long tmp;
 	int rv = -EINVAL;
 
-	if (!si_tryacpi)
-	       return 0;
-
 	handle = ACPI_HANDLE(&dev->dev);
 	if (!handle)
 		return -ENODEV;
@@ -2748,7 +2743,7 @@ static int acpi_ipmi_probe(struct platform_device *dev)
 			info->io.regspacing =
 				res_second->start - info->io.addr_data;
 	}
-	info->io.regsize = DEFAULT_REGSIZE;
+	info->io.regsize = DEFAULT_REGSPACING;
 	info->io.regshift = 0;
 
 	/* If _GPE exists, use it; otherwise use standard interrupts */

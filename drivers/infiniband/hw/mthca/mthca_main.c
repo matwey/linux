@@ -851,18 +851,20 @@ err_uar_table_free:
 
 static int mthca_enable_msi_x(struct mthca_dev *mdev)
 {
+	struct msix_entry entries[3];
 	int err;
 
-	err = pci_alloc_irq_vectors(mdev->pdev, 3, 3, PCI_IRQ_MSIX);
-	if (err < 0)
+	entries[0].entry = 0;
+	entries[1].entry = 1;
+	entries[2].entry = 2;
+
+	err = pci_enable_msix_exact(mdev->pdev, entries, ARRAY_SIZE(entries));
+	if (err)
 		return err;
 
-	mdev->eq_table.eq[MTHCA_EQ_COMP ].msi_x_vector =
-			pci_irq_vector(mdev->pdev, 0);
-	mdev->eq_table.eq[MTHCA_EQ_ASYNC].msi_x_vector =
-			pci_irq_vector(mdev->pdev, 1);
-	mdev->eq_table.eq[MTHCA_EQ_CMD  ].msi_x_vector =
-			pci_irq_vector(mdev->pdev, 2);
+	mdev->eq_table.eq[MTHCA_EQ_COMP ].msi_x_vector = entries[0].vector;
+	mdev->eq_table.eq[MTHCA_EQ_ASYNC].msi_x_vector = entries[1].vector;
+	mdev->eq_table.eq[MTHCA_EQ_CMD  ].msi_x_vector = entries[2].vector;
 
 	return 0;
 }
@@ -1016,7 +1018,7 @@ static int __mthca_init_one(struct pci_dev *pdev, int hca_type)
 	err = mthca_setup_hca(mdev);
 	if (err == -EBUSY && (mdev->mthca_flags & MTHCA_FLAG_MSI_X)) {
 		if (mdev->mthca_flags & MTHCA_FLAG_MSI_X)
-			pci_free_irq_vectors(pdev);
+			pci_disable_msix(pdev);
 		mdev->mthca_flags &= ~MTHCA_FLAG_MSI_X;
 
 		err = mthca_setup_hca(mdev);
@@ -1060,7 +1062,7 @@ err_cleanup:
 
 err_close:
 	if (mdev->mthca_flags & MTHCA_FLAG_MSI_X)
-		pci_free_irq_vectors(pdev);
+		pci_disable_msix(pdev);
 
 	mthca_close_hca(mdev);
 
@@ -1111,7 +1113,7 @@ static void __mthca_remove_one(struct pci_dev *pdev)
 		mthca_cmd_cleanup(mdev);
 
 		if (mdev->mthca_flags & MTHCA_FLAG_MSI_X)
-			pci_free_irq_vectors(pdev);
+			pci_disable_msix(pdev);
 
 		ib_dealloc_device(&mdev->ib_dev);
 		pci_release_regions(pdev);

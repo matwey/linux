@@ -1,11 +1,8 @@
 #ifndef _ASM_EFI_H
 #define _ASM_EFI_H
 
-#include <asm/cpufeature.h>
 #include <asm/io.h>
-#include <asm/mmu_context.h>
 #include <asm/neon.h>
-#include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 
 #ifdef CONFIG_EFI
@@ -13,9 +10,6 @@ extern void efi_init(void);
 #else
 #define efi_init()
 #endif
-
-int efi_create_mapping(struct mm_struct *mm, efi_memory_desc_t *md);
-int efi_set_mapping_permissions(struct mm_struct *mm, efi_memory_desc_t *md);
 
 #define arch_efi_call_virt_setup()					\
 ({									\
@@ -48,16 +42,7 @@ int efi_set_mapping_permissions(struct mm_struct *mm, efi_memory_desc_t *md);
 #define EFI_FDT_ALIGN	SZ_2M   /* used by allocate_new_fdt_and_exit_boot() */
 #define MAX_FDT_OFFSET	SZ_512M
 
-#define efi_call_early(f, ...)		sys_table_arg->boottime->f(__VA_ARGS__)
-#define __efi_call_early(f, ...)	f(__VA_ARGS__)
-#define efi_is_64bit()			(1)
-
-#define alloc_screen_info(x...)		&screen_info
-#define free_screen_info(x...)
-
-static inline void efifb_setup_from_dmi(struct screen_info *si, const char *opt)
-{
-}
+#define efi_call_early(f, ...) sys_table_arg->boottime->f(__VA_ARGS__)
 
 #define EFI_ALLOC_ALIGN		SZ_64K
 
@@ -73,34 +58,6 @@ static inline void efifb_setup_from_dmi(struct screen_info *si, const char *opt)
  *   into a private set of page tables. If this all succeeds, the Runtime
  *   Services are enabled and the EFI_RUNTIME_SERVICES bit set.
  */
-
-static inline void efi_set_pgd(struct mm_struct *mm)
-{
-	__switch_mm(mm);
-
-	if (system_uses_ttbr0_pan()) {
-		if (mm != current->active_mm) {
-			/*
-			 * Update the current thread's saved ttbr0 since it is
-			 * restored as part of a return from exception. Enable
-			 * access to the valid TTBR0_EL1 and invoke the errata
-			 * workaround directly since there is no return from
-			 * exception when invoking the EFI run-time services.
-			 */
-			update_saved_ttbr0(current, mm);
-			uaccess_ttbr0_enable();
-			post_ttbr_update_workaround();
-		} else {
-			/*
-			 * Defer the switch to the current thread's TTBR0_EL1
-			 * until uaccess_enable(). Restore the current
-			 * thread's saved ttbr0 corresponding to its active_mm
-			 */
-			uaccess_ttbr0_disable();
-			update_saved_ttbr0(current, current->active_mm);
-		}
-	}
-}
 
 void efi_virtmap_load(void);
 void efi_virtmap_unload(void);

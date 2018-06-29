@@ -262,7 +262,7 @@
 #include <linux/completion.h>
 
 #include <asm/processor.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/irq.h>
 #include <asm/irq_regs.h>
 #include <asm/io.h>
@@ -1888,10 +1888,9 @@ void add_hwgenerator_randomness(const char *buffer, size_t count,
 		 * random_write_wakeup_thresh, or when the calling
 		 * thread is about to terminate.
 		 */
-		wait_event_interruptible(random_write_wait, ({
-					 klp_kgraft_mark_task_safe(current);
+		wait_event_interruptible(random_write_wait,
 					 kthread_should_stop() ||
-			ENTROPY_BITS(&input_pool) <= random_write_wakeup_bits; }));
+			ENTROPY_BITS(&input_pool) <= random_write_wakeup_bits);
 	}
 	mix_pool_bytes(poolp, buffer, count);
 	credit_entropy_bits(poolp, entropy);

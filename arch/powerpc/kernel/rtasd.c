@@ -23,7 +23,7 @@
 #include <linux/slab.h>
 #include <linux/topology.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/rtas.h>
 #include <asm/prom.h>

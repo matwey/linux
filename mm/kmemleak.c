@@ -1394,7 +1394,7 @@ static void kmemleak_scan(void)
 			if (page_count(page) == 0)
 				continue;
 			scan_block(page, page + 1, NULL);
-			if (!(pfn & 63))
+			if (!(pfn % (MAX_SCAN_SIZE / sizeof(*page))))
 				cond_resched();
 		}
 	}
@@ -1499,10 +1499,8 @@ static int kmemleak_scan_thread(void *arg)
 		mutex_unlock(&scan_mutex);
 
 		/* wait before the next scan */
-		while (timeout && !kthread_should_stop()) {
+		while (timeout && !kthread_should_stop())
 			timeout = schedule_timeout_interruptible(timeout);
-			klp_kgraft_mark_task_safe(current);
-		}
 	}
 
 	pr_info("Automatic memory scanning thread ended\n");

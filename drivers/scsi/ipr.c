@@ -3814,6 +3814,7 @@ static ssize_t ipr_store_iopoll_weight(struct device *dev,
 		for (i = 1; i < ioa_cfg->hrrq_num; i++) {
 			irq_poll_init(&ioa_cfg->hrrq[i].iopoll,
 					ioa_cfg->iopoll_weight, ipr_iopoll);
+			irq_poll_enable(&ioa_cfg->hrrq[i].iopoll);
 		}
 	}
 	spin_unlock_irqrestore(shost->host_lock, lock_flags);
@@ -5910,7 +5911,8 @@ static irqreturn_t ipr_isr_mhrrq(int irq, void *devp)
 	if (ioa_cfg->iopoll_weight && ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
 		if ((be32_to_cpu(*hrrq->hrrq_curr) & IPR_HRRQ_TOGGLE_BIT) ==
 		       hrrq->toggle_bit) {
-			irq_poll_sched(&hrrq->iopoll);
+			if (!irq_poll_sched_prep(&hrrq->iopoll))
+				irq_poll_sched(&hrrq->iopoll);
 			spin_unlock_irqrestore(hrrq->lock, hrrq_flags);
 			return IRQ_HANDLED;
 		}
@@ -10697,6 +10699,7 @@ static int ipr_probe(struct pci_dev *pdev, const struct pci_device_id *dev_id)
 		for (i = 1; i < ioa_cfg->hrrq_num; i++) {
 			irq_poll_init(&ioa_cfg->hrrq[i].iopoll,
 					ioa_cfg->iopoll_weight, ipr_iopoll);
+			irq_poll_enable(&ioa_cfg->hrrq[i].iopoll);
 		}
 	}
 

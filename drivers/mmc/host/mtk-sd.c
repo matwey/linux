@@ -735,6 +735,9 @@ static void msdc_request_done(struct msdc_host *host, struct mmc_request *mrq)
 	if (mrq->data)
 		msdc_unprepare_data(host, mrq);
 	mmc_request_done(host->mmc, mrq);
+
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 }
 
 /* returns true if command is fully handled; returns false otherwise */
@@ -881,6 +884,8 @@ static void msdc_ops_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	host->error = 0;
 	WARN_ON(host->mrq);
 	host->mrq = mrq;
+
+	pm_runtime_get_sync(host->dev);
 
 	if (mrq->data)
 		msdc_prepare_data(host, mrq);
@@ -1202,6 +1207,8 @@ static void msdc_ops_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	struct msdc_host *host = mmc_priv(mmc);
 	int ret;
 
+	pm_runtime_get_sync(host->dev);
+
 	msdc_set_buswidth(host, ios->bus_width);
 
 	/* Suspend/Resume will do power off/on */
@@ -1213,7 +1220,7 @@ static void msdc_ops_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 					ios->vdd);
 			if (ret) {
 				dev_err(host->dev, "Failed to set vmmc power!\n");
-				return;
+				goto end;
 			}
 		}
 		break;
@@ -1241,6 +1248,10 @@ static void msdc_ops_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	if (host->mclk != ios->clock || host->timing != ios->timing)
 		msdc_set_mclk(host, ios->timing, ios->clock);
+
+end:
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 }
 
 static u32 test_delay_bit(u32 delay, u32 bit)
@@ -1403,15 +1414,19 @@ static int msdc_execute_tuning(struct mmc_host *mmc, u32 opcode)
 	struct msdc_host *host = mmc_priv(mmc);
 	int ret;
 
+	pm_runtime_get_sync(host->dev);
 	ret = msdc_tune_response(mmc, opcode);
 	if (ret == -EIO) {
 		dev_err(host->dev, "Tune response fail!\n");
-		return ret;
+		goto out;
 	}
 	ret = msdc_tune_data(mmc, opcode);
 	if (ret == -EIO)
 		dev_err(host->dev, "Tune data fail!\n");
 
+out:
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 	return ret;
 }
 
@@ -1528,6 +1543,7 @@ static int msdc_drv_probe(struct platform_device *pdev)
 	mmc->f_min = DIV_ROUND_UP(host->src_clk_freq, 4 * 255);
 
 	mmc->caps |= MMC_CAP_ERASE | MMC_CAP_CMD23;
+	mmc->caps |= MMC_CAP_RUNTIME_RESUME;
 	/* MMC core transfer sizes tunable parameters */
 	mmc->max_segs = MAX_BD_NUM;
 	mmc->max_seg_size = BDMA_DESC_BUFLEN;

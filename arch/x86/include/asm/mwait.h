@@ -3,8 +3,6 @@
 
 #include <linux/sched.h>
 
-#include <asm/spec_ctrl.h>
-
 #define MWAIT_SUBSTATE_MASK		0xf
 #define MWAIT_CSTATE_MASK		0xf
 #define MWAIT_SUBSTATE_SIZE		4
@@ -104,13 +102,9 @@ static inline void mwait_idle_with_hints(unsigned long eax, unsigned long ecx)
 			mb();
 		}
 
-		x86_disable_ibrs();
-
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		if (!need_resched())
 			__mwait(eax, ecx);
-
-		x86_enable_ibrs();
 	}
 	current_clr_polling();
 }

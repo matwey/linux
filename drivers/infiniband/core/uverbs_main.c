@@ -46,7 +46,7 @@
 #include <linux/anon_inodes.h>
 #include <linux/slab.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include <rdma/ib.h>
 
@@ -369,7 +369,6 @@ static void ib_uverbs_release_file(struct kref *ref)
 	if (atomic_dec_and_test(&file->device->refcount))
 		ib_uverbs_comp_dev(file->device);
 
-	kobject_put(&file->device->kobj);
 	kfree(file);
 }
 
@@ -737,21 +736,12 @@ static int verify_command_mask(struct ib_device *ib_dev, __u32 command)
 	return -1;
 }
 
-static bool verify_command_idx(u32 command, bool extended)
-{
-	if (extended)
-		return command < ARRAY_SIZE(uverbs_ex_cmd_table);
-
-	return command < ARRAY_SIZE(uverbs_cmd_table);
-}
-
 static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 			     size_t count, loff_t *pos)
 {
 	struct ib_uverbs_file *file = filp->private_data;
 	struct ib_device *ib_dev;
 	struct ib_uverbs_cmd_hdr hdr;
-	bool extended_command;
 	__u32 command;
 	__u32 flags;
 	int srcu_key;
@@ -784,15 +774,6 @@ static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 	}
 
 	command = hdr.command & IB_USER_VERBS_CMD_COMMAND_MASK;
-	flags = (hdr.command &
-		 IB_USER_VERBS_CMD_FLAGS_MASK) >> IB_USER_VERBS_CMD_FLAGS_SHIFT;
-
-	extended_command = flags & IB_USER_VERBS_CMD_FLAG_EXTENDED;
-	if (!verify_command_idx(command, extended_command)) {
-		ret = -EINVAL;
-		goto out;
-	}
-
 	if (verify_command_mask(ib_dev, command)) {
 		ret = -EOPNOTSUPP;
 		goto out;
@@ -804,8 +785,12 @@ static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 		goto out;
 	}
 
+	flags = (hdr.command &
+		 IB_USER_VERBS_CMD_FLAGS_MASK) >> IB_USER_VERBS_CMD_FLAGS_SHIFT;
+
 	if (!flags) {
-		if (!uverbs_cmd_table[command]) {
+		if (command >= ARRAY_SIZE(uverbs_cmd_table) ||
+		    !uverbs_cmd_table[command]) {
 			ret = -EINVAL;
 			goto out;
 		}
@@ -826,7 +811,8 @@ static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 		struct ib_udata uhw;
 		size_t written_count = count;
 
-		if (!uverbs_ex_cmd_table[command]) {
+		if (command >= ARRAY_SIZE(uverbs_ex_cmd_table) ||
+		    !uverbs_ex_cmd_table[command]) {
 			ret = -ENOSYS;
 			goto out;
 		}
@@ -1009,6 +995,7 @@ err:
 static int ib_uverbs_close(struct inode *inode, struct file *filp)
 {
 	struct ib_uverbs_file *file = filp->private_data;
+	struct ib_uverbs_device *dev = file->device;
 
 	mutex_lock(&file->cleanup_mutex);
 	if (file->ucontext) {
@@ -1028,6 +1015,7 @@ static int ib_uverbs_close(struct inode *inode, struct file *filp)
 		kref_put(&file->async_file->ref, ib_uverbs_release_event_file);
 
 	kref_put(&file->ref, ib_uverbs_release_file);
+	kobject_put(&dev->kobj);
 
 	return 0;
 }
@@ -1242,6 +1230,7 @@ static void ib_uverbs_free_hw_resources(struct ib_uverbs_device *uverbs_dev,
 		kref_get(&file->ref);
 		mutex_unlock(&uverbs_dev->lists_mutex);
 
+		ib_uverbs_event_handler(&file->event_handler, &event);
 
 		mutex_lock(&file->cleanup_mutex);
 		ucontext = file->ucontext;
@@ -1258,7 +1247,6 @@ static void ib_uverbs_free_hw_resources(struct ib_uverbs_device *uverbs_dev,
 			 * for example due to freeing the resources
 			 * (e.g mmput).
 			 */
-			ib_uverbs_event_handler(&file->event_handler, &event);
 			ib_dev->disassociate_ucontext(ucontext);
 			ib_uverbs_cleanup_ucontext(file, ucontext);
 		}

@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2017 Intel Corporation.
+ * Copyright(c) 2015, 2016 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -291,26 +291,10 @@ static void wss_insert(void *address)
 /*
  * Is the working set larger than the threshold?
  */
-static inline bool wss_exceeds_threshold(void)
+static inline int wss_exceeds_threshold(void)
 {
 	return atomic_read(&wss.total_count) >= wss.threshold;
 }
-
-/*
- * Translate ib_wr_opcode into ib_wc_opcode.
- */
-const enum ib_wc_opcode ib_hfi1_wc_opcode[] = {
-	[IB_WR_RDMA_WRITE] = IB_WC_RDMA_WRITE,
-	[IB_WR_RDMA_WRITE_WITH_IMM] = IB_WC_RDMA_WRITE,
-	[IB_WR_SEND] = IB_WC_SEND,
-	[IB_WR_SEND_WITH_IMM] = IB_WC_SEND,
-	[IB_WR_RDMA_READ] = IB_WC_RDMA_READ,
-	[IB_WR_ATOMIC_CMP_AND_SWP] = IB_WC_COMP_SWAP,
-	[IB_WR_ATOMIC_FETCH_AND_ADD] = IB_WC_FETCH_ADD,
-	[IB_WR_SEND_WITH_INV] = IB_WC_SEND,
-	[IB_WR_LOCAL_INV] = IB_WC_LOCAL_INV,
-	[IB_WR_REG_MR] = IB_WC_REG_MR
-};
 
 /*
  * Length of header by opcode, 0 --> not supported
@@ -435,19 +419,18 @@ __be64 ib_hfi1_sys_image_guid;
  * @ss: the SGE state
  * @data: the data to copy
  * @length: the length of the data
- * @release: boolean to release MR
  * @copy_last: do a separate copy of the last 8 bytes
  */
 void hfi1_copy_sge(
 	struct rvt_sge_state *ss,
 	void *data, u32 length,
-	bool release,
-	bool copy_last)
+	int release,
+	int copy_last)
 {
 	struct rvt_sge *sge = &ss->sge;
+	int in_last = 0;
 	int i;
-	bool in_last = false;
-	bool cacheless_copy = false;
+	int cacheless_copy = 0;
 
 	if (sge_copy_mode == COPY_CACHELESS) {
 		cacheless_copy = length >= PAGE_SIZE;
@@ -471,15 +454,19 @@ void hfi1_copy_sge(
 		if (length > 8) {
 			length -= 8;
 		} else {
-			copy_last = false;
-			in_last = true;
+			copy_last = 0;
+			in_last = 1;
 		}
 	}
 
 again:
 	while (length) {
-		u32 len = rvt_get_sge_length(sge, length);
+		u32 len = sge->length;
 
+		if (len > length)
+			len = length;
+		if (len > sge->sge_length)
+			len = sge->sge_length;
 		WARN_ON_ONCE(len == 0);
 		if (unlikely(in_last)) {
 			/* enforce byte transfer ordering */
@@ -490,16 +477,74 @@ again:
 		} else {
 			memcpy(sge->vaddr, data, len);
 		}
-		rvt_update_sge(ss, len, release);
+		sge->vaddr += len;
+		sge->length -= len;
+		sge->sge_length -= len;
+		if (sge->sge_length == 0) {
+			if (release)
+				rvt_put_mr(sge->mr);
+			if (--ss->num_sge)
+				*sge = *ss->sg_list++;
+		} else if (sge->length == 0 && sge->mr->lkey) {
+			if (++sge->n >= RVT_SEGSZ) {
+				if (++sge->m >= sge->mr->mapsz)
+					break;
+				sge->n = 0;
+			}
+			sge->vaddr =
+				sge->mr->map[sge->m]->segs[sge->n].vaddr;
+			sge->length =
+				sge->mr->map[sge->m]->segs[sge->n].length;
+		}
 		data += len;
 		length -= len;
 	}
 
 	if (copy_last) {
-		copy_last = false;
-		in_last = true;
+		copy_last = 0;
+		in_last = 1;
 		length = 8;
 		goto again;
+	}
+}
+
+/**
+ * hfi1_skip_sge - skip over SGE memory
+ * @ss: the SGE state
+ * @length: the number of bytes to skip
+ */
+void hfi1_skip_sge(struct rvt_sge_state *ss, u32 length, int release)
+{
+	struct rvt_sge *sge = &ss->sge;
+
+	while (length) {
+		u32 len = sge->length;
+
+		if (len > length)
+			len = length;
+		if (len > sge->sge_length)
+			len = sge->sge_length;
+		WARN_ON_ONCE(len == 0);
+		sge->vaddr += len;
+		sge->length -= len;
+		sge->sge_length -= len;
+		if (sge->sge_length == 0) {
+			if (release)
+				rvt_put_mr(sge->mr);
+			if (--ss->num_sge)
+				*sge = *ss->sg_list++;
+		} else if (sge->length == 0 && sge->mr->lkey) {
+			if (++sge->n >= RVT_SEGSZ) {
+				if (++sge->m >= sge->mr->mapsz)
+					break;
+				sge->n = 0;
+			}
+			sge->vaddr =
+				sge->mr->map[sge->m]->segs[sge->n].vaddr;
+			sge->length =
+				sge->mr->map[sge->m]->segs[sge->n].length;
+		}
+		length -= len;
 	}
 }
 
@@ -531,7 +576,7 @@ void hfi1_ib_rcv(struct hfi1_packet *packet)
 	struct ib_header *hdr = packet->hdr;
 	u32 tlen = packet->tlen;
 	struct hfi1_pportdata *ppd = rcd->ppd;
-	struct hfi1_ibport *ibp = rcd_to_iport(rcd);
+	struct hfi1_ibport *ibp = &ppd->ibport_data;
 	struct rvt_dev_info *rdi = &ppd->dd->verbs_dev.rdi;
 	opcode_handler packet_handler;
 	unsigned long flags;
@@ -644,6 +689,27 @@ static void mem_timer(unsigned long data)
 		hfi1_qp_wakeup(qp, RVT_S_WAIT_KMEM);
 }
 
+void update_sge(struct rvt_sge_state *ss, u32 length)
+{
+	struct rvt_sge *sge = &ss->sge;
+
+	sge->vaddr += length;
+	sge->length -= length;
+	sge->sge_length -= length;
+	if (sge->sge_length == 0) {
+		if (--ss->num_sge)
+			*sge = *ss->sg_list++;
+	} else if (sge->length == 0 && sge->mr->lkey) {
+		if (++sge->n >= RVT_SEGSZ) {
+			if (++sge->m >= sge->mr->mapsz)
+				return;
+			sge->n = 0;
+		}
+		sge->vaddr = sge->mr->map[sge->m]->segs[sge->n].vaddr;
+		sge->length = sge->mr->map[sge->m]->segs[sge->n].length;
+	}
+}
+
 /*
  * This is called with progress side lock held.
  */
@@ -732,7 +798,7 @@ static noinline int build_verbs_ulp_payload(
 			len);
 		if (ret)
 			goto bail_txadd;
-		rvt_update_sge(ss, len, false);
+		update_sge(ss, len);
 		length -= len;
 	}
 	return ret;
@@ -1007,7 +1073,7 @@ int hfi1_verbs_send_pio(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 
 				if (slen > len)
 					slen = len;
-				rvt_update_sge(ss, slen, false);
+				update_sge(ss, slen);
 				seg_pio_copy_mid(pbuf, addr, slen);
 				len -= slen;
 			}
@@ -1236,14 +1302,12 @@ int hfi1_verbs_send(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 static void hfi1_fill_device_attr(struct hfi1_devdata *dd)
 {
 	struct rvt_dev_info *rdi = &dd->verbs_dev.rdi;
-	u32 ver = dd->dc8051_ver;
+	u16 ver = dd->dc8051_ver;
 
 	memset(&rdi->dparms.props, 0, sizeof(rdi->dparms.props));
 
-	rdi->dparms.props.fw_ver = ((u64)(dc8051_ver_maj(ver)) << 32) |
-		((u64)(dc8051_ver_min(ver)) << 16) |
-		(u64)dc8051_ver_patch(ver);
-
+	rdi->dparms.props.fw_ver = ((u64)(dc8051_ver_maj(ver)) << 16) |
+				    (u64)dc8051_ver_min(ver);
 	rdi->dparms.props.device_cap_flags = IB_DEVICE_BAD_PKEY_CNTR |
 			IB_DEVICE_BAD_QKEY_CNTR | IB_DEVICE_SHUTDOWN_PORT |
 			IB_DEVICE_SYS_IMAGE_GUID | IB_DEVICE_RC_RNR_NAK_GEN |
@@ -1522,10 +1586,10 @@ static void hfi1_get_dev_fw_str(struct ib_device *ibdev, char *str,
 {
 	struct rvt_dev_info *rdi = ib_to_rvt(ibdev);
 	struct hfi1_ibdev *dev = dev_from_rdi(rdi);
-	u32 ver = dd_from_dev(dev)->dc8051_ver;
+	u16 ver = dd_from_dev(dev)->dc8051_ver;
 
-	snprintf(str, str_len, "%u.%u.%u", dc8051_ver_maj(ver),
-		 dc8051_ver_min(ver), dc8051_ver_patch(ver));
+	snprintf(str, str_len, "%u.%u", dc8051_ver_maj(ver),
+		 dc8051_ver_min(ver));
 }
 
 static const char * const driver_cntr_names[] = {
@@ -1542,7 +1606,6 @@ static const char * const driver_cntr_names[] = {
 	"DRIVER_EgrHdrFull"
 };
 
-static DEFINE_MUTEX(cntr_names_lock); /* protects the *_cntr_names bufers */
 static const char **dev_cntr_names;
 static const char **port_cntr_names;
 static int num_driver_cntrs = ARRAY_SIZE(driver_cntr_names);
@@ -1556,7 +1619,7 @@ static int cntr_names_initialized;
  * external strings.
  */
 static int init_cntr_names(const char *names_in,
-			   const size_t names_len,
+			   const int names_len,
 			   int num_extra_names,
 			   int *num_cntrs,
 			   const char ***cntr_names)
@@ -1597,7 +1660,6 @@ static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
 {
 	int i, err;
 
-	mutex_lock(&cntr_names_lock);
 	if (!cntr_names_initialized) {
 		struct hfi1_devdata *dd = dd_from_ibdev(ibdev);
 
@@ -1606,10 +1668,8 @@ static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
 				      num_driver_cntrs,
 				      &num_dev_cntrs,
 				      &dev_cntr_names);
-		if (err) {
-			mutex_unlock(&cntr_names_lock);
+		if (err)
 			return NULL;
-		}
 
 		for (i = 0; i < num_driver_cntrs; i++)
 			dev_cntr_names[num_dev_cntrs + i] =
@@ -1623,12 +1683,10 @@ static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
 		if (err) {
 			kfree(dev_cntr_names);
 			dev_cntr_names = NULL;
-			mutex_unlock(&cntr_names_lock);
 			return NULL;
 		}
 		cntr_names_initialized = 1;
 	}
-	mutex_unlock(&cntr_names_lock);
 
 	if (!port_num)
 		return rdma_alloc_hw_stats_struct(
@@ -1775,7 +1833,7 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	dd->verbs_dev.rdi.driver_f.qp_priv_free = qp_priv_free;
 	dd->verbs_dev.rdi.driver_f.free_all_qps = free_all_qps;
 	dd->verbs_dev.rdi.driver_f.notify_qp_reset = notify_qp_reset;
-	dd->verbs_dev.rdi.driver_f.do_send = hfi1_do_send_from_rvt;
+	dd->verbs_dev.rdi.driver_f.do_send = hfi1_do_send;
 	dd->verbs_dev.rdi.driver_f.schedule_send = hfi1_schedule_send;
 	dd->verbs_dev.rdi.driver_f.schedule_send_no_lock = _hfi1_schedule_send;
 	dd->verbs_dev.rdi.driver_f.get_pmtu_from_attr = get_pmtu_from_attr;
@@ -1788,7 +1846,6 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	dd->verbs_dev.rdi.driver_f.mtu_to_path_mtu = mtu_to_path_mtu;
 	dd->verbs_dev.rdi.driver_f.check_modify_qp = hfi1_check_modify_qp;
 	dd->verbs_dev.rdi.driver_f.modify_qp = hfi1_modify_qp;
-	dd->verbs_dev.rdi.driver_f.notify_restart_rc = hfi1_restart_rc;
 	dd->verbs_dev.rdi.driver_f.check_send_wqe = hfi1_check_send_wqe;
 
 	/* completeion queue */
@@ -1847,18 +1904,14 @@ void hfi1_unregister_ib_device(struct hfi1_devdata *dd)
 	del_timer_sync(&dev->mem_timer);
 	verbs_txreq_exit(dev);
 
-	mutex_lock(&cntr_names_lock);
 	kfree(dev_cntr_names);
 	kfree(port_cntr_names);
-	dev_cntr_names = NULL;
-	port_cntr_names = NULL;
 	cntr_names_initialized = 0;
-	mutex_unlock(&cntr_names_lock);
 }
 
 void hfi1_cnp_rcv(struct hfi1_packet *packet)
 {
-	struct hfi1_ibport *ibp = rcd_to_iport(packet->rcd);
+	struct hfi1_ibport *ibp = &packet->rcd->ppd->ibport_data;
 	struct hfi1_pportdata *ppd = ppd_from_ibp(ibp);
 	struct ib_header *hdr = packet->hdr;
 	struct rvt_qp *qp = packet->qp;

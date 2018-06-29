@@ -40,10 +40,9 @@
 #include <linux/list.h>
 #include <linux/jiffies.h>
 #include <linux/semaphore.h>
-#include <linux/security.h>
 
 #include <asm/io.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
 
 #include "internal.h"
@@ -253,7 +252,7 @@ early_param("acpi_rsdp", setup_acpi_rsdp);
 acpi_physical_address __init acpi_os_get_root_pointer(void)
 {
 #ifdef CONFIG_KEXEC
-	if (acpi_rsdp && (get_securelevel() <= 0))
+	if (acpi_rsdp)
 		return acpi_rsdp;
 #endif
 
@@ -668,12 +667,6 @@ void __init acpi_initrd_override(void *data, size_t size)
 	}
 	if (table_nr == 0)
 		return;
-
-	if (get_securelevel() > 0) {
-		pr_notice(PREFIX
-			"securelevel enabled, ignoring table override\n");
-		return;
-	}
 
 	acpi_tables_addr =
 		memblock_find_in_range(0, max_low_pfn_mapped << PAGE_SHIFT,

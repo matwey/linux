@@ -1777,8 +1777,7 @@ static int ipath_dealloc_pd(struct ib_pd *ibpd)
  * This may be called from interrupt context.
  */
 static struct ib_ah *ipath_create_ah(struct ib_pd *pd,
-				     struct ib_ah_attr *ah_attr,
-				     struct ib_udata *udata)
+				     struct ib_ah_attr *ah_attr)
 {
 	struct ipath_ah *ah;
 	struct ib_ah *ret;

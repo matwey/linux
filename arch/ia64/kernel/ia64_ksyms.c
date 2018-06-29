@@ -35,7 +35,7 @@ EXPORT_SYMBOL(ia64_cpu_info);
 EXPORT_SYMBOL(local_per_cpu_offset);
 #endif
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 EXPORT_SYMBOL(__copy_user);
 EXPORT_SYMBOL(__do_clear_user);
 EXPORT_SYMBOL(__strlen_user);

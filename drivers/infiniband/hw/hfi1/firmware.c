@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2017 Intel Corporation.
+ * Copyright(c) 2015, 2016 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -1009,9 +1009,7 @@ static int load_8051_firmware(struct hfi1_devdata *dd,
 {
 	u64 reg;
 	int ret;
-	u8 ver_major;
-	u8 ver_minor;
-	u8 ver_patch;
+	u8 ver_a, ver_b;
 
 	/*
 	 * DC Reset sequence
@@ -1080,10 +1078,10 @@ static int load_8051_firmware(struct hfi1_devdata *dd,
 		return -ETIMEDOUT;
 	}
 
-	read_misc_status(dd, &ver_major, &ver_minor, &ver_patch);
-	dd_dev_info(dd, "8051 firmware version %d.%d.%d\n",
-		    (int)ver_major, (int)ver_minor, (int)ver_patch);
-	dd->dc8051_ver = dc8051_ver(ver_major, ver_minor, ver_patch);
+	read_misc_status(dd, &ver_a, &ver_b);
+	dd_dev_info(dd, "8051 firmware version %d.%d\n",
+		    (int)ver_b, (int)ver_a);
+	dd->dc8051_ver = dc8051_ver(ver_b, ver_a);
 
 	return 0;
 }

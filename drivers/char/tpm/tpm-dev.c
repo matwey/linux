@@ -38,9 +38,6 @@ static void user_reader_timeout(unsigned long ptr)
 {
 	struct file_priv *priv = (struct file_priv *)ptr;
 
-	pr_warn("TPM user space timeout is deprecated (pid=%d)\n",
-		task_tgid_nr(current));
-
 	schedule_work(&priv->work);
 }
 
@@ -139,12 +136,6 @@ static ssize_t tpm_write(struct file *file, const char __user *buf,
 		return -EFAULT;
 	}
 
-	if (in_size < 6 ||
-	    in_size < be32_to_cpu(*((__be32 *) (priv->data_buffer + 2)))) {
-		mutex_unlock(&priv->buffer_mutex);
-		return -EINVAL;
-	}
-
 	/* atomic tpm command send and result receive. We only hold the ops
 	 * lock during this period so that the tpm can be unregistered even if
 	 * the char dev is held open.
@@ -166,7 +157,7 @@ static ssize_t tpm_write(struct file *file, const char __user *buf,
 	mutex_unlock(&priv->buffer_mutex);
 
 	/* Set a timeout by which the reader must come claim the result */
-	mod_timer(&priv->user_read_timer, jiffies + (120 * HZ));
+	mod_timer(&priv->user_read_timer, jiffies + (60 * HZ));
 
 	return in_size;
 }

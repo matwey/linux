@@ -787,7 +787,8 @@ static void check_if_tick_bio_needed(struct cache *cache, struct bio *bio)
 	struct per_bio_data *pb = get_per_bio_data(bio, pb_data_size);
 
 	spin_lock_irqsave(&cache->lock, flags);
-	if (cache->need_tick_bio && !op_is_flush(bio->bi_opf) &&
+	if (cache->need_tick_bio &&
+	    !(bio->bi_opf & (REQ_FUA | REQ_PREFLUSH)) &&
 	    bio_op(bio) != REQ_OP_DISCARD) {
 		pb->tick = true;
 		cache->need_tick_bio = false;
@@ -825,6 +826,11 @@ static dm_oblock_t get_bio_block(struct cache *cache, struct bio *bio)
 		block_nr >>= cache->sectors_per_block_shift;
 
 	return to_oblock(block_nr);
+}
+
+static int bio_triggers_commit(struct cache *cache, struct bio *bio)
+{
+	return bio->bi_opf & (REQ_PREFLUSH | REQ_FUA);
 }
 
 /*
@@ -878,7 +884,7 @@ static void issue(struct cache *cache, struct bio *bio)
 {
 	unsigned long flags;
 
-	if (!op_is_flush(bio->bi_opf)) {
+	if (!bio_triggers_commit(cache, bio)) {
 		accounted_request(cache, bio);
 		return;
 	}
@@ -983,8 +989,7 @@ static void set_cache_mode(struct cache *cache, enum cache_metadata_mode new_mod
 	enum cache_metadata_mode old_mode = get_cache_mode(cache);
 
 	if (dm_cache_metadata_needs_check(cache->cmd, &needs_check)) {
-		DMERR("%s: unable to read needs_check flag, setting failure mode.",
-		      cache_device_name(cache));
+		DMERR("unable to read needs_check flag, setting failure mode");
 		new_mode = CM_FAIL;
 	}
 
@@ -1063,7 +1068,8 @@ static void dec_io_migrations(struct cache *cache)
 
 static bool discard_or_flush(struct bio *bio)
 {
-	return bio_op(bio) == REQ_OP_DISCARD || op_is_flush(bio->bi_opf);
+	return bio_op(bio) == REQ_OP_DISCARD ||
+	       bio->bi_opf & (REQ_PREFLUSH | REQ_FUA);
 }
 
 static void __cell_defer(struct cache *cache, struct dm_bio_prison_cell *cell)

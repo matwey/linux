@@ -451,7 +451,6 @@ pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
 	}
 	return pgd;
 }
-EXPORT_SYMBOL(kaiser_set_shadow_pgd);
 
 void kaiser_setup_pcid(void)
 {

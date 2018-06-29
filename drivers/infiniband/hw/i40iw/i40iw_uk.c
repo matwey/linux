@@ -175,10 +175,12 @@ u64 *i40iw_qp_get_next_send_wqe(struct i40iw_qp_uk *qp,
 		if (!*wqe_idx)
 			qp->swqe_polarity = !qp->swqe_polarity;
 	}
-	I40IW_RING_MOVE_HEAD_BY_COUNT(qp->sq_ring,
-				      wqe_size / I40IW_QP_WQE_MIN_SIZE, ret_code);
-	if (ret_code)
-		return NULL;
+
+	for (i = 0; i < wqe_size / I40IW_QP_WQE_MIN_SIZE; i++) {
+		I40IW_RING_MOVE_HEAD(qp->sq_ring, ret_code);
+		if (ret_code)
+			return NULL;
+	}
 
 	wqe = qp->sq_base[*wqe_idx].elem;
 
@@ -428,7 +430,7 @@ static enum i40iw_status_code i40iw_inline_rdma_write(struct i40iw_qp_uk *qp,
 	struct i40iw_inline_rdma_write *op_info;
 	u64 *push;
 	u64 header = 0;
-	u32 wqe_idx;
+	u32 i, wqe_idx;
 	enum i40iw_status_code ret_code;
 	bool read_fence = false;
 	u8 wqe_size;
@@ -463,12 +465,14 @@ static enum i40iw_status_code i40iw_inline_rdma_write(struct i40iw_qp_uk *qp,
 	src = (u8 *)(op_info->data);
 
 	if (op_info->len <= 16) {
-		memcpy(dest, src, op_info->len);
+		for (i = 0; i < op_info->len; i++, src++, dest++)
+			*dest = *src;
 	} else {
-		memcpy(dest, src, 16);
-		src += 16;
+		for (i = 0; i < 16; i++, src++, dest++)
+			*dest = *src;
 		dest = (u8 *)wqe + 32;
-		memcpy(dest, src, op_info->len - 16);
+		for (; i < op_info->len; i++, src++, dest++)
+			*dest = *src;
 	}
 
 	wmb(); /* make sure WQE is populated before valid bit is set */
@@ -503,7 +507,7 @@ static enum i40iw_status_code i40iw_inline_send(struct i40iw_qp_uk *qp,
 	u8 *dest, *src;
 	struct i40iw_post_inline_send *op_info;
 	u64 header;
-	u32 wqe_idx;
+	u32 wqe_idx, i;
 	enum i40iw_status_code ret_code;
 	bool read_fence = false;
 	u8 wqe_size;
@@ -536,12 +540,14 @@ static enum i40iw_status_code i40iw_inline_send(struct i40iw_qp_uk *qp,
 	src = (u8 *)(op_info->data);
 
 	if (op_info->len <= 16) {
-		memcpy(dest, src, op_info->len);
+		for (i = 0; i < op_info->len; i++, src++, dest++)
+			*dest = *src;
 	} else {
-		memcpy(dest, src, 16);
-		src += 16;
+		for (i = 0; i < 16; i++, src++, dest++)
+			*dest = *src;
 		dest = (u8 *)wqe + 32;
-		memcpy(dest, src, op_info->len - 16);
+		for (; i < op_info->len; i++, src++, dest++)
+			*dest = *src;
 	}
 
 	wmb(); /* make sure WQE is populated before valid bit is set */
@@ -821,18 +827,6 @@ static enum i40iw_status_code i40iw_cq_poll_completion(struct i40iw_cq_uk *cq,
 		I40IW_RING_SET_TAIL(qp->rq_ring, array_idx + 1);
 		pring = &qp->rq_ring;
 	} else {
-		if (qp->first_sq_wq) {
-			qp->first_sq_wq = false;
-			if (!wqe_idx && (qp->sq_ring.head == qp->sq_ring.tail)) {
-				I40IW_RING_MOVE_HEAD_NOCHECK(cq->cq_ring);
-				I40IW_RING_MOVE_TAIL(cq->cq_ring);
-				set_64bit_val(cq->shadow_area, 0,
-					      I40IW_RING_GETCURRENT_HEAD(cq->cq_ring));
-				memset(info, 0, sizeof(struct i40iw_cq_poll_info));
-				return i40iw_cq_poll_completion(cq, info);
-			}
-		}
-
 		if (info->comp_status != I40IW_COMPL_STATUS_FLUSHED) {
 			info->wr_id = qp->sq_wrtrk_array[wqe_idx].wrid;
 			info->bytes_xfered = qp->sq_wrtrk_array[wqe_idx].wr_len;
@@ -925,29 +919,29 @@ enum i40iw_status_code i40iw_get_wqe_shift(u32 wqdepth, u32 sge, u32 inline_data
 }
 
 static struct i40iw_qp_uk_ops iw_qp_uk_ops = {
-	.iw_qp_post_wr = i40iw_qp_post_wr,
-	.iw_qp_ring_push_db = i40iw_qp_ring_push_db,
-	.iw_rdma_write = i40iw_rdma_write,
-	.iw_rdma_read = i40iw_rdma_read,
-	.iw_send = i40iw_send,
-	.iw_inline_rdma_write = i40iw_inline_rdma_write,
-	.iw_inline_send = i40iw_inline_send,
-	.iw_stag_local_invalidate = i40iw_stag_local_invalidate,
-	.iw_mw_bind = i40iw_mw_bind,
-	.iw_post_receive = i40iw_post_receive,
-	.iw_post_nop = i40iw_nop
+	i40iw_qp_post_wr,
+	i40iw_qp_ring_push_db,
+	i40iw_rdma_write,
+	i40iw_rdma_read,
+	i40iw_send,
+	i40iw_inline_rdma_write,
+	i40iw_inline_send,
+	i40iw_stag_local_invalidate,
+	i40iw_mw_bind,
+	i40iw_post_receive,
+	i40iw_nop
 };
 
 static struct i40iw_cq_ops iw_cq_ops = {
-	.iw_cq_request_notification = i40iw_cq_request_notification,
-	.iw_cq_poll_completion = i40iw_cq_poll_completion,
-	.iw_cq_post_entries = i40iw_cq_post_entries,
-	.iw_cq_clean = i40iw_clean_cq
+	i40iw_cq_request_notification,
+	i40iw_cq_poll_completion,
+	i40iw_cq_post_entries,
+	i40iw_clean_cq
 };
 
 static struct i40iw_device_uk_ops iw_device_uk_ops = {
-	.iwarp_cq_uk_init = i40iw_cq_uk_init,
-	.iwarp_qp_uk_init = i40iw_qp_uk_init,
+	i40iw_cq_uk_init,
+	i40iw_qp_uk_init,
 };
 
 /**
@@ -978,6 +972,10 @@ enum i40iw_status_code i40iw_qp_uk_init(struct i40iw_qp_uk *qp,
 	if (ret_code)
 		return ret_code;
 
+	ret_code = i40iw_get_wqe_shift(info->rq_size, info->max_rq_frag_cnt, 0, &rqshift);
+	if (ret_code)
+		return ret_code;
+
 	qp->sq_base = info->sq;
 	qp->rq_base = info->rq;
 	qp->shadow_area = info->shadow_area;
@@ -1000,26 +998,14 @@ enum i40iw_status_code i40iw_qp_uk_init(struct i40iw_qp_uk *qp,
 	I40IW_RING_MOVE_TAIL(qp->sq_ring);
 	I40IW_RING_MOVE_HEAD(qp->initial_ring, ret_code);
 	qp->swqe_polarity = 1;
-	qp->first_sq_wq = true;
 	qp->swqe_polarity_deferred = 1;
 	qp->rwqe_polarity = 0;
 
 	if (!qp->use_srq) {
 		qp->rq_size = info->rq_size;
 		qp->max_rq_frag_cnt = info->max_rq_frag_cnt;
-		I40IW_RING_INIT(qp->rq_ring, qp->rq_size);
-		switch (info->abi_ver) {
-		case 4:
-			ret_code = i40iw_get_wqe_shift(info->rq_size, info->max_rq_frag_cnt, 0, &rqshift);
-			if (ret_code)
-				return ret_code;
-			break;
-		case 5: /* fallthrough until next ABI version */
-		default:
-			rqshift = I40IW_MAX_RQ_WQE_SHIFT;
-			break;
-		}
 		qp->rq_wqe_size = rqshift;
+		I40IW_RING_INIT(qp->rq_ring, qp->rq_size);
 		qp->rq_wqe_size_multiplier = 4 << rqshift;
 	}
 	qp->ops = iw_qp_uk_ops;
@@ -1204,8 +1190,12 @@ enum i40iw_status_code i40iw_inline_data_size_to_wqesize(u32 data_size,
 
 	if (data_size <= 16)
 		*wqe_size = I40IW_QP_WQE_MIN_SIZE;
-	else
+	else if (data_size <= 48)
 		*wqe_size = 64;
+	else if (data_size <= 80)
+		*wqe_size = 96;
+	else
+		*wqe_size = 128;
 
 	return 0;
 }

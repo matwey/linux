@@ -105,7 +105,6 @@ torture_onoff(void *arg)
 		VERBOSE_TOROUT_STRING("torture_onoff end holdoff");
 	}
 	while (!torture_must_stop()) {
-		klp_kgraft_mark_task_safe(current);
 		cpu = (torture_random(&rand) >> 4) % (maxcpu + 1);
 		if (cpu_online(cpu) && cpu_is_hotpluggable(cpu)) {
 			if (verbose)
@@ -353,7 +352,6 @@ static int torture_shuffle(void *arg)
 {
 	VERBOSE_TOROUT_STRING("torture_shuffle task started");
 	do {
-		klp_kgraft_mark_task_safe(current);
 		schedule_timeout_interruptible(shuffle_interval);
 		torture_shuffle_tasks();
 		torture_shutdown_absorb("torture_shuffle");
@@ -432,7 +430,6 @@ static int torture_shutdown(void *arg)
 	jiffies_snap = jiffies;
 	while (ULONG_CMP_LT(jiffies_snap, shutdown_time) &&
 	       !torture_must_stop()) {
-		klp_kgraft_mark_task_safe(current);
 		delta = shutdown_time - jiffies_snap;
 		if (verbose)
 			pr_alert("%s" TORTURE_FLAG
@@ -550,7 +547,6 @@ static int torture_stutter(void *arg)
 {
 	VERBOSE_TOROUT_STRING("torture_stutter task started");
 	do {
-		klp_kgraft_mark_task_safe(current);
 		if (!torture_must_stop()) {
 			if (stutter > 1) {
 				schedule_timeout_interruptible(stutter - 1);

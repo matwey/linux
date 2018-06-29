@@ -367,8 +367,6 @@ static int dcp_chan_thread_aes(void *data)
 		}
 
 		schedule();
-
-		klp_kgraft_mark_task_safe(current);
 	} while (!kthread_should_stop());
 
 	return 0;
@@ -670,8 +668,6 @@ static int dcp_chan_thread_sha(void *data)
 		}
 
 		schedule();
-
-		klp_kgraft_mark_task_safe(current);
 	} while (!kthread_should_stop());
 
 	return 0;

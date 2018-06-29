@@ -308,9 +308,10 @@ static void enum_netdev_ipv4_ips(struct ib_device *ib_dev,
 	for_ifa(in_dev) {
 		struct sin_list *entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
 
-		if (!entry)
+		if (!entry) {
+			pr_warn("roce_gid_mgmt: couldn't allocate entry for IPv4 update\n");
 			continue;
-
+		}
 		entry->ip.sin_family = AF_INET;
 		entry->ip.sin_addr.s_addr = ifa->ifa_address;
 		list_add_tail(&entry->list, &sin_list);
@@ -351,8 +352,10 @@ static void enum_netdev_ipv6_ips(struct ib_device *ib_dev,
 	list_for_each_entry(ifp, &in6_dev->addr_list, if_list) {
 		struct sin6_list *entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
 
-		if (!entry)
+		if (!entry) {
+			pr_warn("roce_gid_mgmt: couldn't allocate entry for IPv6 update\n");
 			continue;
+		}
 
 		entry->sin6.sin6_family = AF_INET6;
 		entry->sin6.sin6_addr = ifp->addr;
@@ -460,8 +463,10 @@ static void handle_netdev_upper(struct ib_device *ib_dev, u8 port,
 		struct upper_list *entry = kmalloc(sizeof(*entry),
 						   GFP_ATOMIC);
 
-		if (!entry)
+		if (!entry) {
+			pr_info("roce_gid_mgmt: couldn't allocate entry to delete ndev\n");
 			continue;
+		}
 
 		list_add_tail(&entry->list, &upper_list);
 		dev_hold(upper);
@@ -554,8 +559,10 @@ static int netdevice_queue_work(struct netdev_event_work_cmd *cmds,
 	struct netdev_event_work *ndev_work =
 		kmalloc(sizeof(*ndev_work), GFP_KERNEL);
 
-	if (!ndev_work)
+	if (!ndev_work) {
+		pr_warn("roce_gid_mgmt: can't allocate work for netdevice_event\n");
 		return NOTIFY_DONE;
+	}
 
 	memcpy(ndev_work->cmds, cmds, sizeof(ndev_work->cmds));
 	for (i = 0; i < ARRAY_SIZE(ndev_work->cmds) && ndev_work->cmds[i].cb; i++) {
@@ -689,8 +696,10 @@ static int addr_event(struct notifier_block *this, unsigned long event,
 	}
 
 	work = kmalloc(sizeof(*work), GFP_ATOMIC);
-	if (!work)
+	if (!work) {
+		pr_warn("roce_gid_mgmt: Couldn't allocate work for addr_event\n");
 		return NOTIFY_DONE;
+	}
 
 	INIT_WORK(&work->work, update_gid_event_work_handler);
 

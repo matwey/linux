@@ -820,21 +820,6 @@ __irq_do_set_handler(struct irq_desc *desc, irq_flow_handler_t handle,
 	desc->name = name;
 
 	if (handle != handle_bad_irq && is_chained) {
-		unsigned int type = irqd_get_trigger_type(&desc->irq_data);
-
-		/*
-		 * We're about to start this interrupt immediately,
-		 * hence the need to set the trigger configuration.
-		 * But the .set_type callback may have overridden the
-		 * flow handler, ignoring that we're dealing with a
-		 * chained interrupt. Reset it immediately because we
-		 * do know better.
-		 */
-		if (type != IRQ_TYPE_NONE) {
-			__irq_set_trigger(desc, type);
-			desc->handle_irq = handle;
-		}
-
 		irq_settings_set_noprobe(desc);
 		irq_settings_set_norequest(desc);
 		irq_settings_set_nothread(desc);
@@ -886,14 +871,12 @@ EXPORT_SYMBOL_GPL(irq_set_chip_and_handler_name);
 
 void irq_modify_status(unsigned int irq, unsigned long clr, unsigned long set)
 {
-	unsigned long flags, trigger, tmp;
+	unsigned long flags;
 	struct irq_desc *desc = irq_get_desc_lock(irq, &flags, 0);
 
 	if (!desc)
 		return;
 	irq_settings_clr_and_set(desc, clr, set);
-
-	trigger = irqd_get_trigger_type(&desc->irq_data);
 
 	irqd_clear(&desc->irq_data, IRQD_NO_BALANCING | IRQD_PER_CPU |
 		   IRQD_TRIGGER_MASK | IRQD_LEVEL | IRQD_MOVE_PCNTXT);
@@ -906,11 +889,7 @@ void irq_modify_status(unsigned int irq, unsigned long clr, unsigned long set)
 	if (irq_settings_is_level(desc))
 		irqd_set(&desc->irq_data, IRQD_LEVEL);
 
-	tmp = irq_settings_get_trigger_mask(desc);
-	if (tmp != IRQ_TYPE_NONE)
-		trigger = tmp;
-
-	irqd_set(&desc->irq_data, trigger);
+	irqd_set(&desc->irq_data, irq_settings_get_trigger_mask(desc));
 
 	irq_put_desc_unlock(desc, flags);
 }
@@ -1156,44 +1135,4 @@ int irq_chip_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	pos->chip->irq_compose_msi_msg(pos, msg);
 
 	return 0;
-}
-
-/**
- * irq_chip_pm_get - Enable power for an IRQ chip
- * @data:	Pointer to interrupt specific data
- *
- * Enable the power to the IRQ chip referenced by the interrupt data
- * structure.
- */
-int irq_chip_pm_get(struct irq_data *data)
-{
-	int retval;
-
-	if (IS_ENABLED(CONFIG_PM) && data->chip->parent_device) {
-		retval = pm_runtime_get_sync(data->chip->parent_device);
-		if (retval < 0) {
-			pm_runtime_put_noidle(data->chip->parent_device);
-			return retval;
-		}
-	}
-
-	return 0;
-}
-
-/**
- * irq_chip_pm_put - Disable power for an IRQ chip
- * @data:	Pointer to interrupt specific data
- *
- * Disable the power to the IRQ chip referenced by the interrupt data
- * structure, belongs. Note that power will only be disabled, once this
- * function has been called for all IRQs that have called irq_chip_pm_get().
- */
-int irq_chip_pm_put(struct irq_data *data)
-{
-	int retval = 0;
-
-	if (IS_ENABLED(CONFIG_PM) && data->chip->parent_device)
-		retval = pm_runtime_put(data->chip->parent_device);
-
-	return (retval < 0) ? retval : 0;
 }

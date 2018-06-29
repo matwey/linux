@@ -37,7 +37,7 @@
 #include <asm/hvcall.h>
 #include <asm/mmu.h>
 #include <asm/pgalloc.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/memory.h>
 #include <asm/plpar_wrappers.h>
 
@@ -308,7 +308,6 @@ static int cmm_thread(void *dummy)
 
 	while (1) {
 		timeleft = msleep_interruptible(delay * 1000);
-		klp_kgraft_mark_task_safe(current);
 
 		if (kthread_should_stop() || timeleft)
 			break;

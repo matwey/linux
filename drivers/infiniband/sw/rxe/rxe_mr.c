@@ -91,9 +91,9 @@ static void rxe_mem_init(int access, struct rxe_mem *mem)
 	mem->map_shift		= ilog2(RXE_BUF_PER_MAP);
 }
 
-void rxe_mem_cleanup(struct rxe_pool_entry *arg)
+void rxe_mem_cleanup(void *arg)
 {
-	struct rxe_mem *mem = container_of(arg, typeof(*mem), pelem);
+	struct rxe_mem *mem = arg;
 	int i;
 
 	if (mem->umem)
@@ -125,7 +125,7 @@ static int rxe_mem_alloc(struct rxe_dev *rxe, struct rxe_mem *mem, int num_buf)
 			goto err2;
 	}
 
-	BUILD_BUG_ON(!is_power_of_2(RXE_BUF_PER_MAP));
+	WARN_ON(!is_power_of_2(RXE_BUF_PER_MAP));
 
 	mem->map_shift	= ilog2(RXE_BUF_PER_MAP);
 	mem->map_mask	= RXE_BUF_PER_MAP - 1;
@@ -191,7 +191,7 @@ int rxe_mem_init_user(struct rxe_dev *rxe, struct rxe_pd *pd, u64 start,
 		goto err1;
 	}
 
-	WARN_ON_ONCE(!is_power_of_2(umem->page_size));
+	WARN_ON(!is_power_of_2(umem->page_size));
 
 	mem->page_shift		= ilog2(umem->page_size);
 	mem->page_mask		= umem->page_size - 1;
@@ -369,16 +369,16 @@ int rxe_mem_copy(struct rxe_mem *mem, u64 iova, void *addr, int length,
 		dest = (dir == to_mem_obj) ?
 			((void *)(uintptr_t)iova) : addr;
 
-		memcpy(dest, src, length);
-
 		if (crcp)
 			*crcp = rxe_crc32(to_rdev(mem->pd->ibpd.device),
-					*crcp, dest, length);
+					*crcp, src, length);
+
+		memcpy(dest, src, length);
 
 		return 0;
 	}
 
-	WARN_ON_ONCE(!mem->map);
+	WARN_ON(!mem->map);
 
 	err = mem_check_range(mem, iova, length);
 	if (err) {
@@ -403,11 +403,11 @@ int rxe_mem_copy(struct rxe_mem *mem, u64 iova, void *addr, int length,
 		if (bytes > length)
 			bytes = length;
 
-		memcpy(dest, src, bytes);
-
 		if (crcp)
 			crc = rxe_crc32(to_rdev(mem->pd->ibpd.device),
-					crc, dest, bytes);
+					crc, src, bytes);
+
+		memcpy(dest, src, bytes);
 
 		length	-= bytes;
 		addr	+= bytes;

@@ -23,7 +23,6 @@
 #include <linux/export.h>
 #include <linux/ioport.h>
 #include <linux/slab.h>
-#include <linux/irq.h>
 
 #ifdef CONFIG_X86
 #define valid_IRQ(i) (((i) != 0) && ((i) != 2))
@@ -41,19 +40,6 @@ static inline bool acpi_iospace_resource_valid(struct resource *res)
  */
 static inline bool
 acpi_iospace_resource_valid(struct resource *res) { return true; }
-#endif
-
-#if IS_ENABLED(CONFIG_ACPI_GENERIC_GSI)
-static inline bool is_gsi(struct acpi_resource_extended_irq *ext_irq)
-{
-	return ext_irq->resource_source.string_length == 0 &&
-	       ext_irq->producer_consumer == ACPI_CONSUMER;
-}
-#else
-static inline bool is_gsi(struct acpi_resource_extended_irq *ext_irq)
-{
-	return true;
-}
 #endif
 
 static bool acpi_dev_resource_len_valid(u64 start, u64 end, u64 len, bool io)
@@ -362,31 +348,6 @@ unsigned long acpi_dev_irq_flags(u8 triggering, u8 polarity, u8 shareable)
 }
 EXPORT_SYMBOL_GPL(acpi_dev_irq_flags);
 
-/**
- * acpi_dev_get_irq_type - Determine irq type.
- * @triggering: Triggering type as provided by ACPI.
- * @polarity: Interrupt polarity as provided by ACPI.
- */
-unsigned int acpi_dev_get_irq_type(int triggering, int polarity)
-{
-	switch (polarity) {
-	case ACPI_ACTIVE_LOW:
-		return triggering == ACPI_EDGE_SENSITIVE ?
-		       IRQ_TYPE_EDGE_FALLING :
-		       IRQ_TYPE_LEVEL_LOW;
-	case ACPI_ACTIVE_HIGH:
-		return triggering == ACPI_EDGE_SENSITIVE ?
-		       IRQ_TYPE_EDGE_RISING :
-		       IRQ_TYPE_LEVEL_HIGH;
-	case ACPI_ACTIVE_BOTH:
-		if (triggering == ACPI_EDGE_SENSITIVE)
-			return IRQ_TYPE_EDGE_BOTH;
-	default:
-		return IRQ_TYPE_NONE;
-	}
-}
-EXPORT_SYMBOL_GPL(acpi_dev_get_irq_type);
-
 static void acpi_dev_irqresource_disabled(struct resource *res, u32 gsi)
 {
 	res->start = gsi;
@@ -483,12 +444,9 @@ bool acpi_dev_resource_interrupt(struct acpi_resource *ares, int index,
 			acpi_dev_irqresource_disabled(res, 0);
 			return false;
 		}
-		if (is_gsi(ext_irq))
-			acpi_dev_get_irqresource(res, ext_irq->interrupts[index],
+		acpi_dev_get_irqresource(res, ext_irq->interrupts[index],
 					 ext_irq->triggering, ext_irq->polarity,
 					 ext_irq->sharable, false);
-		else
-			acpi_dev_irqresource_disabled(res, 0);
 		break;
 	default:
 		res->flags = 0;

@@ -36,8 +36,6 @@
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
-#include <linux/dma-iommu.h>
-#include <linux/irqdomain.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -132,36 +130,32 @@ static void vfio_unlink_dma(struct vfio_iommu *iommu, struct vfio_dma *old)
 	rb_erase(&old->node, &iommu->dma_list);
 }
 
-static int vfio_lock_acct(struct task_struct *task, long npage, bool *lock_cap)
+static int vfio_lock_acct(long npage, bool *lock_cap)
 {
-	struct mm_struct *mm;
 	int ret = 0;
 
 	if (!npage)
 		return 0;
 
-	mm = get_task_mm(task);
-	if (!mm)
+	if (!current->mm)
 		return -ESRCH; /* process exited */
 
-	down_write(&mm->mmap_sem);
+	down_write(&current->mm->mmap_sem);
 	if (npage > 0) {
 		if (lock_cap ? !*lock_cap : !capable(CAP_IPC_LOCK)) {
 			unsigned long limit;
 
-			limit = task_rlimit(task,
-					RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+			limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 
-			if (mm->locked_vm + npage > limit)
+			if (current->mm->locked_vm + npage > limit)
 				ret = -ENOMEM;
 		}
 	}
 
 	if (!ret)
-		mm->locked_vm += npage;
+		current->mm->locked_vm += npage;
 
-	up_write(&mm->mmap_sem);
-	mmput(mm);
+	up_write(&current->mm->mmap_sem);
 
 	return ret;
 }
@@ -242,8 +236,8 @@ static int vaddr_get_pfn(unsigned long vaddr, int prot, unsigned long *pfn)
  * the iommu can only map chunks of consecutive pfns anyway, so get the
  * first page and all consecutive pages with the same locking.
  */
-static long vfio_pin_pages_remote(unsigned long vaddr, long npage,
-				  int prot, unsigned long *pfn_base)
+static long vfio_pin_pages(unsigned long vaddr, long npage,
+			   int prot, unsigned long *pfn_base)
 {
 	unsigned long pfn = 0, limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 	bool lock_cap = capable(CAP_IPC_LOCK);
@@ -293,7 +287,7 @@ static long vfio_pin_pages_remote(unsigned long vaddr, long npage,
 
 out:
 	if (!rsvd)
-		ret = vfio_lock_acct(current, i, &lock_cap);
+		ret = vfio_lock_acct(i, &lock_cap);
 
 unpin_out:
 	if (ret) {
@@ -308,8 +302,8 @@ unpin_out:
 	return i;
 }
 
-static long vfio_unpin_pages_remote(unsigned long pfn, long npage,
-				    int prot, bool do_accounting)
+static long vfio_unpin_pages(unsigned long pfn, long npage,
+			     int prot, bool do_accounting)
 {
 	unsigned long unlocked = 0;
 	long i;
@@ -318,7 +312,7 @@ static long vfio_unpin_pages_remote(unsigned long pfn, long npage,
 		unlocked += put_pfn(pfn++, prot);
 
 	if (do_accounting)
-		vfio_lock_acct(current, -unlocked, NULL);
+		vfio_lock_acct(-unlocked, NULL);
 
 	return unlocked;
 }
@@ -372,15 +366,15 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 		if (WARN_ON(!unmapped))
 			break;
 
-		unlocked += vfio_unpin_pages_remote(phys >> PAGE_SHIFT,
-						    unmapped >> PAGE_SHIFT,
-						    dma->prot, false);
+		unlocked += vfio_unpin_pages(phys >> PAGE_SHIFT,
+					     unmapped >> PAGE_SHIFT,
+					     dma->prot, false);
 		iova += unmapped;
 
 		cond_resched();
 	}
 
-	vfio_lock_acct(current, -unlocked, NULL);
+	vfio_lock_acct(-unlocked, NULL);
 }
 
 static void vfio_remove_dma(struct vfio_iommu *iommu, struct vfio_dma *dma)
@@ -467,7 +461,7 @@ static int vfio_dma_do_unmap(struct vfio_iommu *iommu,
 	 * mappings within the range.
 	 */
 	if (iommu->v2) {
-		dma = vfio_find_dma(iommu, unmap->iova, 1);
+		dma = vfio_find_dma(iommu, unmap->iova, 0);
 		if (dma && dma->iova != unmap->iova) {
 			ret = -EINVAL;
 			goto unlock;
@@ -505,7 +499,7 @@ static int map_try_harder(struct vfio_domain *domain, dma_addr_t iova,
 			  unsigned long pfn, long npage, int prot)
 {
 	long i;
-	int ret = 0;
+	int ret;
 
 	for (i = 0; i < npage; i++, pfn++, iova += PAGE_SIZE) {
 		ret = iommu_map(domain->domain, iova,
@@ -603,8 +597,8 @@ static int vfio_dma_do_map(struct vfio_iommu *iommu,
 
 	while (size) {
 		/* Pin a contiguous chunk of memory */
-		npage = vfio_pin_pages_remote(vaddr + dma->size,
-					      size >> PAGE_SHIFT, prot, &pfn);
+		npage = vfio_pin_pages(vaddr + dma->size,
+				       size >> PAGE_SHIFT, prot, &pfn);
 		if (npage <= 0) {
 			WARN_ON(!npage);
 			ret = (int)npage;
@@ -614,7 +608,7 @@ static int vfio_dma_do_map(struct vfio_iommu *iommu,
 		/* Map it! */
 		ret = vfio_iommu_map(iommu, iova + dma->size, pfn, npage, prot);
 		if (ret) {
-			vfio_unpin_pages_remote(pfn, npage, prot, true);
+			vfio_unpin_pages(pfn, npage, prot, true);
 			break;
 		}
 
@@ -724,55 +718,22 @@ static void vfio_test_domain_fgsp(struct vfio_domain *domain)
 	__free_pages(pages, order);
 }
 
-static struct vfio_group *find_iommu_group(struct vfio_domain *domain,
-					   struct iommu_group *iommu_group)
-{
-	struct vfio_group *g;
-
-	list_for_each_entry(g, &domain->group_list, next) {
-		if (g->iommu_group == iommu_group)
-			return g;
-	}
-
-	return NULL;
-}
-
-static bool vfio_iommu_has_sw_msi(struct iommu_group *group, phys_addr_t *base)
-{
-	struct list_head group_resv_regions;
-	struct iommu_resv_region *region, *next;
-	bool ret = false;
-
-	INIT_LIST_HEAD(&group_resv_regions);
-	iommu_get_group_resv_regions(group, &group_resv_regions);
-	list_for_each_entry(region, &group_resv_regions, list) {
-		if (region->type == IOMMU_RESV_SW_MSI) {
-			*base = region->start;
-			ret = true;
-			goto out;
-		}
-	}
-out:
-	list_for_each_entry_safe(region, next, &group_resv_regions, list)
-		kfree(region);
-	return ret;
-}
-
 static int vfio_iommu_type1_attach_group(void *iommu_data,
 					 struct iommu_group *iommu_group)
 {
 	struct vfio_iommu *iommu = iommu_data;
-	struct vfio_group *group;
+	struct vfio_group *group, *g;
 	struct vfio_domain *domain, *d;
 	struct bus_type *bus = NULL;
 	int ret;
-	bool resv_msi, msi_remap;
-	phys_addr_t resv_msi_base;
 
 	mutex_lock(&iommu->lock);
 
 	list_for_each_entry(d, &iommu->domain_list, next) {
-		if (find_iommu_group(d, iommu_group)) {
+		list_for_each_entry(g, &d->group_list, next) {
+			if (g->iommu_group != iommu_group)
+				continue;
+
 			mutex_unlock(&iommu->lock);
 			return -EINVAL;
 		}
@@ -811,15 +772,11 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	if (ret)
 		goto out_domain;
 
-	resv_msi = vfio_iommu_has_sw_msi(iommu_group, &resv_msi_base);
-
 	INIT_LIST_HEAD(&domain->group_list);
 	list_add(&group->next, &domain->group_list);
 
-	msi_remap = resv_msi ? irq_domain_check_msi_remap() :
-				iommu_capable(bus, IOMMU_CAP_INTR_REMAP);
-
-	if (!allow_unsafe_interrupts && !msi_remap) {
+	if (!allow_unsafe_interrupts &&
+	    !iommu_capable(bus, IOMMU_CAP_INTR_REMAP)) {
 		pr_warn("%s: No interrupt remapping support.  Use the module param \"allow_unsafe_interrupts\" to enable VFIO IOMMU support on this platform\n",
 		       __func__);
 		ret = -EPERM;
@@ -861,12 +818,6 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	if (ret)
 		goto out_detach;
 
-	if (resv_msi) {
-		ret = iommu_get_msi_cookie(domain->domain, resv_msi_base);
-		if (ret)
-			goto out_detach;
-	}
-
 	list_add(&domain->next, &iommu->domain_list);
 
 	mutex_unlock(&iommu->lock);
@@ -902,26 +853,27 @@ static void vfio_iommu_type1_detach_group(void *iommu_data,
 	mutex_lock(&iommu->lock);
 
 	list_for_each_entry(domain, &iommu->domain_list, next) {
-		group = find_iommu_group(domain, iommu_group);
-		if (!group)
-			continue;
+		list_for_each_entry(group, &domain->group_list, next) {
+			if (group->iommu_group != iommu_group)
+				continue;
 
-		iommu_detach_group(domain->domain, iommu_group);
-		list_del(&group->next);
-		kfree(group);
-		/*
-		 * Group ownership provides privilege, if the group
-		 * list is empty, the domain goes away.  If it's the
-		 * last domain, then all the mappings go away too.
-		 */
-		if (list_empty(&domain->group_list)) {
-			if (list_is_singular(&iommu->domain_list))
-				vfio_iommu_unmap_unpin_all(iommu);
-			iommu_domain_free(domain->domain);
-			list_del(&domain->next);
-			kfree(domain);
+			iommu_detach_group(domain->domain, iommu_group);
+			list_del(&group->next);
+			kfree(group);
+			/*
+			 * Group ownership provides privilege, if the group
+			 * list is empty, the domain goes away.  If it's the
+			 * last domain, then all the mappings go away too.
+			 */
+			if (list_empty(&domain->group_list)) {
+				if (list_is_singular(&iommu->domain_list))
+					vfio_iommu_unmap_unpin_all(iommu);
+				iommu_domain_free(domain->domain);
+				list_del(&domain->next);
+				kfree(domain);
+			}
+			goto done;
 		}
-		goto done;
 	}
 
 done:
@@ -1027,7 +979,7 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		if (info.argsz < minsz)
 			return -EINVAL;
 
-		info.flags = VFIO_IOMMU_INFO_PGSIZES;
+		info.flags = 0;
 
 		info.iova_pgsizes = vfio_pgsize_bitmap(iommu);
 

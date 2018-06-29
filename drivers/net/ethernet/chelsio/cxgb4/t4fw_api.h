@@ -1,7 +1,7 @@
 /*
  * This file is part of the Chelsio T4 Ethernet driver for Linux.
  *
- * Copyright (c) 2009-2016 Chelsio Communications, Inc. All rights reserved.
+ * Copyright (c) 2009-2014 Chelsio Communications, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -100,7 +100,6 @@ enum fw_wr_opcodes {
 	FW_RI_RECV_WR                  = 0x17,
 	FW_RI_BIND_MW_WR               = 0x18,
 	FW_RI_FR_NSMR_WR               = 0x19,
-	FW_RI_FR_NSMR_TPTE_WR	       = 0x20,
 	FW_RI_INV_LSTAG_WR             = 0x1a,
 	FW_ISCSI_TX_DATA_WR	       = 0x45,
 	FW_CRYPTO_LOOKASIDE_WR         = 0X6d,
@@ -682,7 +681,6 @@ enum fw_cmd_opcodes {
 	FW_RSS_IND_TBL_CMD             = 0x20,
 	FW_RSS_GLB_CONFIG_CMD          = 0x22,
 	FW_RSS_VI_CONFIG_CMD           = 0x23,
-	FW_SCHED_CMD                   = 0x24,
 	FW_DEVLOG_CMD                  = 0x25,
 	FW_CLIP_CMD                    = 0x28,
 	FW_LASTC2E_CMD                 = 0x40,
@@ -1122,7 +1120,6 @@ enum fw_params_param_dev {
 	FW_PARAMS_PARAM_DEV_MAXIRD_ADAPTER = 0x14, /* max supported adap IRD */
 	FW_PARAMS_PARAM_DEV_ULPTX_MEMWRITE_DSGL = 0x17,
 	FW_PARAMS_PARAM_DEV_FWCACHE = 0x18,
-	FW_PARAMS_PARAM_DEV_RI_FR_NSMR_TPTE_WR	= 0x1C,
 };
 
 /*
@@ -1167,8 +1164,7 @@ enum fw_params_param_pfvf {
 	FW_PARAMS_PARAM_PFVF_ACTIVE_FILTER_START = 0x2D,
 	FW_PARAMS_PARAM_PFVF_ACTIVE_FILTER_END = 0x2E,
 	FW_PARAMS_PARAM_PFVF_ETHOFLD_END = 0x30,
-	FW_PARAMS_PARAM_PFVF_CPLFW4MSG_ENCAP = 0x31,
-	FW_PARAMS_PARAM_PFVF_NCRYPTO_LOOKASIDE = 0x32
+	FW_PARAMS_PARAM_PFVF_CPLFW4MSG_ENCAP = 0x31
 };
 
 /*
@@ -2254,27 +2250,21 @@ struct fw_acl_vlan_cmd {
 enum fw_port_cap {
 	FW_PORT_CAP_SPEED_100M		= 0x0001,
 	FW_PORT_CAP_SPEED_1G		= 0x0002,
-	FW_PORT_CAP_SPEED_25G		= 0x0004,
+	FW_PORT_CAP_SPEED_2_5G		= 0x0004,
 	FW_PORT_CAP_SPEED_10G		= 0x0008,
 	FW_PORT_CAP_SPEED_40G		= 0x0010,
 	FW_PORT_CAP_SPEED_100G		= 0x0020,
 	FW_PORT_CAP_FC_RX		= 0x0040,
 	FW_PORT_CAP_FC_TX		= 0x0080,
 	FW_PORT_CAP_ANEG		= 0x0100,
-	FW_PORT_CAP_MDIX		= 0x0200,
-	FW_PORT_CAP_MDIAUTO		= 0x0400,
-	FW_PORT_CAP_FEC_RS		= 0x0800,
-	FW_PORT_CAP_FEC_BASER_RS	= 0x1000,
-	FW_PORT_CAP_FEC_RESERVED	= 0x2000,
-	FW_PORT_CAP_802_3_PAUSE		= 0x4000,
-	FW_PORT_CAP_802_3_ASM_DIR	= 0x8000,
+	FW_PORT_CAP_MDI_0		= 0x0200,
+	FW_PORT_CAP_MDI_1		= 0x0400,
+	FW_PORT_CAP_BEAN		= 0x0800,
+	FW_PORT_CAP_PMA_LPBK		= 0x1000,
+	FW_PORT_CAP_PCS_LPBK		= 0x2000,
+	FW_PORT_CAP_PHYXS_LPBK		= 0x4000,
+	FW_PORT_CAP_FAR_END_LPBK	= 0x8000,
 };
-
-#define FW_PORT_CAP_SPEED_S     0
-#define FW_PORT_CAP_SPEED_M     0x3f
-#define FW_PORT_CAP_SPEED_V(x)  ((x) << FW_PORT_CAP_SPEED_S)
-#define FW_PORT_CAP_SPEED_G(x) \
-	(((x) >> FW_PORT_CAP_SPEED_S) & FW_PORT_CAP_SPEED_M)
 
 enum fw_port_mdi {
 	FW_PORT_CAP_MDI_UNCHANGED,
@@ -2387,8 +2377,7 @@ struct fw_port_cmd {
 			__u8   cbllen;
 			__u8   auxlinfo;
 			__u8   dcbxdis_pkd;
-			__u8   r8_lo;
-			__be16 lpacap;
+			__u8   r8_lo[3];
 			__be64 r9;
 		} info;
 		struct fw_port_diags {
@@ -2522,11 +2511,6 @@ struct fw_port_cmd {
 #define FW_PORT_CMD_PTYPE_G(x)	\
 	(((x) >> FW_PORT_CMD_PTYPE_S) & FW_PORT_CMD_PTYPE_M)
 
-#define FW_PORT_CMD_LINKDNRC_S		5
-#define FW_PORT_CMD_LINKDNRC_M		0x7
-#define FW_PORT_CMD_LINKDNRC_G(x)	\
-	(((x) >> FW_PORT_CMD_LINKDNRC_S) & FW_PORT_CMD_LINKDNRC_M)
-
 #define FW_PORT_CMD_MODTYPE_S		0
 #define FW_PORT_CMD_MODTYPE_M		0x1f
 #define FW_PORT_CMD_MODTYPE_V(x)	((x) << FW_PORT_CMD_MODTYPE_S)
@@ -2567,11 +2551,6 @@ enum fw_port_type {
 	FW_PORT_TYPE_QSA,
 	FW_PORT_TYPE_QSFP,
 	FW_PORT_TYPE_BP40_BA,
-	FW_PORT_TYPE_KR4_100G,
-	FW_PORT_TYPE_CR4_QSFP,
-	FW_PORT_TYPE_CR_QSFP,
-	FW_PORT_TYPE_CR2_QSFP,
-	FW_PORT_TYPE_SFP28,
 
 	FW_PORT_TYPE_NONE = FW_PORT_CMD_PTYPE_M
 };
@@ -2972,41 +2951,6 @@ struct fw_rss_vi_config_cmd {
 #define FW_RSS_VI_CONFIG_CMD_UDPEN_V(x)	((x) << FW_RSS_VI_CONFIG_CMD_UDPEN_S)
 #define FW_RSS_VI_CONFIG_CMD_UDPEN_F	FW_RSS_VI_CONFIG_CMD_UDPEN_V(1U)
 
-enum fw_sched_sc {
-	FW_SCHED_SC_PARAMS		= 1,
-};
-
-struct fw_sched_cmd {
-	__be32 op_to_write;
-	__be32 retval_len16;
-	union fw_sched {
-		struct fw_sched_config {
-			__u8   sc;
-			__u8   type;
-			__u8   minmaxen;
-			__u8   r3[5];
-			__u8   nclasses[4];
-			__be32 r4;
-		} config;
-		struct fw_sched_params {
-			__u8   sc;
-			__u8   type;
-			__u8   level;
-			__u8   mode;
-			__u8   unit;
-			__u8   rate;
-			__u8   ch;
-			__u8   cl;
-			__be32 min;
-			__be32 max;
-			__be16 weight;
-			__be16 pktsize;
-			__be16 burstsize;
-			__be16 r4;
-		} params;
-	} u;
-};
-
 struct fw_clip_cmd {
 	__be32 op_to_write;
 	__be32 alloc_to_len16;
@@ -3385,14 +3329,6 @@ struct fw_crypto_lookaside_wr {
 	((x) << FW_CRYPTO_LOOKASIDE_WR_IV_S)
 #define FW_CRYPTO_LOOKASIDE_WR_IV_G(x) \
 	(((x) >> FW_CRYPTO_LOOKASIDE_WR_IV_S) & FW_CRYPTO_LOOKASIDE_WR_IV_M)
-
-#define FW_CRYPTO_LOOKASIDE_WR_FQIDX_S   15
-#define FW_CRYPTO_LOOKASIDE_WR_FQIDX_M   0xff
-#define FW_CRYPTO_LOOKASIDE_WR_FQIDX_V(x) \
-	((x) << FW_CRYPTO_LOOKASIDE_WR_FQIDX_S)
-#define FW_CRYPTO_LOOKASIDE_WR_FQIDX_G(x) \
-	(((x) >> FW_CRYPTO_LOOKASIDE_WR_FQIDX_S) & \
-	 FW_CRYPTO_LOOKASIDE_WR_FQIDX_M)
 
 #define FW_CRYPTO_LOOKASIDE_WR_TX_CH_S 10
 #define FW_CRYPTO_LOOKASIDE_WR_TX_CH_M 0x3

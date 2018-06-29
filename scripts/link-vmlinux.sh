@@ -86,12 +86,8 @@ kallsyms()
 		kallsymopt="${kallsymopt} --page-offset=$CONFIG_PAGE_OFFSET"
 	fi
 
-	if [ -n "${CONFIG_KALLSYMS_ABSOLUTE_PERCPU}" ]; then
+	if [ -n "${CONFIG_X86_64}" ]; then
 		kallsymopt="${kallsymopt} --absolute-percpu"
-	fi
-
-	if [ -n "${CONFIG_KALLSYMS_BASE_RELATIVE}" ]; then
-		kallsymopt="${kallsymopt} --base-relative"
 	fi
 
 	local aflags="${KBUILD_AFLAGS} ${KBUILD_AFLAGS_KERNEL}               \

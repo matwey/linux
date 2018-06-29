@@ -58,7 +58,7 @@
 #include "iwch.h"
 #include "iwch_provider.h"
 #include "iwch_cm.h"
-#include <rdma/cxgb3-abi.h>
+#include "iwch_user.h"
 #include "common.h"
 
 static struct ib_ah *iwch_ah_create(struct ib_pd *pd,
@@ -1135,7 +1135,16 @@ static int iwch_query_port(struct ib_device *ibdev,
 
 	/* props being zeroed by the caller, avoid zeroing it here */
 	props->max_mtu = IB_MTU_4096;
-	props->active_mtu = ib_mtu_int_to_enum(netdev->mtu);
+	if (netdev->mtu >= 4096)
+		props->active_mtu = IB_MTU_4096;
+	else if (netdev->mtu >= 2048)
+		props->active_mtu = IB_MTU_2048;
+	else if (netdev->mtu >= 1024)
+		props->active_mtu = IB_MTU_1024;
+	else if (netdev->mtu >= 512)
+		props->active_mtu = IB_MTU_512;
+	else
+		props->active_mtu = IB_MTU_256;
 
 	if (!netif_carrier_ok(netdev))
 		props->state = IB_PORT_DOWN;

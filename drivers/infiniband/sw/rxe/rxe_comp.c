@@ -254,7 +254,7 @@ static inline enum comp_state check_ack(struct rxe_qp *qp,
 		}
 		break;
 	default:
-		WARN_ON_ONCE(1);
+		WARN_ON(1);
 	}
 
 	/* Check operation validity. */
@@ -412,21 +412,13 @@ static void make_send_cqe(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 	}
 }
 
-/*
- * IBA Spec. Section 10.7.3.1 SIGNALED COMPLETIONS
- * ---------8<---------8<-------------
- * ...Note that if a completion error occurs, a Work Completion
- * will always be generated, even if the signaling
- * indicator requests an Unsignaled Completion.
- * ---------8<---------8<-------------
- */
 static void do_complete(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
 {
 	struct rxe_cqe cqe;
 
 	if ((qp->sq_sig_type == IB_SIGNAL_ALL_WR) ||
 	    (wqe->wr.send_flags & IB_SEND_SIGNALED) ||
-	    wqe->status != IB_WC_SUCCESS) {
+	    (qp->req.state == QP_STATE_ERROR)) {
 		make_send_cqe(qp, wqe, &cqe);
 		advance_consumer(qp->sq.queue);
 		rxe_cq_post(qp->scq, &cqe, 0);
@@ -511,26 +503,6 @@ static inline enum comp_state complete_wqe(struct rxe_qp *qp,
 	return COMPST_GET_WQE;
 }
 
-static void rxe_drain_resp_pkts(struct rxe_qp *qp, bool notify)
-{
-	struct sk_buff *skb;
-	struct rxe_send_wqe *wqe;
-
-	while ((skb = skb_dequeue(&qp->resp_pkts))) {
-		rxe_drop_ref(qp);
-		kfree_skb(skb);
-	}
-
-	while ((wqe = queue_head(qp->sq.queue))) {
-		if (notify) {
-			wqe->status = IB_WC_WR_FLUSH_ERR;
-			do_complete(qp, wqe);
-		} else {
-			advance_consumer(qp->sq.queue);
-		}
-	}
-}
-
 int rxe_completer(void *arg)
 {
 	struct rxe_qp *qp = (struct rxe_qp *)arg;
@@ -541,10 +513,47 @@ int rxe_completer(void *arg)
 
 	rxe_add_ref(qp);
 
-	if (!qp->valid || qp->req.state == QP_STATE_ERROR ||
-	    qp->req.state == QP_STATE_RESET) {
-		rxe_drain_resp_pkts(qp, qp->valid &&
-				    qp->req.state == QP_STATE_ERROR);
+	if (!qp->valid) {
+		while ((skb = skb_dequeue(&qp->resp_pkts))) {
+			rxe_drop_ref(qp);
+			kfree_skb(skb);
+		}
+		skb = NULL;
+		pkt = NULL;
+
+		while (queue_head(qp->sq.queue))
+			advance_consumer(qp->sq.queue);
+
+		goto exit;
+	}
+
+	if (qp->req.state == QP_STATE_ERROR) {
+		while ((skb = skb_dequeue(&qp->resp_pkts))) {
+			rxe_drop_ref(qp);
+			kfree_skb(skb);
+		}
+		skb = NULL;
+		pkt = NULL;
+
+		while ((wqe = queue_head(qp->sq.queue))) {
+			wqe->status = IB_WC_WR_FLUSH_ERR;
+			do_complete(qp, wqe);
+		}
+
+		goto exit;
+	}
+
+	if (qp->req.state == QP_STATE_RESET) {
+		while ((skb = skb_dequeue(&qp->resp_pkts))) {
+			rxe_drop_ref(qp);
+			kfree_skb(skb);
+		}
+		skb = NULL;
+		pkt = NULL;
+
+		while (queue_head(qp->sq.queue))
+			advance_consumer(qp->sq.queue);
+
 		goto exit;
 	}
 
@@ -630,7 +639,6 @@ int rxe_completer(void *arg)
 			if (pkt) {
 				rxe_drop_ref(pkt->qp);
 				kfree_skb(skb);
-				skb = NULL;
 			}
 			goto done;
 
@@ -654,7 +662,6 @@ int rxe_completer(void *arg)
 			    qp->qp_timeout_jiffies)
 				mod_timer(&qp->retrans_timer,
 					  jiffies + qp->qp_timeout_jiffies);
-			WARN_ON_ONCE(skb);
 			goto exit;
 
 		case COMPST_ERROR_RETRY:
@@ -667,10 +674,8 @@ int rxe_completer(void *arg)
 			 */
 
 			/* there is nothing to retry in this case */
-			if (!wqe || (wqe->state == wqe_state_posted)) {
-				WARN_ON_ONCE(skb);
+			if (!wqe || (wqe->state == wqe_state_posted))
 				goto exit;
-			}
 
 			if (qp->comp.retry_cnt > 0) {
 				if (qp->comp.retry_cnt != 7)
@@ -692,10 +697,8 @@ int rxe_completer(void *arg)
 				if (pkt) {
 					rxe_drop_ref(pkt->qp);
 					kfree_skb(skb);
-					skb = NULL;
 				}
 
-				WARN_ON_ONCE(skb);
 				goto exit;
 
 			} else {
@@ -715,9 +718,6 @@ int rxe_completer(void *arg)
 				mod_timer(&qp->rnr_nak_timer,
 					  jiffies + rnrnak_jiffies(aeth_syn(pkt)
 						& ~AETH_TYPE_MASK));
-				rxe_drop_ref(pkt->qp);
-				kfree_skb(skb);
-				skb = NULL;
 				goto exit;
 			} else {
 				wqe->status = IB_WC_RNR_RETRY_EXC_ERR;
@@ -726,17 +726,14 @@ int rxe_completer(void *arg)
 			break;
 
 		case COMPST_ERROR:
-			WARN_ON_ONCE(wqe->status == IB_WC_SUCCESS);
 			do_complete(qp, wqe);
 			rxe_qp_error(qp);
 
 			if (pkt) {
 				rxe_drop_ref(pkt->qp);
 				kfree_skb(skb);
-				skb = NULL;
 			}
 
-			WARN_ON_ONCE(skb);
 			goto exit;
 		}
 	}
@@ -745,7 +742,6 @@ exit:
 	/* we come here if we are done with processing and want the task to
 	 * exit from the loop calling us
 	 */
-	WARN_ON_ONCE(skb);
 	rxe_drop_ref(qp);
 	return -EAGAIN;
 
@@ -753,7 +749,6 @@ done:
 	/* we come here if we have processed a packet we want the task to call
 	 * us again to see if there is anything else to do
 	 */
-	WARN_ON_ONCE(skb);
 	rxe_drop_ref(qp);
 	return 0;
 }

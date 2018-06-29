@@ -265,8 +265,6 @@ static int arm_thread(void *data)
 			break;
 		}
 
-		klp_kgraft_mark_task_safe(current);
-
 		if (!av7110->arm_ready)
 			continue;
 

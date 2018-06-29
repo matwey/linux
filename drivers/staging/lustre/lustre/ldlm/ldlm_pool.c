@@ -1031,10 +1031,9 @@ static int ldlm_pools_thread_main(void *arg)
 		 */
 		lwi = LWI_TIMEOUT(cfs_time_seconds(c_time),
 				  NULL, NULL);
-		l_wait_event(thread->t_ctl_waitq, ({
-			     klp_kgraft_mark_task_safe(current);
+		l_wait_event(thread->t_ctl_waitq,
 			     thread_is_stopping(thread) ||
-			     thread_is_event(thread); }),
+			     thread_is_event(thread),
 			     &lwi);
 
 		if (thread_test_and_clear_flags(thread, SVC_STOPPING))

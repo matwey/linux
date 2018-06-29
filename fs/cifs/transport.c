@@ -29,7 +29,7 @@
 #include <linux/freezer.h>
 #include <linux/tcp.h>
 #include <linux/highmem.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/processor.h>
 #include <linux/mempool.h>
 #include "cifspdu.h"
@@ -461,9 +461,8 @@ wait_for_response(struct TCP_Server_Info *server, struct mid_q_entry *midQ)
 {
 	int error;
 
-	error = wait_event_freezekillable_unsafe(server->response_q, ({
-				    klp_kgraft_mark_task_safe(current);
-				    midQ->mid_state != MID_REQUEST_SUBMITTED; }));
+	error = wait_event_freezekillable_unsafe(server->response_q,
+				    midQ->mid_state != MID_REQUEST_SUBMITTED);
 	if (error < 0)
 		return -ERESTARTSYS;
 

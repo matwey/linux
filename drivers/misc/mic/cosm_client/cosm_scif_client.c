@@ -157,8 +157,6 @@ static int cosm_scif_client(void *unused)
 	allow_signal(SIGKILL);
 
 	while (!kthread_should_stop()) {
-		klp_kgraft_mark_task_safe(current);
-
 		pollepd.epd = client_epd;
 		pollepd.events = POLLIN;
 

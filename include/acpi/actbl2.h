@@ -321,7 +321,7 @@ struct acpi_csrt_descriptor {
  * DBG2 - Debug Port Table 2
  *        Version 0 (Both main table and subtables)
  *
- * Conforms to "Microsoft Debug Port Table 2 (DBG2)", December 10, 2015
+ * Conforms to "Microsoft Debug Port Table 2 (DBG2)", May 22 2012.
  *
  ******************************************************************************/
 
@@ -371,11 +371,6 @@ struct acpi_dbg2_device {
 
 #define ACPI_DBG2_16550_COMPATIBLE  0x0000
 #define ACPI_DBG2_16550_SUBSET      0x0001
-#define ACPI_DBG2_ARM_PL011         0x0003
-#define ACPI_DBG2_ARM_SBSA_32BIT    0x000D
-#define ACPI_DBG2_ARM_SBSA_GENERIC  0x000E
-#define ACPI_DBG2_ARM_DCC           0x000F
-#define ACPI_DBG2_BCM2835           0x0010
 
 #define ACPI_DBG2_1394_STANDARD     0x0000
 
@@ -660,7 +655,7 @@ struct acpi_ibft_target {
  * IORT - IO Remapping Table
  *
  * Conforms to "IO Remapping Table System Software on ARM Platforms",
- * Document number: ARM DEN 0049C, May 2017
+ * Document number: ARM DEN 0049A, 2015
  *
  ******************************************************************************/
 
@@ -690,8 +685,7 @@ enum acpi_iort_node_type {
 	ACPI_IORT_NODE_ITS_GROUP = 0x00,
 	ACPI_IORT_NODE_NAMED_COMPONENT = 0x01,
 	ACPI_IORT_NODE_PCI_ROOT_COMPLEX = 0x02,
-	ACPI_IORT_NODE_SMMU = 0x03,
-	ACPI_IORT_NODE_SMMU_V3 = 0x04
+	ACPI_IORT_NODE_SMMU = 0x03
 };
 
 struct acpi_iort_id_mapping {
@@ -775,40 +769,11 @@ struct acpi_iort_smmu {
 #define ACPI_IORT_SMMU_V2               0x00000001	/* Generic SMMUv2 */
 #define ACPI_IORT_SMMU_CORELINK_MMU400  0x00000002	/* ARM Corelink MMU-400 */
 #define ACPI_IORT_SMMU_CORELINK_MMU500  0x00000003	/* ARM Corelink MMU-500 */
-#define ACPI_IORT_SMMU_CORELINK_MMU401  0x00000004	/* ARM Corelink MMU-401 */
-#define ACPI_IORT_SMMU_CAVIUM_THUNDERX  0x00000005	/* Cavium thunder_x SMMUv2 */
 
 /* Masks for Flags field above */
 
 #define ACPI_IORT_SMMU_DVM_SUPPORTED    (1)
 #define ACPI_IORT_SMMU_COHERENT_WALK    (1<<1)
-
-struct acpi_iort_smmu_v3 {
-	u64 base_address;	/* SMMUv3 base address */
-	u32 flags;
-	u32 reserved;
-	u64 vatos_address;
-	u32 model;
-	u32 event_gsiv;
-	u32 pri_gsiv;
-	u32 gerr_gsiv;
-	u32 sync_gsiv;
-	u8 pxm;
-	u8 reserved1;
-	u16 reserved2;
-};
-
-/* Values for Model field above */
-
-#define ACPI_IORT_SMMU_V3_GENERIC           0x00000000	/* Generic SMMUv3 */
-#define ACPI_IORT_SMMU_V3_HISILICON_HI161X  0x00000001	/* hi_silicon Hi161x SMMUv3 */
-#define ACPI_IORT_SMMU_V3_CAVIUM_CN99XX     0x00000002	/* Cavium CN99xx SMMUv3 */
-
-/* Masks for Flags field above */
-
-#define ACPI_IORT_SMMU_V3_COHACC_OVERRIDE   (1)
-#define ACPI_IORT_SMMU_V3_HTTU_OVERRIDE     (1<<1)
-#define ACPI_IORT_SMMU_V3_PXM_VALID         (1<<3)
 
 /*******************************************************************************
  *
@@ -1218,8 +1183,7 @@ enum acpi_spmi_interface_types {
  *        Version 2
  *
  * Conforms to "TCG ACPI Specification, Family 1.2 and 2.0",
- * Version 1.2, Revision 8
- * February 27, 2017
+ * December 19, 2014
  *
  * NOTE: There are two versions of the table with the same signature --
  * the client version and the server version. The common platform_class
@@ -1282,8 +1246,7 @@ struct acpi_table_tcpa_server {
  *        Version 4
  *
  * Conforms to "TCG ACPI Specification, Family 1.2 and 2.0",
- * Version 1.2, Revision 8
- * February 27, 2017
+ * December 19, 2014
  *
  ******************************************************************************/
 
@@ -1304,38 +1267,6 @@ struct acpi_table_tpm2 {
 #define ACPI_TPM2_MEMORY_MAPPED                     6
 #define ACPI_TPM2_COMMAND_BUFFER                    7
 #define ACPI_TPM2_COMMAND_BUFFER_WITH_START_METHOD  8
-#define ACPI_TPM2_COMMAND_BUFFER_WITH_ARM_SMC       11	/* V1.2 Rev 8 */
-
-/* Trailer appears after any start_method subtables */
-
-struct acpi_tpm2_trailer {
-	u32 minimum_log_length;	/* Minimum length for the event log area */
-	u64 log_address;	/* Address of the event log area */
-};
-
-/*
- * Subtables (start_method-specific)
- */
-
-/* 11: Start Method for ARM SMC (V1.2 Rev 8) */
-
-struct acpi_tpm2_arm_smc {
-	u32 global_interrupt;
-	u8 interrupt_flags;
-	u8 operation_flags;
-	u16 reserved;
-	u32 function_id;
-};
-
-/* Values for interrupt_flags above */
-
-#define ACPI_TPM2_INTERRUPT_SUPPORT     (1)
-
-/* Values for operation_flags above */
-
-#define ACPI_TPM2_IDLE_SUPPORT          (1)
-
-#define ACPI_TPM2_START_METHOD_PARAMETER_OFFSET    52
 
 /*******************************************************************************
  *

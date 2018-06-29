@@ -31,7 +31,6 @@
 #include <linux/netdevice.h>
 #include <linux/if_packet.h>
 #include <linux/gfp.h>
-#include <linux/nospec.h>
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/netlink.h>
@@ -40,7 +39,7 @@
 #include <net/flow_dissector.h>
 #include <linux/errno.h>
 #include <linux/timer.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/unaligned.h>
 #include <linux/filter.h>
 #include <linux/ratelimit.h>
@@ -2000,10 +1999,3 @@ out:
 	release_sock(sk);
 	return ret;
 }
-
-DEFINE_PER_CPU(unsigned int, bpf_prog_ran);
-EXPORT_SYMBOL_GPL(bpf_prog_ran);
-void bpf_leave_prog_deferred(const struct bpf_prog *fp)
-{
-}
-EXPORT_SYMBOL_GPL(bpf_leave_prog_deferred);

@@ -69,7 +69,6 @@ void __weak nmi_panic_self_stop(struct pt_regs *regs)
 {
 	panic_smp_self_stop();
 }
-EXPORT_SYMBOL(nmi_panic_self_stop);
 
 /*
  * Stop other CPUs in panic.  Architecture dependent code may override this
@@ -98,7 +97,6 @@ void __weak crash_smp_send_stop(void)
 }
 
 atomic_t panic_cpu = ATOMIC_INIT(PANIC_CPU_INVALID);
-EXPORT_SYMBOL(panic_cpu);
 
 /**
  *	panic - halt the system
@@ -299,7 +297,6 @@ static const struct tnt tnts[] = {
 	{ TAINT_UNSIGNED_MODULE,	'E', ' ' },
 	{ TAINT_SOFTLOCKUP,		'L', ' ' },
 	{ TAINT_LIVEPATCH,		'K', ' ' },
-	{ TAINT_UNSAFE_HIBERNATE,       'H', ' ' },
 #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
 	{ TAINT_NO_SUPPORT,		'N', ' ' },
 	{ TAINT_EXTERNAL_SUPPORT,	'X', ' ' },
@@ -325,7 +322,6 @@ static const struct tnt tnts[] = {
  *  'E' - Unsigned module has been loaded.
  *  'L' - A soft lockup has previously occurred.
  *  'K' - Kernel has been live patched.
- *  'H' - System restored from unsafe hibernate snapshot image.
  *  'N' - Unsuported modules loaded.
  *  'X' - Modules with external support loaded.
  *

@@ -7,7 +7,7 @@
 
 #include <linux/sort.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/module.h>
 
 static int cmp_ex(const void *a, const void *b)

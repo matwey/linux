@@ -64,9 +64,8 @@ struct kmem_cache *t10_alua_lba_map_cache;
 struct kmem_cache *t10_alua_lba_map_mem_cache;
 
 static void transport_complete_task_attr(struct se_cmd *cmd);
-static int translate_sense_reason(struct se_cmd *cmd, sense_reason_t reason);
 static void transport_handle_queue_full(struct se_cmd *cmd,
-		struct se_device *dev, int err, bool write_pending);
+		struct se_device *dev);
 static int transport_put_cmd(struct se_cmd *cmd);
 static void target_complete_ok_work(struct work_struct *work);
 
@@ -775,9 +774,7 @@ EXPORT_SYMBOL(target_complete_cmd_with_sense);
 
 void target_complete_cmd_with_length(struct se_cmd *cmd, u8 scsi_status, int length)
 {
-	if ((scsi_status == SAM_STAT_GOOD ||
-	     cmd->se_cmd_flags & SCF_TREAT_READ_AS_NORMAL) &&
-	    length < cmd->data_length) {
+	if (scsi_status == SAM_STAT_GOOD && length < cmd->data_length) {
 		if (cmd->se_cmd_flags & SCF_UNDERFLOW_BIT) {
 			cmd->residual_count += cmd->data_length - length;
 		} else {
@@ -834,8 +831,7 @@ void target_qf_do_work(struct work_struct *work)
 
 		if (cmd->t_state == TRANSPORT_COMPLETE_QF_WP)
 			transport_write_pending_qf(cmd);
-		else if (cmd->t_state == TRANSPORT_COMPLETE_QF_OK ||
-			 cmd->t_state == TRANSPORT_COMPLETE_QF_ERR)
+		else if (cmd->t_state == TRANSPORT_COMPLETE_QF_OK)
 			transport_complete_qf(cmd);
 	}
 }
@@ -1800,7 +1796,7 @@ void transport_generic_request_failure(struct se_cmd *cmd,
 		}
 		trace_target_cmd_complete(cmd);
 		ret = cmd->se_tfo->queue_status(cmd);
-		if (ret)
+		if (ret == -EAGAIN || ret == -ENOMEM)
 			goto queue_full;
 		goto check_stop;
 	default:
@@ -1811,7 +1807,7 @@ void transport_generic_request_failure(struct se_cmd *cmd,
 	}
 
 	ret = transport_send_check_condition_and_sense(cmd, sense_reason, 0);
-	if (ret)
+	if (ret == -EAGAIN || ret == -ENOMEM)
 		goto queue_full;
 
 check_stop:
@@ -1820,7 +1816,8 @@ check_stop:
 	return;
 
 queue_full:
-	transport_handle_queue_full(cmd, cmd->se_dev, ret, false);
+	cmd->t_state = TRANSPORT_COMPLETE_QF_OK;
+	transport_handle_queue_full(cmd, cmd->se_dev);
 }
 EXPORT_SYMBOL(transport_generic_request_failure);
 
@@ -2062,44 +2059,16 @@ static void transport_complete_qf(struct se_cmd *cmd)
 	int ret = 0;
 
 	transport_complete_task_attr(cmd);
-	/*
-	 * If a fabric driver ->write_pending() or ->queue_data_in() callback
-	 * has returned neither -ENOMEM or -EAGAIN, assume it's fatal and
-	 * the same callbacks should not be retried.  Return CHECK_CONDITION
-	 * if a scsi_status is not already set.
-	 *
-	 * If a fabric driver ->queue_status() has returned non zero, always
-	 * keep retrying no matter what..
-	 */
-	if (cmd->t_state == TRANSPORT_COMPLETE_QF_ERR) {
-		if (cmd->scsi_status)
-			goto queue_status;
 
-		cmd->se_cmd_flags |= SCF_EMULATED_TASK_SENSE;
-		cmd->scsi_status = SAM_STAT_CHECK_CONDITION;
-		cmd->scsi_sense_length  = TRANSPORT_SENSE_BUFFER;
-		translate_sense_reason(cmd, TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE);
-		goto queue_status;
+	if (cmd->se_cmd_flags & SCF_TRANSPORT_TASK_SENSE) {
+		trace_target_cmd_complete(cmd);
+		ret = cmd->se_tfo->queue_status(cmd);
+		goto out;
 	}
-
-	/*
-	 * Check if we need to send a sense buffer from
-	 * the struct se_cmd in question. We do NOT want
-	 * to take this path of the IO has been marked as
-	 * needing to be treated like a "normal read". This
-	 * is the case if it's a tape read, and either the
-	 * FM, EOM, or ILI bits are set, but there is no
-	 * sense data.
-	 */
-	if (!(cmd->se_cmd_flags & SCF_TREAT_READ_AS_NORMAL) &&
-	    cmd->se_cmd_flags & SCF_TRANSPORT_TASK_SENSE)
-		goto queue_status;
 
 	switch (cmd->data_direction) {
 	case DMA_FROM_DEVICE:
-		/* queue status if not treating this as a normal read */
-		if (cmd->scsi_status &&
-		    !(cmd->se_cmd_flags & SCF_TREAT_READ_AS_NORMAL))
+		if (cmd->scsi_status)
 			goto queue_status;
 
 		trace_target_cmd_complete(cmd);
@@ -2120,33 +2089,19 @@ queue_status:
 		break;
 	}
 
+out:
 	if (ret < 0) {
-		transport_handle_queue_full(cmd, cmd->se_dev, ret, false);
+		transport_handle_queue_full(cmd, cmd->se_dev);
 		return;
 	}
 	transport_lun_remove_cmd(cmd);
 	transport_cmd_check_stop_to_fabric(cmd);
 }
 
-static void transport_handle_queue_full(struct se_cmd *cmd, struct se_device *dev,
-					int err, bool write_pending)
+static void transport_handle_queue_full(
+	struct se_cmd *cmd,
+	struct se_device *dev)
 {
-	/*
-	 * -EAGAIN or -ENOMEM signals retry of ->write_pending() and/or
-	 * ->queue_data_in() callbacks from new process context.
-	 *
-	 * Otherwise for other errors, transport_complete_qf() will send
-	 * CHECK_CONDITION via ->queue_status() instead of attempting to
-	 * retry associated fabric driver data-transfer callbacks.
-	 */
-	if (err == -EAGAIN || err == -ENOMEM) {
-		cmd->t_state = (write_pending) ? TRANSPORT_COMPLETE_QF_WP :
-						 TRANSPORT_COMPLETE_QF_OK;
-	} else {
-		pr_warn_ratelimited("Got unknown fabric queue status: %d\n", err);
-		cmd->t_state = TRANSPORT_COMPLETE_QF_ERR;
-	}
-
 	spin_lock_irq(&dev->qf_cmd_lock);
 	list_add_tail(&cmd->se_qf_node, &cmd->se_dev->qf_cmd_list);
 	atomic_inc_mb(&dev->dev_qf_count);
@@ -2204,19 +2159,13 @@ static void target_complete_ok_work(struct work_struct *work)
 
 	/*
 	 * Check if we need to send a sense buffer from
-	 * the struct se_cmd in question. We do NOT want
-	 * to take this path of the IO has been marked as
-	 * needing to be treated like a "normal read". This
-	 * is the case if it's a tape read, and either the
-	 * FM, EOM, or ILI bits are set, but there is no
-	 * sense data.
+	 * the struct se_cmd in question.
 	 */
-	if (!(cmd->se_cmd_flags & SCF_TREAT_READ_AS_NORMAL) &&
-	    cmd->se_cmd_flags & SCF_TRANSPORT_TASK_SENSE) {
+	if (cmd->se_cmd_flags & SCF_TRANSPORT_TASK_SENSE) {
 		WARN_ON(!cmd->scsi_status);
 		ret = transport_send_check_condition_and_sense(
 					cmd, 0, 1);
-		if (ret)
+		if (ret == -EAGAIN || ret == -ENOMEM)
 			goto queue_full;
 
 		transport_lun_remove_cmd(cmd);
@@ -2242,7 +2191,7 @@ static void target_complete_ok_work(struct work_struct *work)
 		} else if (rc) {
 			ret = transport_send_check_condition_and_sense(cmd,
 						rc, 0);
-			if (ret)
+			if (ret == -EAGAIN || ret == -ENOMEM)
 				goto queue_full;
 
 			transport_lun_remove_cmd(cmd);
@@ -2254,9 +2203,7 @@ static void target_complete_ok_work(struct work_struct *work)
 queue_rsp:
 	switch (cmd->data_direction) {
 	case DMA_FROM_DEVICE:
-		/* queue status if not treating this as a normal read */
-		if (cmd->scsi_status &&
-		    !(cmd->se_cmd_flags & SCF_TREAT_READ_AS_NORMAL))
+		if (cmd->scsi_status)
 			goto queue_status;
 
 		atomic_long_add(cmd->data_length,
@@ -2269,7 +2216,7 @@ queue_rsp:
 		if (target_read_prot_action(cmd)) {
 			ret = transport_send_check_condition_and_sense(cmd,
 						cmd->pi_err, 0);
-			if (ret)
+			if (ret == -EAGAIN || ret == -ENOMEM)
 				goto queue_full;
 
 			transport_lun_remove_cmd(cmd);
@@ -2279,7 +2226,7 @@ queue_rsp:
 
 		trace_target_cmd_complete(cmd);
 		ret = cmd->se_tfo->queue_data_in(cmd);
-		if (ret)
+		if (ret == -EAGAIN || ret == -ENOMEM)
 			goto queue_full;
 		break;
 	case DMA_TO_DEVICE:
@@ -2292,7 +2239,7 @@ queue_rsp:
 			atomic_long_add(cmd->data_length,
 					&cmd->se_lun->lun_stats.tx_data_octets);
 			ret = cmd->se_tfo->queue_data_in(cmd);
-			if (ret)
+			if (ret == -EAGAIN || ret == -ENOMEM)
 				goto queue_full;
 			break;
 		}
@@ -2301,7 +2248,7 @@ queue_rsp:
 queue_status:
 		trace_target_cmd_complete(cmd);
 		ret = cmd->se_tfo->queue_status(cmd);
-		if (ret)
+		if (ret == -EAGAIN || ret == -ENOMEM)
 			goto queue_full;
 		break;
 	default:
@@ -2315,8 +2262,8 @@ queue_status:
 queue_full:
 	pr_debug("Handling complete_ok QUEUE_FULL: se_cmd: %p,"
 		" data_direction: %d\n", cmd, cmd->data_direction);
-
-	transport_handle_queue_full(cmd, cmd->se_dev, ret, false);
+	cmd->t_state = TRANSPORT_COMPLETE_QF_OK;
+	transport_handle_queue_full(cmd, cmd->se_dev);
 }
 
 void target_free_sgl(struct scatterlist *sgl, int nents)
@@ -2584,14 +2531,18 @@ transport_generic_new_cmd(struct se_cmd *cmd)
 	spin_unlock_irqrestore(&cmd->t_state_lock, flags);
 
 	ret = cmd->se_tfo->write_pending(cmd);
-	if (ret)
+	if (ret == -EAGAIN || ret == -ENOMEM)
 		goto queue_full;
 
-	return 0;
+	/* fabric drivers should only return -EAGAIN or -ENOMEM as error */
+	WARN_ON(ret);
+
+	return (!ret) ? 0 : TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
 
 queue_full:
 	pr_debug("Handling write_pending QUEUE__FULL: se_cmd: %p\n", cmd);
-	transport_handle_queue_full(cmd, cmd->se_dev, ret, true);
+	cmd->t_state = TRANSPORT_COMPLETE_QF_WP;
+	transport_handle_queue_full(cmd, cmd->se_dev);
 	return 0;
 }
 EXPORT_SYMBOL(transport_generic_new_cmd);
@@ -2601,10 +2552,10 @@ static void transport_write_pending_qf(struct se_cmd *cmd)
 	int ret;
 
 	ret = cmd->se_tfo->write_pending(cmd);
-	if (ret) {
+	if (ret == -EAGAIN || ret == -ENOMEM) {
 		pr_debug("Handling write_pending QUEUE__FULL: se_cmd: %p\n",
 			 cmd);
-		transport_handle_queue_full(cmd, cmd->se_dev, ret, true);
+		transport_handle_queue_full(cmd, cmd->se_dev);
 	}
 }
 
@@ -3160,8 +3111,6 @@ static int __transport_check_aborted_status(struct se_cmd *cmd, int send_status)
 	__releases(&cmd->t_state_lock)
 	__acquires(&cmd->t_state_lock)
 {
-	int ret;
-
 	assert_spin_locked(&cmd->t_state_lock);
 	WARN_ON_ONCE(!irqs_disabled());
 
@@ -3185,9 +3134,7 @@ static int __transport_check_aborted_status(struct se_cmd *cmd, int send_status)
 	trace_target_cmd_complete(cmd);
 
 	spin_unlock_irq(&cmd->t_state_lock);
-	ret = cmd->se_tfo->queue_status(cmd);
-	if (ret)
-		transport_handle_queue_full(cmd, cmd->se_dev, ret, false);
+	cmd->se_tfo->queue_status(cmd);
 	spin_lock_irq(&cmd->t_state_lock);
 
 	return 1;
@@ -3208,7 +3155,6 @@ EXPORT_SYMBOL(transport_check_aborted_status);
 void transport_send_task_abort(struct se_cmd *cmd)
 {
 	unsigned long flags;
-	int ret;
 
 	spin_lock_irqsave(&cmd->t_state_lock, flags);
 	if (cmd->se_cmd_flags & (SCF_SENT_CHECK_CONDITION)) {
@@ -3244,9 +3190,7 @@ send_abort:
 		 cmd->t_task_cdb[0], cmd->tag);
 
 	trace_target_cmd_complete(cmd);
-	ret = cmd->se_tfo->queue_status(cmd);
-	if (ret)
-		transport_handle_queue_full(cmd, cmd->se_dev, ret, false);
+	cmd->se_tfo->queue_status(cmd);
 }
 
 static void target_tmr_work(struct work_struct *work)

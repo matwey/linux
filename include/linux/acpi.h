@@ -54,27 +54,6 @@ static inline acpi_handle acpi_device_handle(struct acpi_device *adev)
 	acpi_fwnode_handle(adev) : NULL)
 #define ACPI_HANDLE(dev)		acpi_device_handle(ACPI_COMPANION(dev))
 
-static inline struct fwnode_handle *acpi_alloc_fwnode_static(void)
-{
-	struct fwnode_handle *fwnode;
-
-	fwnode = kzalloc(sizeof(struct fwnode_handle), GFP_KERNEL);
-	if (!fwnode)
-		return NULL;
-
-	fwnode->type = FWNODE_ACPI_STATIC;
-
-	return fwnode;
-}
-
-static inline void acpi_free_fwnode_static(struct fwnode_handle *fwnode)
-{
-	if (WARN_ON(!fwnode || fwnode->type != FWNODE_ACPI_STATIC))
-		return;
-
-	kfree(fwnode);
-}
-
 /**
  * ACPI_DEVICE_CLASS - macro used to describe an ACPI device with
  * the PCI-defined class-code information
@@ -356,7 +335,6 @@ bool acpi_dev_resource_address_space(struct acpi_resource *ares,
 bool acpi_dev_resource_ext_address_space(struct acpi_resource *ares,
 					 struct resource_win *win);
 unsigned long acpi_dev_irq_flags(u8 triggering, u8 polarity, u8 shareable);
-unsigned int acpi_dev_get_irq_type(int triggering, int polarity);
 bool acpi_dev_resource_interrupt(struct acpi_resource *ares, int index,
 				 struct resource *res);
 
@@ -421,12 +399,8 @@ acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context);
 #define OSC_SB_HOTPLUG_OST_SUPPORT		0x00000008
 #define OSC_SB_APEI_SUPPORT			0x00000010
 #define OSC_SB_CPC_SUPPORT			0x00000020
-#define OSC_SB_CPCV2_SUPPORT			0x00000040
-#define OSC_SB_PCLPI_SUPPORT			0x00000080
-#define OSC_SB_OSLPI_SUPPORT			0x00000100
 
 extern bool osc_sb_apei_support_acked;
-extern bool osc_pc_lpi_support_confirmed;
 
 /* PCI Host Bridge _OSC: Capabilities DWORD 2: Support Field */
 #define OSC_PCI_EXT_CONFIG_SUPPORT		0x00000001
@@ -512,13 +486,6 @@ void acpi_walk_dep_device_list(acpi_handle handle);
 
 struct platform_device *acpi_create_platform_device(struct acpi_device *);
 #define ACPI_PTR(_ptr)	(_ptr)
-
-#ifdef CONFIG_ACPI_GTDT
-int acpi_gtdt_init(struct acpi_table_header *table, int *platform_timer_count);
-int acpi_gtdt_map_ppi(int type);
-bool acpi_gtdt_c3stop(int type);
-int acpi_arch_timer_mem_init(struct arch_timer_mem *timer_mem, int *timer_count);
-#endif
 
 #else	/* !CONFIG_ACPI */
 
@@ -675,11 +642,6 @@ static inline enum dev_dma_attr acpi_get_dma_attr(struct acpi_device *adev)
 {
 	return DEV_DMA_NOT_SUPPORTED;
 }
-
-static inline void acpi_dma_configure(struct device *dev,
-				      enum dev_dma_attr attr) { }
-
-static inline void acpi_dma_deconfigure(struct device *dev) { }
 
 #define ACPI_PTR(_ptr)	(NULL)
 
@@ -1011,23 +973,6 @@ static inline struct fwnode_handle *acpi_get_next_subnode(struct device *dev,
 		     (void *) data }
 
 #define acpi_probe_device_table(t)	({ int __r = 0; __r;})
-#endif
-
-#ifdef CONFIG_ACPI_SPCR_TABLE
-extern bool qdf2400_e44_present;
-int parse_spcr(bool earlycon);
-#else
-static inline int parse_spcr(bool earlycon) { return 0; }
-#endif
-
-#if IS_ENABLED(CONFIG_ACPI_GENERIC_GSI)
-int acpi_irq_get(acpi_handle handle, unsigned int index, struct resource *res);
-#else
-static inline
-int acpi_irq_get(acpi_handle handle, unsigned int index, struct resource *res)
-{
-	return -EINVAL;
-}
 #endif
 
 #endif	/*_LINUX_ACPI_H*/

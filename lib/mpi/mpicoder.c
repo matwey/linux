@@ -20,8 +20,6 @@
 
 #include <linux/bitops.h>
 #include <linux/count_zeros.h>
-#include <linux/byteorder/generic.h>
-#include <linux/string.h>
 #include "mpi-internal.h"
 
 #define MAX_EXTERN_MPI_BITS 16384
@@ -50,7 +48,9 @@ MPI mpi_read_raw_data(const void *xbuffer, size_t nbytes)
 		return NULL;
 	}
 	if (nbytes > 0)
-		nbits -= count_leading_zeros(buffer[0]) - (BITS_PER_LONG - 8);
+		nbits -= count_leading_zeros(buffer[0]);
+	else
+		nbits = 0;
 
 	nlimbs = DIV_ROUND_UP(nbytes, BYTES_PER_MPI_LIMB);
 	val = mpi_alloc(nlimbs);
@@ -152,9 +152,7 @@ static int count_lzeros(MPI a)
  * @buf:	bufer to which the output will be written to. Needs to be at
  *		leaset mpi_get_size(a) long.
  * @buf_len:	size of the buf.
- * @nbytes:	receives the actual length of the data written on success and
- *		the data to-be-written on -EOVERFLOW in case buf_len was too
- *		small.
+ * @nbytes:	receives the actual length of the data written.
  * @sign:	if not NULL, it will be set to the sign of a.
  *
  * Return:	0 on success or error code in case of error
@@ -163,17 +161,11 @@ int mpi_read_buffer(MPI a, uint8_t *buf, unsigned buf_len, unsigned *nbytes,
 		    int *sign)
 {
 	uint8_t *p;
-#if BYTES_PER_MPI_LIMB == 4
-	__be32 alimb;
-#elif BYTES_PER_MPI_LIMB == 8
-	__be64 alimb;
-#else
-#error please implement for this limb size.
-#endif
+	mpi_limb_t alimb;
 	unsigned int n = mpi_get_size(a);
 	int i, lzeros;
 
-	if (!buf || !nbytes)
+	if (buf_len < n || !buf || !nbytes)
 		return -EINVAL;
 
 	if (sign)
@@ -181,27 +173,41 @@ int mpi_read_buffer(MPI a, uint8_t *buf, unsigned buf_len, unsigned *nbytes,
 
 	lzeros = count_lzeros(a);
 
-	if (buf_len < n - lzeros) {
-		*nbytes = n - lzeros;
-		return -EOVERFLOW;
-	}
-
 	p = buf;
 	*nbytes = n - lzeros;
 
-	for (i = a->nlimbs - 1 - lzeros / BYTES_PER_MPI_LIMB,
-			lzeros %= BYTES_PER_MPI_LIMB;
-		i >= 0; i--) {
+	for (i = a->nlimbs - 1; i >= 0; i--) {
+		alimb = a->d[i];
 #if BYTES_PER_MPI_LIMB == 4
-		alimb = cpu_to_be32(a->d[i]);
+		*p++ = alimb >> 24;
+		*p++ = alimb >> 16;
+		*p++ = alimb >> 8;
+		*p++ = alimb;
 #elif BYTES_PER_MPI_LIMB == 8
-		alimb = cpu_to_be64(a->d[i]);
+		*p++ = alimb >> 56;
+		*p++ = alimb >> 48;
+		*p++ = alimb >> 40;
+		*p++ = alimb >> 32;
+		*p++ = alimb >> 24;
+		*p++ = alimb >> 16;
+		*p++ = alimb >> 8;
+		*p++ = alimb;
 #else
 #error please implement for this limb size.
 #endif
-		memcpy(p, (u8 *)&alimb + lzeros, BYTES_PER_MPI_LIMB - lzeros);
-		p += BYTES_PER_MPI_LIMB - lzeros;
-		lzeros = 0;
+
+		if (lzeros > 0) {
+			if (lzeros >= sizeof(alimb)) {
+				p -= sizeof(alimb);
+			} else {
+				mpi_limb_t *limb1 = (void *)p - sizeof(alimb);
+				mpi_limb_t *limb2 = (void *)p - sizeof(alimb)
+							+ lzeros;
+				*limb1 = *limb2;
+				p -= lzeros;
+			}
+			lzeros -= sizeof(alimb);
+		}
 	}
 	return 0;
 }
@@ -336,8 +342,7 @@ EXPORT_SYMBOL_GPL(mpi_set_buffer);
  * @nbytes:	in/out param - it has the be set to the maximum number of
  *		bytes that can be written to sgl. This has to be at least
  *		the size of the integer a. On return it receives the actual
- *		length of the data written on success or the data that would
- *		be written if buffer was too small.
+ *		length of the data written.
  * @sign:	if not NULL, it will be set to the sign of a.
  *
  * Return:	0 on success or error code in case of error
@@ -346,28 +351,17 @@ int mpi_write_to_sgl(MPI a, struct scatterlist *sgl, unsigned *nbytes,
 		     int *sign)
 {
 	u8 *p, *p2;
-#if BYTES_PER_MPI_LIMB == 4
-	__be32 alimb;
-#elif BYTES_PER_MPI_LIMB == 8
-	__be64 alimb;
-#else
-#error please implement for this limb size.
-#endif
+	mpi_limb_t alimb, alimb2;
 	unsigned int n = mpi_get_size(a);
 	int i, x, y = 0, lzeros, buf_len;
 
-	if (!nbytes)
+	if (!nbytes || *nbytes < n)
 		return -EINVAL;
 
 	if (sign)
 		*sign = a->sign;
 
 	lzeros = count_lzeros(a);
-
-	if (*nbytes < n - lzeros) {
-		*nbytes = n - lzeros;
-		return -EOVERFLOW;
-	}
 
 	*nbytes = n - lzeros;
 	buf_len = sgl->length;
@@ -376,19 +370,36 @@ int mpi_write_to_sgl(MPI a, struct scatterlist *sgl, unsigned *nbytes,
 	for (i = a->nlimbs - 1 - lzeros / BYTES_PER_MPI_LIMB,
 			lzeros %= BYTES_PER_MPI_LIMB;
 		i >= 0; i--) {
+		alimb = a->d[i];
+		p = (u8 *)&alimb2;
 #if BYTES_PER_MPI_LIMB == 4
-		alimb = cpu_to_be32(a->d[i]);
+		*p++ = alimb >> 24;
+		*p++ = alimb >> 16;
+		*p++ = alimb >> 8;
+		*p++ = alimb;
 #elif BYTES_PER_MPI_LIMB == 8
-		alimb = cpu_to_be64(a->d[i]);
+		*p++ = alimb >> 56;
+		*p++ = alimb >> 48;
+		*p++ = alimb >> 40;
+		*p++ = alimb >> 32;
+		*p++ = alimb >> 24;
+		*p++ = alimb >> 16;
+		*p++ = alimb >> 8;
+		*p++ = alimb;
 #else
 #error please implement for this limb size.
 #endif
-		if (lzeros) {
+		if (lzeros > 0) {
+			mpi_limb_t *limb1 = (void *)p - sizeof(alimb);
+			mpi_limb_t *limb2 = (void *)p - sizeof(alimb)
+				+ lzeros;
+			*limb1 = *limb2;
+			p -= lzeros;
 			y = lzeros;
-			lzeros = 0;
+			lzeros -= sizeof(alimb);
 		}
 
-		p = (u8 *)&alimb + y;
+		p = p - (sizeof(alimb) - y);
 
 		for (x = 0; x < sizeof(alimb) - y; x++) {
 			if (!buf_len) {
@@ -416,15 +427,15 @@ EXPORT_SYMBOL_GPL(mpi_write_to_sgl);
  * a new MPI and reads the content of the sgl to the MPI.
  *
  * @sgl:	scatterlist to read from
- * @nbytes:	number of bytes to read
+ * @len:	number of bytes to read
  *
  * Return:	Pointer to a new MPI or NULL on error
  */
-MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int nbytes)
+MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int len)
 {
 	struct scatterlist *sg;
 	int x, i, j, z, lzeros, ents;
-	unsigned int nbits, nlimbs;
+	unsigned int nbits, nlimbs, nbytes;
 	mpi_limb_t a;
 	MPI val = NULL;
 
@@ -445,12 +456,16 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int nbytes)
 			break;
 
 		ents--;
-		nbytes -= lzeros;
 		lzeros = 0;
 	}
 
 	sgl = sg;
-	nbytes -= lzeros;
+
+	if (!ents)
+		nbytes = 0;
+	else
+		nbytes = len - lzeros;
+
 	nbits = nbytes * 8;
 	if (nbits > MAX_EXTERN_MPI_BITS) {
 		pr_info("MPI: mpi too large (%u bits)\n", nbits);
@@ -458,8 +473,9 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int nbytes)
 	}
 
 	if (nbytes > 0)
-		nbits -= count_leading_zeros(*(u8 *)(sg_virt(sgl) + lzeros)) -
-			(BITS_PER_LONG - 8);
+		nbits -= count_leading_zeros(*(u8 *)(sg_virt(sgl) + lzeros));
+	else
+		nbits = 0;
 
 	nlimbs = DIV_ROUND_UP(nbytes, BYTES_PER_MPI_LIMB);
 	val = mpi_alloc(nlimbs);
@@ -475,14 +491,19 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int nbytes)
 
 	j = nlimbs - 1;
 	a = 0;
-	z = BYTES_PER_MPI_LIMB - nbytes % BYTES_PER_MPI_LIMB;
-	z %= BYTES_PER_MPI_LIMB;
+	z = 0;
+	x = BYTES_PER_MPI_LIMB - nbytes % BYTES_PER_MPI_LIMB;
+	x %= BYTES_PER_MPI_LIMB;
 
 	for_each_sg(sgl, sg, ents, i) {
 		const u8 *buffer = sg_virt(sg) + lzeros;
 		int len = sg->length - lzeros;
+		int buf_shift = x;
 
-		for (x = 0; x < len; x++) {
+		if  (sg_is_last(sg) && (len % BYTES_PER_MPI_LIMB))
+			len += BYTES_PER_MPI_LIMB - (len % BYTES_PER_MPI_LIMB);
+
+		for (; x < len + buf_shift; x++) {
 			a <<= 8;
 			a |= *buffer++;
 			if (((z + x + 1) % BYTES_PER_MPI_LIMB) == 0) {
@@ -491,6 +512,7 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int nbytes)
 			}
 		}
 		z += x;
+		x = 0;
 		lzeros = 0;
 	}
 	return val;

@@ -14,7 +14,6 @@
 #include <linux/kthread.h>
 #include <linux/lockdep.h>
 #include <linux/export.h>
-#include <linux/sched.h>
 #include <linux/sysctl.h>
 #include <linux/utsname.h>
 #include <trace/events/sched.h>
@@ -230,10 +229,8 @@ static int watchdog(void *dummy)
 	for ( ; ; ) {
 		unsigned long timeout = sysctl_hung_task_timeout_secs;
 
-		while (schedule_timeout_interruptible(timeout_jiffies(timeout))) {
-			klp_kgraft_mark_task_safe(current);
+		while (schedule_timeout_interruptible(timeout_jiffies(timeout)))
 			timeout = sysctl_hung_task_timeout_secs;
-		}
 
 		if (atomic_xchg(&reset_hung_task, 0))
 			continue;

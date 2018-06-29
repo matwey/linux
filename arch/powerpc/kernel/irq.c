@@ -55,7 +55,7 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/irq.h>
@@ -66,7 +66,6 @@
 #include <asm/udbg.h>
 #include <asm/smp.h>
 #include <asm/debug.h>
-#include <asm/livepatch.h>
 
 #ifdef CONFIG_PPC64
 #include <asm/paca.h>
@@ -608,12 +607,10 @@ void irq_ctx_init(void)
 		memset((void *)softirq_ctx[i], 0, THREAD_SIZE);
 		tp = softirq_ctx[i];
 		tp->cpu = i;
-		klp_init_thread_info(tp);
 
 		memset((void *)hardirq_ctx[i], 0, THREAD_SIZE);
 		tp = hardirq_ctx[i];
 		tp->cpu = i;
-		klp_init_thread_info(tp);
 	}
 }
 

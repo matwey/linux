@@ -379,7 +379,6 @@ static void wait_to_die(void)
 static int ring_buffer_consumer_thread(void *arg)
 {
 	while (!break_test()) {
-		klp_kgraft_mark_task_safe(current);
 		complete(&read_start);
 
 		ring_buffer_consumer();
@@ -400,7 +399,6 @@ static int ring_buffer_consumer_thread(void *arg)
 static int ring_buffer_producer_thread(void *arg)
 {
 	while (!break_test()) {
-		klp_kgraft_mark_task_safe(current);
 		ring_buffer_reset(buffer);
 
 		if (consumer) {

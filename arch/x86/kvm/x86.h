@@ -1,8 +1,6 @@
 #ifndef ARCH_X86_KVM_X86_H
 #define ARCH_X86_KVM_X86_H
 
-#include <asm/processor.h>
-#include <asm/mwait.h>
 #include <linux/kvm_host.h>
 #include "kvm_cache_regs.h"
 
@@ -181,12 +179,10 @@ int kvm_mtrr_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data);
 int kvm_mtrr_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata);
 bool kvm_mtrr_check_gfn_range_consistency(struct kvm_vcpu *vcpu, gfn_t gfn,
 					  int page_num);
-bool kvm_vector_hashing_enabled(void);
 
 #define KVM_SUPPORTED_XCR0     (XFEATURE_MASK_FP | XFEATURE_MASK_SSE \
 				| XFEATURE_MASK_YMM | XFEATURE_MASK_BNDREGS \
-				| XFEATURE_MASK_BNDCSR | XFEATURE_MASK_AVX512 \
-				| XFEATURE_MASK_PKRU)
+				| XFEATURE_MASK_BNDCSR | XFEATURE_MASK_AVX512)
 extern u64 host_xcr0;
 
 extern u64 kvm_supported_xcr0(void);
@@ -196,39 +192,4 @@ extern unsigned int min_timer_period_us;
 extern unsigned int lapic_timer_advance_ns;
 
 extern struct static_key kvm_no_apic_vcpu;
-
-static inline bool kvm_mwait_in_guest(void)
-{
-	unsigned int eax, ebx, ecx, edx;
-
-	if (!cpu_has(&boot_cpu_data, X86_FEATURE_MWAIT))
-		return false;
-
-	switch (boot_cpu_data.x86_vendor) {
-	case X86_VENDOR_AMD:
-		/* All AMD CPUs have a working MWAIT implementation */
-		return true;
-	case X86_VENDOR_INTEL:
-		/* Handle Intel below */
-		break;
-	default:
-		return false;
-	}
-
-	/*
-	 * Intel CPUs without CPUID5_ECX_INTERRUPT_BREAK are problematic as
-	 * they would allow guest to stop the CPU completely by disabling
-	 * interrupts then invoking MWAIT.
-	 */
-	if (boot_cpu_data.cpuid_level < CPUID_MWAIT_LEAF)
-		return false;
-
-	cpuid(CPUID_MWAIT_LEAF, &eax, &ebx, &ecx, &edx);
-
-	if (!(ecx & CPUID5_ECX_INTERRUPT_BREAK))
-		return false;
-
-	return true;
-}
-
 #endif

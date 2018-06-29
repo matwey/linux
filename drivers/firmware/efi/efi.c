@@ -24,9 +24,6 @@
 #include <linux/of_fdt.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
-#include <linux/memblock.h>
-
-#include <asm/early_ioremap.h>
 
 struct efi __read_mostly efi = {
 	.mps			= EFI_INVALID_TABLE_ADDR,
@@ -44,7 +41,6 @@ struct efi __read_mostly efi = {
 	.config_table		= EFI_INVALID_TABLE_ADDR,
 	.esrt			= EFI_INVALID_TABLE_ADDR,
 	.properties_table	= EFI_INVALID_TABLE_ADDR,
-	.mem_attr_table		= EFI_INVALID_TABLE_ADDR,
 };
 EXPORT_SYMBOL(efi);
 
@@ -251,31 +247,56 @@ subsys_initcall(efisubsys_init);
 
 /*
  * Find the efi memory descriptor for a given physical address.  Given a
- * physical address, determine if it exists within an EFI Memory Map entry,
+ * physicall address, determine if it exists within an EFI Memory Map entry,
  * and if so, populate the supplied memory descriptor with the appropriate
  * data.
  */
 int __init efi_mem_desc_lookup(u64 phys_addr, efi_memory_desc_t *out_md)
 {
-	efi_memory_desc_t *md;
+	struct efi_memory_map *map = efi.memmap;
+	phys_addr_t p, e;
 
 	if (!efi_enabled(EFI_MEMMAP)) {
 		pr_err_once("EFI_MEMMAP is not enabled.\n");
 		return -EINVAL;
 	}
 
+	if (!map) {
+		pr_err_once("efi.memmap is not set.\n");
+		return -EINVAL;
+	}
 	if (!out_md) {
 		pr_err_once("out_md is null.\n");
 		return -EINVAL;
         }
+	if (WARN_ON_ONCE(!map->phys_map))
+		return -EINVAL;
+	if (WARN_ON_ONCE(map->nr_map == 0) || WARN_ON_ONCE(map->desc_size == 0))
+		return -EINVAL;
 
-	for_each_efi_memory_desc(md) {
+	e = map->phys_map + map->nr_map * map->desc_size;
+	for (p = map->phys_map; p < e; p += map->desc_size) {
+		efi_memory_desc_t *md;
 		u64 size;
 		u64 end;
+
+		/*
+		 * If a driver calls this after efi_free_boot_services,
+		 * ->map will be NULL, and the target may also not be mapped.
+		 * So just always get our own virtual map on the CPU.
+		 *
+		 */
+		md = early_memremap(p, sizeof (*md));
+		if (!md) {
+			pr_err_once("early_memremap(%pa, %zu) failed.\n",
+				    &p, sizeof (*md));
+			return -ENOMEM;
+		}
 
 		if (!(md->attribute & EFI_MEMORY_RUNTIME) &&
 		    md->type != EFI_BOOT_SERVICES_DATA &&
 		    md->type != EFI_RUNTIME_SERVICES_DATA) {
+			early_memunmap(md, sizeof (*md));
 			continue;
 		}
 
@@ -283,8 +304,11 @@ int __init efi_mem_desc_lookup(u64 phys_addr, efi_memory_desc_t *out_md)
 		end = md->phys_addr + size;
 		if (phys_addr >= md->phys_addr && phys_addr < end) {
 			memcpy(out_md, md, sizeof(*out_md));
+			early_memunmap(md, sizeof (*md));
 			return 0;
 		}
+
+		early_memunmap(md, sizeof (*md));
 	}
 	return -ENOENT;
 }
@@ -299,35 +323,6 @@ u64 __init efi_mem_desc_end(efi_memory_desc_t *md)
 	return end;
 }
 
-void __init __weak efi_arch_mem_reserve(phys_addr_t addr, u64 size) {}
-
-/**
- * efi_mem_reserve - Reserve an EFI memory region
- * @addr: Physical address to reserve
- * @size: Size of reservation
- *
- * Mark a region as reserved from general kernel allocation and
- * prevent it being released by efi_free_boot_services().
- *
- * This function should be called drivers once they've parsed EFI
- * configuration tables to figure out where their data lives, e.g.
- * efi_esrt_init().
- */
-void __init efi_mem_reserve(phys_addr_t addr, u64 size)
-{
-	if (!memblock_is_region_reserved(addr, size))
-		memblock_reserve(addr, size);
-
-	/*
-	 * Some architectures (x86) reserve all boot services ranges
-	 * until efi_free_boot_services() because of buggy firmware
-	 * implementations. This means the above memblock_reserve() is
-	 * superfluous on x86 and instead what it needs to do is
-	 * ensure the @start, @size is not freed.
-	 */
-	efi_arch_mem_reserve(addr, size);
-}
-
 static __initdata efi_config_table_type_t common_tables[] = {
 	{ACPI_20_TABLE_GUID, "ACPI 2.0", &efi.acpi20},
 	{ACPI_TABLE_GUID, "ACPI", &efi.acpi},
@@ -339,7 +334,6 @@ static __initdata efi_config_table_type_t common_tables[] = {
 	{UGA_IO_PROTOCOL_GUID, "UGA", &efi.uga},
 	{EFI_SYSTEM_RESOURCE_TABLE_GUID, "ESRT", &efi.esrt},
 	{EFI_PROPERTIES_TABLE_GUID, "PROP", &efi.properties_table},
-	{EFI_MEMORY_ATTRIBUTES_TABLE_GUID, "MEMATTR", &efi.mem_attr_table},
 	{NULL_GUID, NULL, NULL},
 };
 
@@ -399,8 +393,6 @@ int __init efi_config_parse_tables(void *config_tables, int count, int sz,
 	}
 	pr_cont("\n");
 	set_bit(EFI_CONFIG_TABLES, &efi.flags);
-
-	efi_memattr_init();
 
 	/* Parse the EFI Properties table if it exists */
 	if (efi.properties_table != EFI_INVALID_TABLE_ADDR) {
@@ -620,12 +612,16 @@ char * __init efi_md_typeattr_format(char *buf, size_t size,
  */
 u64 __weak efi_mem_attributes(unsigned long phys_addr)
 {
+	struct efi_memory_map *map;
 	efi_memory_desc_t *md;
+	void *p;
 
 	if (!efi_enabled(EFI_MEMMAP))
 		return 0;
 
-	for_each_efi_memory_desc(md) {
+	map = efi.memmap;
+	for (p = map->map; p < map->map_end; p += map->desc_size) {
+		md = p;
 		if ((md->phys_addr <= phys_addr) &&
 		    (phys_addr < (md->phys_addr +
 		    (md->num_pages << EFI_PAGE_SHIFT))))

@@ -326,7 +326,6 @@ struct cper_sec_mem_err;
 extern void apei_mce_report_mem_error(int corrected,
 				      struct cper_sec_mem_err *mem_err);
 
-int mce_get_userspace_consumers_count(void);
 /*
  * Enumerate new IP types and HWID values in AMD processors which support
  * Scalable MCA.

@@ -49,6 +49,17 @@ static unsigned long rotate_xor(unsigned long hash, const void *area,
 	return hash;
 }
 
+/* Attempt to create a simple but unpredictable starting entropy. */
+static unsigned long get_random_boot(void)
+{
+	unsigned long hash = 0;
+
+	hash = rotate_xor(hash, build_str, sizeof(build_str));
+	hash = rotate_xor(hash, real_mode, sizeof(*real_mode));
+
+	return hash;
+}
+
 static unsigned long get_random_long(void)
 {
 #ifdef CONFIG_X86_64
@@ -56,7 +67,7 @@ static unsigned long get_random_long(void)
 #else
 	const unsigned long mix_const = 0x3f39e593UL;
 #endif
-	unsigned long raw, random = get_random_boot(real_mode);
+	unsigned long raw, random = get_random_boot();
 	bool use_i8254 = true;
 
 	debug_putstr("KASLR using");

@@ -1,33 +1,9 @@
 /* QLogic qed NIC Driver
- * Copyright (c) 2015-2017  QLogic Corporation
+ * Copyright (c) 2015 QLogic Corporation
  *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * OpenIB.org BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
- *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and /or other materials
- *        provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * This software is available under the terms of the GNU General Public License
+ * (GPL) Version 2, available from the file COPYING in the main directory of
+ * this source tree.
  */
 
 #ifndef _QED_VF_H
@@ -64,7 +40,6 @@ enum {
 	PFVF_STATUS_NOT_SUPPORTED,
 	PFVF_STATUS_NO_RESOURCE,
 	PFVF_STATUS_FORCED,
-	PFVF_STATUS_MALICIOUS,
 };
 
 /* vf pf channel tlvs */
@@ -111,7 +86,7 @@ struct vfpf_acquire_tlv {
 	struct vfpf_first_tlv first_tlv;
 
 	struct vf_pf_vfdev_info {
-#define VFPF_ACQUIRE_CAP_PRE_FP_HSI     (1 << 0) /* VF pre-FP hsi version */
+#define VFPF_ACQUIRE_CAP_OBSOLETE	(1 << 0)
 #define VFPF_ACQUIRE_CAP_100G		(1 << 1) /* VF can support 100g */
 		u64 capabilities;
 		u8 fw_major;
@@ -121,9 +96,7 @@ struct vfpf_acquire_tlv {
 		u32 driver_version;
 		u16 opaque_fid;	/* ME register value */
 		u8 os_type;	/* VFPF_ACQUIRE_OS_* value */
-		u8 eth_fp_hsi_major;
-		u8 eth_fp_hsi_minor;
-		u8 padding[3];
+		u8 padding[5];
 	} vfdev_info;
 
 	struct vf_pf_resc_request resc_request;
@@ -198,14 +171,7 @@ struct pfvf_acquire_resp_tlv {
 		struct pfvf_stats_info stats_info;
 
 		u8 port_mac[ETH_ALEN];
-
-		/* It's possible PF had to configure an older fastpath HSI
-		 * [in case VF is newer than PF]. This is communicated back
-		 * to the VF. It can also be used in case of error due to
-		 * non-matching versions to shed light in VF about failure.
-		 */
-		u8 major_fp_hsi;
-		u8 minor_fp_hsi;
+		u8 padding2[2];
 	} pfdev_info;
 
 	struct pf_vf_resc {
@@ -275,8 +241,6 @@ struct vfpf_stop_rxqs_tlv {
 	struct vfpf_first_tlv first_tlv;
 
 	u16 rx_qid;
-
-	/* this field is deprecated and should *always* be set to '1' */
 	u8 num_rxqs;
 	u8 cqe_completion;
 	u8 padding[4];
@@ -287,8 +251,6 @@ struct vfpf_stop_txqs_tlv {
 	struct vfpf_first_tlv first_tlv;
 
 	u16 tx_qid;
-
-	/* this field is deprecated and should *always* be set to '1' */
 	u8 num_txqs;
 	u8 padding[5];
 };
@@ -429,43 +391,6 @@ struct vfpf_ucast_filter_tlv {
 	u16 padding[3];
 };
 
-/* tunnel update param tlv */
-struct vfpf_update_tunn_param_tlv {
-	struct vfpf_first_tlv first_tlv;
-
-	u8 tun_mode_update_mask;
-	u8 tunn_mode;
-	u8 update_tun_cls;
-	u8 vxlan_clss;
-	u8 l2gre_clss;
-	u8 ipgre_clss;
-	u8 l2geneve_clss;
-	u8 ipgeneve_clss;
-	u8 update_geneve_port;
-	u8 update_vxlan_port;
-	u16 geneve_port;
-	u16 vxlan_port;
-	u8 padding[2];
-};
-
-struct pfvf_update_tunn_param_tlv {
-	struct pfvf_tlv hdr;
-
-	u16 tunn_feature_mask;
-	u8 vxlan_mode;
-	u8 l2geneve_mode;
-	u8 ipgeneve_mode;
-	u8 l2gre_mode;
-	u8 ipgre_mode;
-	u8 vxlan_clss;
-	u8 l2gre_clss;
-	u8 ipgre_clss;
-	u8 l2geneve_clss;
-	u8 ipgeneve_clss;
-	u16 vxlan_udp_port;
-	u16 geneve_udp_port;
-};
-
 struct tlv_buffer_size {
 	u8 tlv_buffer[TLV_BUFFER_SIZE];
 };
@@ -481,7 +406,6 @@ union vfpf_tlvs {
 	struct vfpf_vport_start_tlv start_vport;
 	struct vfpf_vport_update_tlv vport_update;
 	struct vfpf_ucast_filter_tlv ucast_filter;
-	struct vfpf_update_tunn_param_tlv tunn_param_update;
 	struct channel_list_end_tlv list_end;
 	struct tlv_buffer_size tlv_buf_size;
 };
@@ -491,7 +415,6 @@ union pfvf_tlvs {
 	struct pfvf_acquire_resp_tlv acquire_resp;
 	struct tlv_buffer_size tlv_buf_size;
 	struct pfvf_start_queue_resp_tlv queue_start;
-	struct pfvf_update_tunn_param_tlv tunn_param_resp;
 };
 
 enum qed_bulletin_bit {
@@ -552,9 +475,7 @@ struct qed_bulletin_content {
 	u8 partner_rx_flow_ctrl_en;
 	u8 partner_adv_pause;
 	u8 sfp_tx_fault;
-	u16 vxlan_udp_port;
-	u16 geneve_udp_port;
-	u8 padding4[2];
+	u8 padding4[6];
 
 	u32 speed;
 	u32 partner_adv_speed;
@@ -596,7 +517,6 @@ enum {
 	CHANNEL_TLV_VPORT_UPDATE_RSS,
 	CHANNEL_TLV_VPORT_UPDATE_ACCEPT_ANY_VLAN,
 	CHANNEL_TLV_VPORT_UPDATE_SGE_TPA,
-	CHANNEL_TLV_UPDATE_TUNN_PARAM,
 	CHANNEL_TLV_MAX,
 
 	/* Required for iterating over vport-update tlvs.
@@ -622,11 +542,6 @@ struct qed_vf_iov {
 
 	/* we set aside a copy of the acquire response */
 	struct pfvf_acquire_resp_tlv acquire_resp;
-
-	/* In case PF originates prior to the fp-hsi version comparison,
-	 * this has to be propagated as it affects the fastpath.
-	 */
-	bool b_pre_fp_hsi;
 };
 
 #ifdef CONFIG_QED_SRIOV
@@ -693,14 +608,6 @@ void qed_vf_get_num_vlan_filters(struct qed_hwfn *p_hwfn,
 				 u8 *num_vlan_filters);
 
 /**
- * @brief Get number of MAC filters allocated for VF by qed
- *
- *  @param p_hwfn
- *  @param num_rxqs - allocated MAC filters
- */
-void qed_vf_get_num_mac_filters(struct qed_hwfn *p_hwfn, u8 *num_mac_filters);
-
-/**
  * @brief Check if VF can set a MAC address
  *
  * @param p_hwfn
@@ -736,7 +643,10 @@ int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn);
 /**
  * @brief VF - start the RX Queue by sending a message to the PF
  * @param p_hwfn
- * @param p_cid			- Only relative fields are relevant
+ * @param cid                   - zero based within the VF
+ * @param rx_queue_id           - zero based within the VF
+ * @param sb                    - VF status block for this queue
+ * @param sb_index              - Index within the status block
  * @param bd_max_bytes          - maximum number of bytes per bd
  * @param bd_chain_phys_addr    - physical address of bd chain
  * @param cqe_pbl_addr          - physical address of pbl
@@ -747,7 +657,9 @@ int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn);
  * @return int
  */
 int qed_vf_pf_rxq_start(struct qed_hwfn *p_hwfn,
-			struct qed_queue_cid *p_cid,
+			u8 rx_queue_id,
+			u16 sb,
+			u8 sb_index,
 			u16 bd_max_bytes,
 			dma_addr_t bd_chain_phys_addr,
 			dma_addr_t cqe_pbl_addr,
@@ -767,23 +679,24 @@ int qed_vf_pf_rxq_start(struct qed_hwfn *p_hwfn,
  *
  * @return int
  */
-int
-qed_vf_pf_txq_start(struct qed_hwfn *p_hwfn,
-		    struct qed_queue_cid *p_cid,
-		    dma_addr_t pbl_addr,
-		    u16 pbl_size, void __iomem **pp_doorbell);
+int qed_vf_pf_txq_start(struct qed_hwfn *p_hwfn,
+			u16 tx_queue_id,
+			u16 sb,
+			u8 sb_index,
+			dma_addr_t pbl_addr,
+			u16 pbl_size, void __iomem **pp_doorbell);
 
 /**
  * @brief VF - stop the RX queue by sending a message to the PF
  *
  * @param p_hwfn
- * @param p_cid
+ * @param rx_qid
  * @param cqe_completion
  *
  * @return int
  */
 int qed_vf_pf_rxq_stop(struct qed_hwfn *p_hwfn,
-		       struct qed_queue_cid *p_cid, bool cqe_completion);
+		       u16 rx_qid, bool cqe_completion);
 
 /**
  * @brief VF - stop the TX queue by sending a message to the PF
@@ -793,7 +706,7 @@ int qed_vf_pf_rxq_stop(struct qed_hwfn *p_hwfn,
  *
  * @return int
  */
-int qed_vf_pf_txq_stop(struct qed_hwfn *p_hwfn, struct qed_queue_cid *p_cid);
+int qed_vf_pf_txq_stop(struct qed_hwfn *p_hwfn, u16 tx_qid);
 
 /**
  * @brief VF - send a vport update command
@@ -914,9 +827,6 @@ void __qed_vf_get_link_caps(struct qed_hwfn *p_hwfn,
 			    struct qed_bulletin_content *p_bulletin);
 
 void qed_iov_vf_task(struct work_struct *work);
-void qed_vf_set_vf_start_tunn_update_param(struct qed_tunnel_info *p_tun);
-int qed_vf_pf_tunnel_param_update(struct qed_hwfn *p_hwfn,
-				  struct qed_tunnel_info *p_tunn);
 #else
 static inline void qed_vf_get_link_params(struct qed_hwfn *p_hwfn,
 					  struct qed_mcp_link_params *params)
@@ -947,11 +857,6 @@ static inline void qed_vf_get_num_vlan_filters(struct qed_hwfn *p_hwfn,
 {
 }
 
-static inline void qed_vf_get_num_mac_filters(struct qed_hwfn *p_hwfn,
-					      u8 *num_mac_filters)
-{
-}
-
 static inline bool qed_vf_check_mac(struct qed_hwfn *p_hwfn, u8 *mac)
 {
 	return false;
@@ -969,7 +874,9 @@ static inline int qed_vf_hw_prepare(struct qed_hwfn *p_hwfn)
 }
 
 static inline int qed_vf_pf_rxq_start(struct qed_hwfn *p_hwfn,
-				      struct qed_queue_cid *p_cid,
+				      u8 rx_queue_id,
+				      u16 sb,
+				      u8 sb_index,
 				      u16 bd_max_bytes,
 				      dma_addr_t bd_chain_phys_adr,
 				      dma_addr_t cqe_pbl_addr,
@@ -979,7 +886,9 @@ static inline int qed_vf_pf_rxq_start(struct qed_hwfn *p_hwfn,
 }
 
 static inline int qed_vf_pf_txq_start(struct qed_hwfn *p_hwfn,
-				      struct qed_queue_cid *p_cid,
+				      u16 tx_queue_id,
+				      u16 sb,
+				      u8 sb_index,
 				      dma_addr_t pbl_addr,
 				      u16 pbl_size, void __iomem **pp_doorbell)
 {
@@ -987,14 +896,12 @@ static inline int qed_vf_pf_txq_start(struct qed_hwfn *p_hwfn,
 }
 
 static inline int qed_vf_pf_rxq_stop(struct qed_hwfn *p_hwfn,
-				     struct qed_queue_cid *p_cid,
-				     bool cqe_completion)
+				     u16 rx_qid, bool cqe_completion)
 {
 	return -EINVAL;
 }
 
-static inline int qed_vf_pf_txq_stop(struct qed_hwfn *p_hwfn,
-				     struct qed_queue_cid *p_cid)
+static inline int qed_vf_pf_txq_stop(struct qed_hwfn *p_hwfn, u16 tx_qid)
 {
 	return -EINVAL;
 }
@@ -1077,17 +984,6 @@ __qed_vf_get_link_caps(struct qed_hwfn *p_hwfn,
 
 static inline void qed_iov_vf_task(struct work_struct *work)
 {
-}
-
-static inline void
-qed_vf_set_vf_start_tunn_update_param(struct qed_tunnel_info *p_tun)
-{
-}
-
-static inline int qed_vf_pf_tunnel_param_update(struct qed_hwfn *p_hwfn,
-						struct qed_tunnel_info *p_tunn)
-{
-	return -EINVAL;
 }
 #endif
 

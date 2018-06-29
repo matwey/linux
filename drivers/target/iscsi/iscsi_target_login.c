@@ -1454,7 +1454,6 @@ int iscsi_target_login_thread(void *arg)
 	allow_signal(SIGINT);
 
 	while (1) {
-		klp_kgraft_mark_task_safe(current);
 		ret = __iscsi_target_login_thread(np);
 		/*
 		 * We break and exit here unless another sock_accept() call

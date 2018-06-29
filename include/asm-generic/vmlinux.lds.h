@@ -157,7 +157,7 @@
 #define EARLYCON_TABLE() STRUCT_ALIGN();			\
 			 VMLINUX_SYMBOL(__earlycon_table) = .;	\
 			 *(__earlycon_table)			\
-			 VMLINUX_SYMBOL(__earlycon_table_end) = .;
+			 *(__earlycon_table_end)
 #else
 #define EARLYCON_TABLE()
 #endif
@@ -173,13 +173,13 @@
 	*(__##name##_of_table_end)
 
 #define CLKSRC_OF_TABLES()	OF_TABLE(CONFIG_CLKSRC_OF, clksrc)
-#define CLKSRC_RET_OF_TABLES()	OF_TABLE(CONFIG_CLKSRC_OF, clksrc_ret)
 #define IRQCHIP_OF_MATCH_TABLE() OF_TABLE(CONFIG_IRQCHIP, irqchip)
 #define CLK_OF_TABLES()		OF_TABLE(CONFIG_COMMON_CLK, clk)
 #define IOMMU_OF_TABLES()	OF_TABLE(CONFIG_OF_IOMMU, iommu)
 #define RESERVEDMEM_OF_TABLES()	OF_TABLE(CONFIG_OF_RESERVED_MEM, reservedmem)
 #define CPU_METHOD_OF_TABLES()	OF_TABLE(CONFIG_SMP, cpu_method)
 #define CPUIDLE_METHOD_OF_TABLES() OF_TABLE(CONFIG_CPU_IDLE, cpuidle_method)
+#define EARLYCON_OF_TABLES()	OF_TABLE(CONFIG_SERIAL_EARLYCON, earlycon)
 
 #ifdef CONFIG_ACPI
 #define ACPI_PROBE_TABLE(name)						\
@@ -256,7 +256,6 @@
 	.rodata           : AT(ADDR(.rodata) - LOAD_OFFSET) {		\
 		VMLINUX_SYMBOL(__start_rodata) = .;			\
 		*(.rodata) *(.rodata.*)					\
-		*(.data..ro_after_init)	/* Read only after init */	\
 		*(__vermagic)		/* Kernel version magic */	\
 		. = ALIGN(8);						\
 		VMLINUX_SYMBOL(__start___tracepoints_ptrs) = .;		\
@@ -390,8 +389,6 @@
 		MEM_KEEP(exit.rodata)					\
 	}								\
 									\
-	EH_FRAME							\
-									\
 	/* Built-in module parameters. */				\
 	__param : AT(ADDR(__param) - LOAD_OFFSET) {			\
 		VMLINUX_SYMBOL(__start___param) = .;			\
@@ -522,7 +519,6 @@
 	CLK_OF_TABLES()							\
 	RESERVEDMEM_OF_TABLES()						\
 	CLKSRC_OF_TABLES()						\
-	CLKSRC_RET_OF_TABLES()						\
 	IOMMU_OF_TABLES()						\
 	CPU_METHOD_OF_TABLES()						\
 	CPUIDLE_METHOD_OF_TABLES()					\
@@ -530,8 +526,8 @@
 	IRQCHIP_OF_MATCH_TABLE()					\
 	ACPI_PROBE_TABLE(irqchip)					\
 	ACPI_PROBE_TABLE(clksrc)					\
-	ACPI_PROBE_TABLE(iort)                                          \
-	EARLYCON_TABLE()
+	EARLYCON_TABLE()						\
+	EARLYCON_OF_TABLES()
 
 #define INIT_TEXT							\
 	*(.init.text)							\
@@ -853,23 +849,3 @@
 	BSS(bss_align)							\
 	. = ALIGN(stop_align);						\
 	VMLINUX_SYMBOL(__bss_stop) = .;
-
-#ifdef CONFIG_STACK_UNWIND
-#define EH_FRAME							\
-		/* Unwind data binary search table */			\
-		. = ALIGN(8);						\
-		.eh_frame_hdr : AT(ADDR(.eh_frame_hdr) - LOAD_OFFSET) {	\
-			VMLINUX_SYMBOL(__start_unwind_hdr) = .;		\
-			*(.eh_frame_hdr)				\
-			VMLINUX_SYMBOL(__end_unwind_hdr) = .;		\
-		}							\
-		/* Unwind data */					\
-		. = ALIGN(8);						\
-		.eh_frame : AT(ADDR(.eh_frame) - LOAD_OFFSET) {		\
-			VMLINUX_SYMBOL(__start_unwind) = .;		\
-			*(.eh_frame)					\
-			VMLINUX_SYMBOL(__end_unwind) = .;		\
-		}
-#else
-#define EH_FRAME
-#endif

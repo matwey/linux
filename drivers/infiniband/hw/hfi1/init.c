@@ -297,15 +297,14 @@ struct hfi1_ctxtdata *hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, u32 ctxt,
 		 * The resulting value will be rounded down to the closest
 		 * multiple of dd->rcv_entries.group_size.
 		 */
-		rcd->egrbufs.buffers = kzalloc_node(
-			rcd->egrbufs.count * sizeof(*rcd->egrbufs.buffers),
-			GFP_KERNEL, numa);
+		rcd->egrbufs.buffers = kcalloc(rcd->egrbufs.count,
+					       sizeof(*rcd->egrbufs.buffers),
+					       GFP_KERNEL);
 		if (!rcd->egrbufs.buffers)
 			goto bail;
-		rcd->egrbufs.rcvtids = kzalloc_node(
-				rcd->egrbufs.count *
-				sizeof(*rcd->egrbufs.rcvtids),
-				GFP_KERNEL, numa);
+		rcd->egrbufs.rcvtids = kcalloc(rcd->egrbufs.count,
+					       sizeof(*rcd->egrbufs.rcvtids),
+					       GFP_KERNEL);
 		if (!rcd->egrbufs.rcvtids)
 			goto bail;
 		rcd->egrbufs.size = eager_buffer_size;
@@ -323,8 +322,8 @@ struct hfi1_ctxtdata *hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, u32 ctxt,
 		rcd->egrbufs.rcvtid_size = HFI1_MAX_EAGER_BUFFER_SIZE;
 
 		if (ctxt < dd->first_user_ctxt) { /* N/A for PSM contexts */
-			rcd->opstats = kzalloc_node(sizeof(*rcd->opstats),
-						    GFP_KERNEL, numa);
+			rcd->opstats = kzalloc(sizeof(*rcd->opstats),
+				GFP_KERNEL);
 			if (!rcd->opstats)
 				goto bail;
 		}
@@ -1425,16 +1424,6 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* First, lock the non-writable module parameters */
 	HFI1_CAP_LOCK();
 
-	/* Validate dev ids */
-	if (!(ent->device == PCI_DEVICE_ID_INTEL0 ||
-	      ent->device == PCI_DEVICE_ID_INTEL1)) {
-		hfi1_early_err(&pdev->dev,
-			       "Failing on unknown Intel deviceid 0x%x\n",
-			       ent->device);
-		ret = -ENODEV;
-		goto bail;
-	}
-
 	/* Validate some global module parameters */
 	ret = init_validate_rcvhdrcnt(&pdev->dev, rcvhdrcnt);
 	if (ret)
@@ -1479,6 +1468,15 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	ret = hfi1_pcie_init(pdev, ent);
 	if (ret)
 		goto bail;
+
+	if (!(ent->device == PCI_DEVICE_ID_INTEL0 ||
+	      ent->device == PCI_DEVICE_ID_INTEL1)) {
+		hfi1_early_err(&pdev->dev,
+			       "Failing on unknown Intel deviceid 0x%x\n",
+			       ent->device);
+		ret = -ENODEV;
+		goto clean_bail;
+	}
 
 	/*
 	 * Do device-specific initialization, function table setup, dd

@@ -53,6 +53,10 @@
 #include "sa.h"
 #include "core_priv.h"
 
+MODULE_AUTHOR("Roland Dreier");
+MODULE_DESCRIPTION("InfiniBand subnet administration query support");
+MODULE_LICENSE("Dual BSD/GPL");
+
 #define IB_SA_LOCAL_SVC_TIMEOUT_MIN		100
 #define IB_SA_LOCAL_SVC_TIMEOUT_DEFAULT		2000
 #define IB_SA_LOCAL_SVC_TIMEOUT_MAX		200000
@@ -65,17 +69,10 @@ struct ib_sa_sm_ah {
 	u8		     src_path_mask;
 };
 
-struct ib_sa_classport_cache {
-	bool valid;
-	struct ib_class_port_info data;
-};
-
 struct ib_sa_port {
 	struct ib_mad_agent *agent;
 	struct ib_sa_sm_ah  *sm_ah;
 	struct work_struct   update_task;
-	struct ib_sa_classport_cache classport_info;
-	spinlock_t                   classport_lock; /* protects class port info set */
 	spinlock_t           ah_lock;
 	u8                   port_num;
 };
@@ -790,8 +787,8 @@ static void ib_nl_request_timeout(struct work_struct *work)
 	spin_unlock_irqrestore(&ib_nl_request_lock, flags);
 }
 
-int ib_nl_handle_set_timeout(struct sk_buff *skb,
-			     struct netlink_callback *cb)
+static int ib_nl_handle_set_timeout(struct sk_buff *skb,
+				    struct netlink_callback *cb)
 {
 	const struct nlmsghdr *nlh = (struct nlmsghdr *)cb->nlh;
 	int timeout, delta, abs_delta;
@@ -867,8 +864,8 @@ static inline int ib_nl_is_good_resolve_resp(const struct nlmsghdr *nlh)
 	return 1;
 }
 
-int ib_nl_handle_resolve_resp(struct sk_buff *skb,
-			      struct netlink_callback *cb)
+static int ib_nl_handle_resolve_resp(struct sk_buff *skb,
+				     struct netlink_callback *cb)
 {
 	const struct nlmsghdr *nlh = (struct nlmsghdr *)cb->nlh;
 	unsigned long flags;
@@ -922,6 +919,15 @@ int ib_nl_handle_resolve_resp(struct sk_buff *skb,
 resp_out:
 	return skb->len;
 }
+
+static struct ibnl_client_cbs ib_sa_cb_table[] = {
+	[RDMA_NL_LS_OP_RESOLVE] = {
+		.dump = ib_nl_handle_resolve_resp,
+		.module = THIS_MODULE },
+	[RDMA_NL_LS_OP_SET_TIMEOUT] = {
+		.dump = ib_nl_handle_set_timeout,
+		.module = THIS_MODULE },
+};
 
 static void free_sm_ah(struct kref *kref)
 {
@@ -1006,13 +1012,6 @@ static void ib_sa_event(struct ib_event_handler *handler, struct ib_event *event
 		port->sm_ah = NULL;
 		spin_unlock_irqrestore(&port->ah_lock, flags);
 
-		if (event->event == IB_EVENT_SM_CHANGE ||
-		    event->event == IB_EVENT_CLIENT_REREGISTER ||
-		    event->event == IB_EVENT_LID_CHANGE) {
-			spin_lock_irqsave(&port->classport_lock, flags);
-			port->classport_info.valid = false;
-			spin_unlock_irqrestore(&port->classport_lock, flags);
-		}
 		queue_work(ib_wq, &sa_dev->port[event->element.port_num -
 					    sa_dev->start_port].update_task);
 	}
@@ -1733,7 +1732,6 @@ static void ib_sa_classport_info_rec_callback(struct ib_sa_query *sa_query,
 					      int status,
 					      struct ib_sa_mad *mad)
 {
-	unsigned long flags;
 	struct ib_sa_classport_info_query *query =
 		container_of(sa_query, struct ib_sa_classport_info_query, sa_query);
 
@@ -1743,16 +1741,6 @@ static void ib_sa_classport_info_rec_callback(struct ib_sa_query *sa_query,
 		ib_unpack(classport_info_rec_table,
 			  ARRAY_SIZE(classport_info_rec_table),
 			  mad->data, &rec);
-
-		spin_lock_irqsave(&sa_query->port->classport_lock, flags);
-		if (!status && !sa_query->port->classport_info.valid) {
-			memcpy(&sa_query->port->classport_info.data, &rec,
-			       sizeof(sa_query->port->classport_info.data));
-
-			sa_query->port->classport_info.valid = true;
-		}
-		spin_unlock_irqrestore(&sa_query->port->classport_lock, flags);
-
 		query->callback(status, &rec, query->context);
 	} else {
 		query->callback(status, NULL, query->context);
@@ -1779,26 +1767,13 @@ int ib_sa_classport_info_rec_query(struct ib_sa_client *client,
 	struct ib_sa_port *port;
 	struct ib_mad_agent *agent;
 	struct ib_sa_mad *mad;
-	struct ib_class_port_info cached_class_port_info;
 	int ret;
-	unsigned long flags;
 
 	if (!sa_dev)
 		return -ENODEV;
 
 	port  = &sa_dev->port[port_num - sa_dev->start_port];
 	agent = port->agent;
-
-	/* Use cached ClassPortInfo attribute if valid instead of sending mad */
-	spin_lock_irqsave(&port->classport_lock, flags);
-	if (port->classport_info.valid && callback) {
-		memcpy(&cached_class_port_info, &port->classport_info.data,
-		       sizeof(cached_class_port_info));
-		spin_unlock_irqrestore(&port->classport_lock, flags);
-		callback(0, &cached_class_port_info, context);
-		return 0;
-	}
-	spin_unlock_irqrestore(&port->classport_lock, flags);
 
 	query = kzalloc(sizeof(*query), gfp_mask);
 	if (!query)
@@ -1923,9 +1898,6 @@ static void ib_sa_add_one(struct ib_device *device)
 		sa_dev->port[i].sm_ah    = NULL;
 		sa_dev->port[i].port_num = i + s;
 
-		spin_lock_init(&sa_dev->port[i].classport_lock);
-		sa_dev->port[i].classport_info.valid = false;
-
 		sa_dev->port[i].agent =
 			ib_register_mad_agent(device, i + s, IB_QPT_GSI,
 					      NULL, 0, send_handler,
@@ -1995,7 +1967,7 @@ static void ib_sa_remove_one(struct ib_device *device, void *client_data)
 	kfree(sa_dev);
 }
 
-int ib_sa_init(void)
+static int __init ib_sa_init(void)
 {
 	int ret;
 
@@ -2015,16 +1987,23 @@ int ib_sa_init(void)
 		goto err2;
 	}
 
-	ib_nl_wq = alloc_ordered_workqueue("ib_nl_sa_wq", WQ_MEM_RECLAIM);
+	ib_nl_wq = create_singlethread_workqueue("ib_nl_sa_wq");
 	if (!ib_nl_wq) {
 		ret = -ENOMEM;
 		goto err3;
 	}
 
+	if (ibnl_add_client(RDMA_NL_LS, ARRAY_SIZE(ib_sa_cb_table),
+			    ib_sa_cb_table)) {
+		pr_err("Failed to add netlink callback\n");
+		ret = -EINVAL;
+		goto err4;
+	}
 	INIT_DELAYED_WORK(&ib_nl_timed_work, ib_nl_request_timeout);
 
 	return 0;
-
+err4:
+	destroy_workqueue(ib_nl_wq);
 err3:
 	mcast_cleanup();
 err2:
@@ -2033,8 +2012,9 @@ err1:
 	return ret;
 }
 
-void ib_sa_cleanup(void)
+static void __exit ib_sa_cleanup(void)
 {
+	ibnl_remove_client(RDMA_NL_LS);
 	cancel_delayed_work(&ib_nl_timed_work);
 	flush_workqueue(ib_nl_wq);
 	destroy_workqueue(ib_nl_wq);
@@ -2042,3 +2022,6 @@ void ib_sa_cleanup(void)
 	ib_unregister_client(&sa_client);
 	idr_destroy(&query_idr);
 }
+
+module_init(ib_sa_init);
+module_exit(ib_sa_cleanup);

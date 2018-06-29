@@ -64,11 +64,10 @@
 #include "btree.h"
 
 #include <linux/blkdev.h>
+#include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/random.h>
 #include <trace/events/bcache.h>
-
-#define MAX_OPEN_BUCKETS 128
 
 /* Bucket heap / gen */
 
@@ -291,6 +290,7 @@ do {									\
 			return 0;					\
 		}							\
 									\
+		try_to_freeze();					\
 		schedule();						\
 		mutex_lock(&(ca)->set->bucket_lock);			\
 	}								\
@@ -444,11 +444,6 @@ out:
 		b->prio = INITIAL_PRIO;
 	}
 
-	if (ca->set->avail_nbuckets > 0) {
-		ca->set->avail_nbuckets--;
-		bch_update_bucket_in_use(ca->set, &ca->set->gc_stats);
-	}
-
 	return r;
 }
 
@@ -456,11 +451,6 @@ void __bch_bucket_free(struct cache *ca, struct bucket *b)
 {
 	SET_GC_MARK(b, 0);
 	SET_GC_SECTORS_USED(b, 0);
-
-	if (ca->set->avail_nbuckets < ca->set->nbuckets) {
-		ca->set->avail_nbuckets++;
-		bch_update_bucket_in_use(ca->set, &ca->set->gc_stats);
-	}
 }
 
 void bch_bucket_free(struct cache_set *c, struct bkey *k)
@@ -622,7 +612,7 @@ bool bch_alloc_sectors(struct cache_set *c, struct bkey *k, unsigned sectors,
 
 	/*
 	 * If we had to allocate, we might race and not need to allocate the
-	 * second time we call pick_data_bucket(). If we allocated a bucket but
+	 * second time we call find_data_bucket(). If we allocated a bucket but
 	 * didn't use it, drop the refcount bch_bucket_alloc_set() took:
 	 */
 	if (KEY_PTRS(&alloc.key))
@@ -695,7 +685,7 @@ int bch_open_buckets_alloc(struct cache_set *c)
 
 	spin_lock_init(&c->data_bucket_lock);
 
-	for (i = 0; i < MAX_OPEN_BUCKETS; i++) {
+	for (i = 0; i < 6; i++) {
 		struct open_bucket *b = kzalloc(sizeof(*b), GFP_KERNEL);
 		if (!b)
 			return -ENOMEM;

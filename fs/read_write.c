@@ -18,7 +18,7 @@
 #include <linux/compat.h>
 #include "internal.h"
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/unistd.h>
 
 typedef ssize_t (*io_fn_t)(struct file *, char __user *, size_t, loff_t *);
@@ -658,10 +658,16 @@ static ssize_t do_iter_readv_writev(struct file *filp, struct iov_iter *iter,
 	struct kiocb kiocb;
 	ssize_t ret;
 
+	if (flags & ~(RWF_HIPRI | RWF_DSYNC | RWF_SYNC))
+		return -EOPNOTSUPP;
+
 	init_sync_kiocb(&kiocb, filp);
-	ret = kiocb_set_rw_flags(&kiocb, flags);
-	if (ret)
-		return ret;
+	if (flags & RWF_HIPRI)
+		kiocb.ki_flags |= IOCB_HIPRI;
+	if (flags & RWF_DSYNC)
+		kiocb.ki_flags |= IOCB_DSYNC;
+	if (flags & RWF_SYNC)
+		kiocb.ki_flags |= (IOCB_DSYNC | IOCB_SYNC);
 	kiocb.ki_pos = *ppos;
 
 	ret = fn(&kiocb, iter);

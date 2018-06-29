@@ -42,16 +42,12 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
 		const struct stacktrace_ops *ops, void *data)
 {
-	unsigned cpu;
+	const unsigned cpu = get_cpu();
 	int graph = 0;
 	u32 *prev_esp;
 
 	if (!task)
 		task = current;
-
-	bp = stack_frame(task, regs);
-	if (try_stack_unwind(task, regs, &stack, &bp, ops, data))
-		return;
 
 	if (!stack) {
 		unsigned long dummy;
@@ -64,7 +60,6 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	if (!bp)
 		bp = stack_frame(task, regs);
 
-	cpu = get_cpu();
 	for (;;) {
 		struct thread_info *context;
 		void *end_stack;

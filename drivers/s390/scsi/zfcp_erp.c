@@ -1402,10 +1402,9 @@ static int zfcp_erp_thread(void *data)
 	unsigned long flags;
 
 	for (;;) {
-		wait_event_interruptible(adapter->erp_ready_wq, ({
-			   klp_kgraft_mark_task_safe(current);
+		wait_event_interruptible(adapter->erp_ready_wq,
 			   !list_empty(&adapter->erp_ready_head) ||
-			   kthread_should_stop(); }));
+			   kthread_should_stop());
 
 		if (kthread_should_stop())
 			break;

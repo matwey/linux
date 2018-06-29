@@ -7,7 +7,6 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#include <linux/efi.h>
 #include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/stddef.h>
@@ -38,9 +37,7 @@
 #include <asm/cp15.h>
 #include <asm/cpu.h>
 #include <asm/cputype.h>
-#include <asm/efi.h>
 #include <asm/elf.h>
-#include <asm/early_ioremap.h>
 #include <asm/fixmap.h>
 #include <asm/procinfo.h>
 #include <asm/psci.h>
@@ -959,8 +956,8 @@ void __init setup_arch(char **cmdline_p)
 	strlcpy(cmd_line, boot_command_line, COMMAND_LINE_SIZE);
 	*cmdline_p = cmd_line;
 
-	early_fixmap_init();
-	early_ioremap_init();
+	if (IS_ENABLED(CONFIG_FIX_EARLYCON_MEM))
+		early_fixmap_init();
 
 	parse_early_param();
 
@@ -968,11 +965,8 @@ void __init setup_arch(char **cmdline_p)
 	early_paging_init(mdesc);
 #endif
 	setup_dma_zone(mdesc);
-	efi_init();
 	sanity_check_meminfo();
 	arm_memblock_init(mdesc);
-
-	early_ioremap_reset();
 
 	paging_init(mdesc);
 	request_standard_resources(mdesc);

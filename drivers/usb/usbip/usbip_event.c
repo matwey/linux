@@ -66,10 +66,9 @@ static int event_handler_loop(void *data)
 	struct usbip_device *ud = data;
 
 	while (!kthread_should_stop()) {
-		wait_event_interruptible(ud->eh_waitq, ({
-					 klp_kgraft_mark_task_safe(current);
+		wait_event_interruptible(ud->eh_waitq,
 					 usbip_event_happened(ud) ||
-					 kthread_should_stop(); }));
+					 kthread_should_stop());
 		usbip_dbg_eh("wakeup\n");
 
 		if (event_handler(ud) < 0)

@@ -404,9 +404,6 @@ struct module {
 	/* Size of RO sections of the module (text+rodata) */
 	unsigned int init_ro_size, core_ro_size;
 
-	/* The handle returned from unwind_add_table. */
-	void *unwind_info;
-
 	/* Arch-specific module values */
 	struct mod_arch_specific arch;
 
@@ -464,12 +461,8 @@ struct module {
 	unsigned long *ftrace_callsites;
 #endif
 
-#if defined(CONFIG_LIVEPATCH) || defined(__aarch64__)
+#ifdef CONFIG_LIVEPATCH
 	bool klp_alive;
-#endif
-
-#if defined(CONFIG_KGRAFT) || defined(__aarch64__)
-	bool kgr_alive;
 #endif
 
 #ifdef CONFIG_MODULE_UNLOAD

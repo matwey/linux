@@ -2,7 +2,6 @@
  * Coherent per-device memory handling.
  * Borrowed from i386
  */
-#include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -32,10 +31,7 @@ static int dma_init_coherent_memory(phys_addr_t phys_addr, dma_addr_t device_add
 	if (!size)
 		goto out;
 
-	if (flags & DMA_MEMORY_MAP)
-		mem_base = memremap(phys_addr, size, MEMREMAP_WC);
-	else
-		mem_base = ioremap(phys_addr, size);
+	mem_base = ioremap(phys_addr, size);
 	if (!mem_base)
 		goto out;
 
@@ -62,12 +58,8 @@ static int dma_init_coherent_memory(phys_addr_t phys_addr, dma_addr_t device_add
 
 out:
 	kfree(dma_mem);
-	if (mem_base) {
-		if (flags & DMA_MEMORY_MAP)
-			memunmap(mem_base);
-		else
-			iounmap(mem_base);
-	}
+	if (mem_base)
+		iounmap(mem_base);
 	return 0;
 }
 
@@ -75,11 +67,7 @@ static void dma_release_coherent_memory(struct dma_coherent_mem *mem)
 {
 	if (!mem)
 		return;
-
-	if (mem->flags & DMA_MEMORY_MAP)
-		memunmap(mem->virt_base);
-	else
-		iounmap(mem->virt_base);
+	iounmap(mem->virt_base);
 	kfree(mem->bitmap);
 	kfree(mem);
 }
@@ -193,10 +181,7 @@ int dma_alloc_from_coherent(struct device *dev, ssize_t size,
 	 */
 	*dma_handle = mem->device_base + (pageno << PAGE_SHIFT);
 	*ret = mem->virt_base + (pageno << PAGE_SHIFT);
-	if (mem->flags & DMA_MEMORY_MAP)
-		memset(*ret, 0, size);
-	else
-		memset_io(*ret, 0, size);
+	memset(*ret, 0, size);
 	spin_unlock_irqrestore(&mem->spinlock, flags);
 
 	return 1;

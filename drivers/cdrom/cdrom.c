@@ -282,7 +282,7 @@
 #include <linux/blkdev.h>
 #include <linux/times.h>
 #include <linux/delay.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/sched.h>
 
 /* used to tell the module to turn on full debugging messages */

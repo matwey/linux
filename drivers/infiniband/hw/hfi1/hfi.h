@@ -356,11 +356,12 @@ struct hfi1_packet {
 	u64 rhf;
 	u32 maxcnt;
 	u32 rhqoff;
+	u32 hdrqtail;
+	int numpkt;
 	u16 tlen;
+	u16 hlen;
 	s16 etail;
-	u8 hlen;
-	u8 numpkt;
-	u8 rsize;
+	u16 rsize;
 	u8 updegr;
 	u8 rcv_flags;
 	u8 etype;
@@ -1020,7 +1021,7 @@ struct hfi1_devdata {
 	u8 qos_shift;
 
 	u16 irev;	/* implementation revision */
-	u32 dc8051_ver; /* 8051 firmware version */
+	u16 dc8051_ver; /* 8051 firmware version */
 
 	spinlock_t hfi1_diag_trans_lock; /* protect diag observer ops */
 	struct platform_config platform_config;
@@ -1167,16 +1168,15 @@ struct hfi1_devdata {
 	bool eprom_available;	/* true if EPROM is available for this device */
 	bool aspm_supported;	/* Does HW support ASPM */
 	bool aspm_enabled;	/* ASPM state: enabled/disabled */
-	struct rhashtable *sdma_rht;
+	struct rhashtable sdma_rht;
 
 	struct kobject kobj;
 };
 
 /* 8051 firmware version helper */
-#define dc8051_ver(a, b, c) ((a) << 16 | (b) << 8 | (c))
-#define dc8051_ver_maj(a) (((a) & 0xff0000) >> 16)
-#define dc8051_ver_min(a) (((a) & 0x00ff00) >> 8)
-#define dc8051_ver_patch(a) ((a) & 0x0000ff)
+#define dc8051_ver(a, b) ((a) << 8 | (b))
+#define dc8051_ver_maj(a) ((a & 0xff00) >> 8)
+#define dc8051_ver_min(a)  (a & 0x00ff)
 
 /* f_put_tid types */
 #define PT_EXPECTED 0
@@ -1584,11 +1584,6 @@ static inline struct hfi1_ibport *to_iport(struct ib_device *ibdev, u8 port)
 	return &dd->pport[pidx].ibport_data;
 }
 
-static inline struct hfi1_ibport *rcd_to_iport(struct hfi1_ctxtdata *rcd)
-{
-	return &rcd->ppd->ibport_data;
-}
-
 void hfi1_process_ecn_slowpath(struct rvt_qp *qp, struct hfi1_packet *pkt,
 			       bool do_cnp);
 static inline bool process_ecn(struct rvt_qp *qp, struct hfi1_packet *pkt,
@@ -1798,6 +1793,8 @@ int kdeth_process_expected(struct hfi1_packet *packet);
 int kdeth_process_eager(struct hfi1_packet *packet);
 int process_receive_invalid(struct hfi1_packet *packet);
 
+void update_sge(struct rvt_sge_state *ss, u32 length);
+
 /* global module parameter variables */
 extern unsigned int hfi1_max_mtu;
 extern unsigned int hfi1_cu;
@@ -1941,10 +1938,6 @@ static inline u64 hfi1_pkt_base_sdma_integrity(struct hfi1_devdata *dd)
 
 #define dd_dev_info(dd, fmt, ...) \
 	dev_info(&(dd)->pcidev->dev, "%s: " fmt, \
-			get_unit_name((dd)->unit), ##__VA_ARGS__)
-
-#define dd_dev_info_ratelimited(dd, fmt, ...) \
-	dev_info_ratelimited(&(dd)->pcidev->dev, "%s: " fmt, \
 			get_unit_name((dd)->unit), ##__VA_ARGS__)
 
 #define dd_dev_dbg(dd, fmt, ...) \

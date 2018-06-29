@@ -51,7 +51,7 @@
 #include "ocrdma.h"
 #include "ocrdma_hw.h"
 #include "ocrdma_verbs.h"
-#include <rdma/ocrdma-abi.h>
+#include "ocrdma_abi.h"
 
 int ocrdma_query_pkey(struct ib_device *ibdev, u8 port, u16 index, u16 *pkey)
 {

@@ -844,15 +844,6 @@ struct ib_qp *ib_create_qp(struct ib_pd *pd,
 		}
 	}
 
-	/*
-	 * Note: all hw drivers guarantee that max_send_sge is lower than
-	 * the device RDMA WRITE SGE limit but not all hw drivers ensure that
-	 * max_send_sge <= max_sge_rd.
-	 */
-	qp->max_write_sge = qp_init_attr->cap.max_send_sge;
-	qp->max_read_sge = min_t(u32, qp_init_attr->cap.max_send_sge,
-				 device->attrs.max_sge_rd);
-
 	return qp;
 }
 EXPORT_SYMBOL(ib_create_qp);
@@ -1200,7 +1191,8 @@ int ib_resolve_eth_dmac(struct ib_device *device,
 {
 	int           ret = 0;
 
-	if (!rdma_is_port_valid(device, ah_attr->port_num))
+	if (ah_attr->port_num < rdma_start_port(device) ||
+	    ah_attr->port_num > rdma_end_port(device))
 		return -EINVAL;
 
 	if (!rdma_cap_eth_ah(device, ah_attr->port_num))
@@ -1593,52 +1585,13 @@ EXPORT_SYMBOL(ib_dealloc_fmr);
 
 /* Multicast groups */
 
-static bool is_valid_mcast_lid(struct ib_qp *qp, u16 lid)
-{
-	struct ib_qp_init_attr init_attr = {};
-	struct ib_qp_attr attr = {};
-	int num_eth_ports = 0;
-	int port;
-
-	/* If QP state >= init, it is assigned to a port and we can check this
-	 * port only.
-	 */
-	if (!ib_query_qp(qp, &attr, IB_QP_STATE | IB_QP_PORT, &init_attr)) {
-		if (attr.qp_state >= IB_QPS_INIT) {
-			if (rdma_port_get_link_layer(qp->device, attr.port_num) !=
-			    IB_LINK_LAYER_INFINIBAND)
-				return true;
-			goto lid_check;
-		}
-	}
-
-	/* Can't get a quick answer, iterate over all ports */
-	for (port = 0; port < qp->device->phys_port_cnt; port++)
-		if (rdma_port_get_link_layer(qp->device, port) !=
-		    IB_LINK_LAYER_INFINIBAND)
-			num_eth_ports++;
-
-	/* If we have at lease one Ethernet port, RoCE annex declares that
-	 * multicast LID should be ignored. We can't tell at this step if the
-	 * QP belongs to an IB or Ethernet port.
-	 */
-	if (num_eth_ports)
-		return true;
-
-	/* If all the ports are IB, we can check according to IB spec. */
-lid_check:
-	return !(lid < be16_to_cpu(IB_MULTICAST_LID_BASE) ||
-		 lid == be16_to_cpu(IB_LID_PERMISSIVE));
-}
-
 int ib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid)
 {
 	int ret;
 
 	if (!qp->device->attach_mcast)
 		return -ENOSYS;
-	if (gid->raw[0] != 0xff || qp->qp_type != IB_QPT_UD ||
-	    !is_valid_mcast_lid(qp, lid))
+	if (gid->raw[0] != 0xff || qp->qp_type != IB_QPT_UD)
 		return -EINVAL;
 
 	ret = qp->device->attach_mcast(qp, gid, lid);
@@ -1654,8 +1607,7 @@ int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid)
 
 	if (!qp->device->detach_mcast)
 		return -ENOSYS;
-	if (gid->raw[0] != 0xff || qp->qp_type != IB_QPT_UD ||
-	    !is_valid_mcast_lid(qp, lid))
+	if (gid->raw[0] != 0xff || qp->qp_type != IB_QPT_UD)
 		return -EINVAL;
 
 	ret = qp->device->detach_mcast(qp, gid, lid);
@@ -1857,10 +1809,8 @@ struct ib_flow *ib_create_flow(struct ib_qp *qp,
 		return ERR_PTR(-ENOSYS);
 
 	flow_id = qp->device->create_flow(qp, flow_attr, domain);
-	if (!IS_ERR(flow_id)) {
+	if (!IS_ERR(flow_id))
 		atomic_inc(&qp->usecnt);
-		flow_id->qp = qp;
-	}
 	return flow_id;
 }
 EXPORT_SYMBOL(ib_create_flow);
@@ -1936,13 +1886,13 @@ EXPORT_SYMBOL(ib_set_vf_guid);
  *
  * Constraints:
  * - The first sg element is allowed to have an offset.
- * - Each sg element must either be aligned to page_size or virtually
- *   contiguous to the previous element. In case an sg element has a
- *   non-contiguous offset, the mapping prefix will not include it.
+ * - Each sg element must be aligned to page_size (or physically
+ *   contiguous to the previous element). In case an sg element has a
+ *   non contiguous offset, the mapping prefix will not include it.
  * - The last sg element is allowed to have length less than page_size.
  * - If sg_nents total byte length exceeds the mr max_num_sge * page_size
  *   then only max_num_sg entries will be mapped.
- * - If the MR was allocated with type IB_MR_TYPE_SG_GAPS, none of these
+ * - If the MR was allocated with type IB_MR_TYPE_SG_GAPS_REG, non of these
  *   constraints holds and the page_size argument is ignored.
  *
  * Returns the number of sg elements that were mapped to the memory region.
@@ -2068,19 +2018,18 @@ static void ib_drain_qp_done(struct ib_cq *cq, struct ib_wc *wc)
  */
 static void __ib_drain_sq(struct ib_qp *qp)
 {
-	struct ib_cq *cq = qp->send_cq;
 	struct ib_qp_attr attr = { .qp_state = IB_QPS_ERR };
 	struct ib_drain_cqe sdrain;
-	struct ib_send_wr *bad_swr;
-	struct ib_rdma_wr swr = {
-		.wr = {
-			.next = NULL,
-			{ .wr_cqe	= &sdrain.cqe, },
-			.opcode	= IB_WR_RDMA_WRITE,
-		},
-	};
+	struct ib_send_wr swr = {}, *bad_swr;
 	int ret;
 
+	if (qp->send_cq->poll_ctx == IB_POLL_DIRECT) {
+		WARN_ONCE(qp->send_cq->poll_ctx == IB_POLL_DIRECT,
+			  "IB_POLL_DIRECT poll_ctx not supported for drain\n");
+		return;
+	}
+
+	swr.wr_cqe = &sdrain.cqe;
 	sdrain.cqe.done = ib_drain_qp_done;
 	init_completion(&sdrain.done);
 
@@ -2090,17 +2039,13 @@ static void __ib_drain_sq(struct ib_qp *qp)
 		return;
 	}
 
-	ret = ib_post_send(qp, &swr.wr, &bad_swr);
+	ret = ib_post_send(qp, &swr, &bad_swr);
 	if (ret) {
 		WARN_ONCE(ret, "failed to drain send queue: %d\n", ret);
 		return;
 	}
 
-	if (cq->poll_ctx == IB_POLL_DIRECT)
-		while (wait_for_completion_timeout(&sdrain.done, HZ / 10) <= 0)
-			ib_process_cq_direct(cq, -1);
-	else
-		wait_for_completion(&sdrain.done);
+	wait_for_completion(&sdrain.done);
 }
 
 /*
@@ -2108,11 +2053,16 @@ static void __ib_drain_sq(struct ib_qp *qp)
  */
 static void __ib_drain_rq(struct ib_qp *qp)
 {
-	struct ib_cq *cq = qp->recv_cq;
 	struct ib_qp_attr attr = { .qp_state = IB_QPS_ERR };
 	struct ib_drain_cqe rdrain;
 	struct ib_recv_wr rwr = {}, *bad_rwr;
 	int ret;
+
+	if (qp->recv_cq->poll_ctx == IB_POLL_DIRECT) {
+		WARN_ONCE(qp->recv_cq->poll_ctx == IB_POLL_DIRECT,
+			  "IB_POLL_DIRECT poll_ctx not supported for drain\n");
+		return;
+	}
 
 	rwr.wr_cqe = &rdrain.cqe;
 	rdrain.cqe.done = ib_drain_qp_done;
@@ -2130,11 +2080,7 @@ static void __ib_drain_rq(struct ib_qp *qp)
 		return;
 	}
 
-	if (cq->poll_ctx == IB_POLL_DIRECT)
-		while (wait_for_completion_timeout(&rdrain.done, HZ / 10) <= 0)
-			ib_process_cq_direct(cq, -1);
-	else
-		wait_for_completion(&rdrain.done);
+	wait_for_completion(&rdrain.done);
 }
 
 /**
@@ -2151,7 +2097,8 @@ static void __ib_drain_rq(struct ib_qp *qp)
  * ensure there is room in the CQ and SQ for the drain work request and
  * completion.
  *
- * allocate the CQ using ib_alloc_cq().
+ * allocate the CQ using ib_alloc_cq() and the CQ poll context cannot be
+ * IB_POLL_DIRECT.
  *
  * ensure that there are no other contexts that are posting WRs concurrently.
  * Otherwise the drain is not guaranteed.
@@ -2179,7 +2126,8 @@ EXPORT_SYMBOL(ib_drain_sq);
  * ensure there is room in the CQ and RQ for the drain work request and
  * completion.
  *
- * allocate the CQ using ib_alloc_cq().
+ * allocate the CQ using ib_alloc_cq() and the CQ poll context cannot be
+ * IB_POLL_DIRECT.
  *
  * ensure that there are no other contexts that are posting WRs concurrently.
  * Otherwise the drain is not guaranteed.
@@ -2203,7 +2151,8 @@ EXPORT_SYMBOL(ib_drain_rq);
  * ensure there is room in the CQ(s), SQ, and RQ for drain work requests
  * and completions.
  *
- * allocate the CQs using ib_alloc_cq().
+ * allocate the CQs using ib_alloc_cq() and the CQ poll context cannot be
+ * IB_POLL_DIRECT.
  *
  * ensure that there are no other contexts that are posting WRs concurrently.
  * Otherwise the drain is not guaranteed.

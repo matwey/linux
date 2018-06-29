@@ -7,7 +7,6 @@
  */
 #include <linux/irqdesc.h>
 #include <linux/kernel_stat.h>
-#include <linux/pm_runtime.h>
 
 #ifdef CONFIG_SPARSE_IRQ
 # define IRQ_BITMAP_BITS	(NR_IRQS + 8196)
@@ -107,8 +106,6 @@ static inline void unregister_handler_proc(unsigned int irq,
 					   struct irqaction *action) { }
 #endif
 
-extern bool irq_can_set_affinity_usr(unsigned int irq);
-
 extern int irq_select_affinity_usr(unsigned int irq, struct cpumask *mask);
 
 extern void irq_set_thread_affinity(struct irq_desc *desc);
@@ -167,8 +164,6 @@ irq_put_desc_unlock(struct irq_desc *desc, unsigned long flags)
 	__irq_put_desc_unlock(desc, flags, false);
 }
 
-#define __irqd_to_state(d) ACCESS_PRIVATE((d)->common, state_use_accessors)
-
 /*
  * Manipulation functions for irq_data.state
  */
@@ -196,8 +191,6 @@ static inline bool irqd_has_set(struct irq_data *d, unsigned int mask)
 {
 	return __irqd_to_state(d) & mask;
 }
-
-#undef __irqd_to_state
 
 static inline void kstat_incr_irqs_this_cpu(struct irq_desc *desc)
 {

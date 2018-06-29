@@ -147,7 +147,6 @@ static int benchmark_event_kthread(void *arg)
 	msleep(100);
 
 	while (!kthread_should_stop()) {
-		klp_kgraft_mark_task_safe(current);
 
 		trace_do_benchmark();
 

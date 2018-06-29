@@ -102,16 +102,6 @@ int platform_get_irq(struct platform_device *dev, unsigned int num)
 	}
 
 	r = platform_get_resource(dev, IORESOURCE_IRQ, num);
-	if (has_acpi_companion(&dev->dev)) {
-		if (r && r->flags & IORESOURCE_DISABLED) {
-			int ret;
-
-			ret = acpi_irq_get(ACPI_HANDLE(&dev->dev), num, r);
-			if (ret)
-				return ret;
-		}
-	}
-
 	/*
 	 * The resources may pass trigger flags to the irqs that need
 	 * to be set up. It so happens that the trigger flags for
@@ -126,26 +116,6 @@ int platform_get_irq(struct platform_device *dev, unsigned int num)
 #endif
 }
 EXPORT_SYMBOL_GPL(platform_get_irq);
-
-/**
- * platform_irq_count - Count the number of IRQs a platform device uses
- * @dev: platform device
- *
- * Return: Number of IRQs a platform device uses or EPROBE_DEFER
- */
-int platform_irq_count(struct platform_device *dev)
-{
-	int ret, nr = 0;
-
-	while ((ret = platform_get_irq(dev, nr)) >= 0)
-		nr++;
-
-	if (ret == -EPROBE_DEFER)
-		return ret;
-
-	return nr;
-}
-EXPORT_SYMBOL_GPL(platform_irq_count);
 
 /**
  * platform_get_resource_byname - get a resource for a device by name

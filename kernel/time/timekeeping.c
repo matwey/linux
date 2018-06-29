@@ -1056,7 +1056,7 @@ int get_device_system_crosststamp(int (*get_time_fn)
 	struct system_counterval_t system_counterval;
 	struct timekeeper *tk = &tk_core.timekeeper;
 	cycle_t cycles, now, interval_start;
-	unsigned int clock_was_set_seq = 0;
+	unsigned int clock_was_set_seq;
 	ktime_t base_real, base_raw;
 	s64 nsec_real, nsec_raw;
 	u8 cs_was_changed_seq;

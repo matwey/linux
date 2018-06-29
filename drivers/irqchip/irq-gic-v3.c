@@ -117,10 +117,11 @@ static void gic_redist_wait_for_rwp(void)
 }
 
 #ifdef CONFIG_ARM64
+static DEFINE_STATIC_KEY_FALSE(is_cavium_thunderx);
 
 static u64 __maybe_unused gic_read_iar(void)
 {
-	if (cpus_have_const_cap(ARM64_WORKAROUND_CAVIUM_23154))
+	if (static_branch_unlikely(&is_cavium_thunderx))
 		return gic_read_iar_cavium_thunderx();
 	else
 		return gic_read_iar_common();
@@ -151,7 +152,7 @@ static void gic_enable_redist(bool enable)
 
 	while (--count) {
 		val = readl_relaxed(rbase + GICR_WAKER);
-		if (enable ^ (bool)(val & GICR_WAKER_ChildrenAsleep))
+		if (enable ^ (val & GICR_WAKER_ChildrenAsleep))
 			break;
 		cpu_relax();
 		udelay(1);
@@ -491,14 +492,6 @@ static void gic_cpu_sys_reg_init(void)
 	/* Set priority mask register */
 	gic_write_pmr(DEFAULT_PMR_VALUE);
 
-	/*
-	 * Some firmwares hand over to the kernel with the BPR changed from
-	 * its reset value (and with a value large enough to prevent
-	 * any pre-emptive interrupts from working at all). Writing a zero
-	 * to BPR restores is reset value.
-	 */
-	gic_write_bpr1(0);
-
 	if (static_key_true(&supports_deactivate)) {
 		/* EOI drops priority only (mode 1) */
 		gic_write_ctlr(ICC_CTLR_EL1_EOImode_drop);
@@ -675,7 +668,7 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	else
 		gic_dist_wait_for_rwp();
 
-	return IRQ_SET_MASK_OK_DONE;
+	return IRQ_SET_MASK_OK;
 }
 #else
 #define gic_set_affinity	NULL
@@ -683,20 +676,13 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 #endif
 
 #ifdef CONFIG_CPU_PM
-/* Check whether it's single security state view */
-static bool gic_dist_security_disabled(void)
-{
-	return readl_relaxed(gic_data.dist_base + GICD_CTLR) & GICD_CTLR_DS;
-}
-
 static int gic_cpu_pm_notifier(struct notifier_block *self,
 			       unsigned long cmd, void *v)
 {
 	if (cmd == CPU_PM_EXIT) {
-		if (gic_dist_security_disabled())
-			gic_enable_redist(true);
+		gic_enable_redist(true);
 		gic_cpu_sys_reg_init();
-	} else if (cmd == CPU_PM_ENTER && gic_dist_security_disabled()) {
+	} else if (cmd == CPU_PM_ENTER) {
 		gic_write_grpen1(0);
 		gic_enable_redist(false);
 	}
@@ -860,12 +846,21 @@ static const struct irq_domain_ops gic_irq_domain_ops = {
 	.free = gic_irq_domain_free,
 };
 
+static void gicv3_enable_quirks(void)
+{
+#ifdef CONFIG_ARM64
+	if (cpus_have_cap(ARM64_WORKAROUND_CAVIUM_23154))
+		static_branch_enable(&is_cavium_thunderx);
+#endif
+}
+
 static int __init gic_init_bases(void __iomem *dist_base,
 				 struct redist_region *rdist_regs,
 				 u32 nr_redist_regions,
 				 u64 redist_stride,
 				 struct fwnode_handle *handle)
 {
+	struct device_node *node;
 	u32 typer;
 	int gic_irqs;
 	int err;
@@ -880,6 +875,8 @@ static int __init gic_init_bases(void __iomem *dist_base,
 	gic_data.redist_regions = rdist_regs;
 	gic_data.nr_redist_regions = nr_redist_regions;
 	gic_data.redist_stride = redist_stride;
+
+	gicv3_enable_quirks();
 
 	/*
 	 * Find out how many interrupts are supported.
@@ -903,8 +900,10 @@ static int __init gic_init_bases(void __iomem *dist_base,
 
 	set_handle_irq(gic_handle_irq);
 
-	if (IS_ENABLED(CONFIG_ARM_GIC_V3_ITS) && gic_dist_supports_lpis())
-		its_init(handle, &gic_data.rdists, gic_data.domain);
+	node = to_of_node(handle);
+	if (IS_ENABLED(CONFIG_ARM_GIC_V3_ITS) && gic_dist_supports_lpis() &&
+	    node) /* Temp hack to prevent ITS init for ACPI */
+		its_init(node, &gic_data.rdists, gic_data.domain);
 
 	gic_smp_init();
 	gic_dist_init();

@@ -75,6 +75,11 @@ static int copy_from_realmem(void *dest, void *src, size_t count)
 }
 
 /*
+ * Pointer to ELF header in new kernel
+ */
+static void *elfcorehdr_newmem;
+
+/*
  * Copy one page from zfcpdump "oldmem"
  *
  * For pages below HSA size memory from the HSA is copied. Otherwise
@@ -387,8 +392,7 @@ static void *nt_s390_vx_low(void *ptr, __vector128 *vx_regs)
 /*
  * Fill ELF notes for one CPU with save area registers
  */
-static void *fill_cpu_elf_notes(void *ptr, struct save_area *sa,
-				__vector128 *vx_regs)
+void *fill_cpu_elf_notes(void *ptr, struct save_area *sa, __vector128 *vx_regs)
 {
 	ptr = nt_prstatus(ptr, sa);
 	ptr = nt_fpregset(ptr, sa);
@@ -586,6 +590,9 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 	/* If we are not in kdump or zfcpdump mode return */
 	if (!OLDMEM_BASE && ipl_info.type != IPL_TYPE_FCP_DUMP)
 		return 0;
+	/* If elfcorehdr= has been passed via cmdline, we use that one */
+	if (elfcorehdr_addr != ELFCORE_ADDR_MAX)
+		return 0;
 	/* If we cannot get HSA size for zfcpdump return error */
 	if (ipl_info.type == IPL_TYPE_FCP_DUMP && !sclp.hsa_size)
 		return -ENODEV;
@@ -616,6 +623,7 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 	hdr_off = PTR_DIFF(ptr, hdr);
 	loads_init(phdr_loads, hdr_off);
 	*addr = (unsigned long long) hdr;
+	elfcorehdr_newmem = hdr;
 	*size = (unsigned long long) hdr_off;
 	BUG_ON(elfcorehdr_size > alloc_size);
 	return 0;
@@ -626,6 +634,8 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
  */
 void elfcorehdr_free(unsigned long long addr)
 {
+	if (!elfcorehdr_newmem)
+		return;
 	kfree((void *)(unsigned long)addr);
 }
 
@@ -636,6 +646,7 @@ ssize_t elfcorehdr_read(char *buf, size_t count, u64 *ppos)
 {
 	void *src = (void *)(unsigned long)*ppos;
 
+	src = elfcorehdr_newmem ? src : src - OLDMEM_BASE;
 	memcpy(buf, src, count);
 	*ppos += count;
 	return count;
@@ -647,8 +658,15 @@ ssize_t elfcorehdr_read(char *buf, size_t count, u64 *ppos)
 ssize_t elfcorehdr_read_notes(char *buf, size_t count, u64 *ppos)
 {
 	void *src = (void *)(unsigned long)*ppos;
+	int rc;
 
-	memcpy(buf, src, count);
+	if (elfcorehdr_newmem) {
+		memcpy(buf, src, count);
+	} else {
+		rc = copy_from_oldmem(buf, src, count);
+		if (rc)
+			return rc;
+	}
 	*ppos += count;
 	return count;
 }

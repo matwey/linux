@@ -234,7 +234,6 @@ static int ccp_cmd_queue_thread(void *data)
 	while (!kthread_should_stop()) {
 		schedule();
 
-		klp_kgraft_mark_task_safe(current);
 		set_current_state(TASK_INTERRUPTIBLE);
 
 		cmd = ccp_dequeue_cmd(cmd_q);

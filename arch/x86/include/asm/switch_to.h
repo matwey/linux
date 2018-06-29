@@ -9,8 +9,6 @@ __visible struct task_struct *__switch_to(struct task_struct *prev,
 struct tss_struct;
 void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 		      struct tss_struct *tss);
-void __switch_to_xtra_io(struct task_struct *prev_p, struct task_struct *next_p,
-			 struct tss_struct *tss);
 
 #ifdef CONFIG_X86_32
 
@@ -139,15 +137,6 @@ do {									\
 #define __retpoline_fill_return_buffer
 #endif
 
-/* The stack unwind code needs this but it pollutes traces otherwise */
-#ifdef CONFIG_UNWIND_INFO
-#define THREAD_RETURN_SYM \
-	".globl thread_return\n" \
-	"thread_return:\n\t"
-#else
-#define THREAD_RETURN_SYM
-#endif
-
 /*
  * There is no need to save or restore flags, because flags are always
  * clean in kernel mode, with the possible exception of IOPL.  Kernel IOPL
@@ -158,7 +147,6 @@ do {									\
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
 	     "call __switch_to\n\t"					  \
-	     THREAD_RETURN_SYM						  \
 	     "movq "__percpu_arg([current_task])",%%rsi\n\t"		  \
 	     __switch_canary						  \
 	     __retpoline_fill_return_buffer				  \

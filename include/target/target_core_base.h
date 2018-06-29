@@ -121,7 +121,6 @@ enum transport_state_table {
 	TRANSPORT_ISTATE_PROCESSING = 11,
 	TRANSPORT_COMPLETE_QF_WP = 18,
 	TRANSPORT_COMPLETE_QF_OK = 19,
-	TRANSPORT_COMPLETE_QF_ERR = 20,
 };
 
 /* Used for struct se_cmd->se_cmd_flags */
@@ -146,7 +145,6 @@ enum se_cmd_flags_table {
 	SCF_ACK_KREF			= 0x00400000,
 	SCF_USE_CPUID			= 0x00800000,
 	SCF_TASK_ATTR_SET		= 0x01000000,
-	SCF_TREAT_READ_AS_NORMAL	= 0x02000000,
 };
 
 /*
@@ -937,7 +935,6 @@ static inline struct se_portal_group *param_to_tpg(struct config_item *item)
 
 struct se_wwn {
 	struct target_fabric_configfs *wwn_tf;
-	void			*priv;
 	struct config_group	wwn_group;
 	struct config_group	fabric_stat_group;
 };

@@ -98,9 +98,6 @@ config QED
 	---help---
 	  This enables the support for ...
 
-config QED_LL2
-	bool
-
 config QED_SRIOV
 	bool "QLogic QED 25/40/100Gb SR-IOV support"
 	depends on QED && PCI_IOV
@@ -114,7 +111,6 @@ config QED_SRIOV
 config QEDE
 	tristate "QLogic QED 25/40/100Gb Ethernet NIC"
 	depends on QED
-	imply PTP_1588_CLOCK
 	---help---
 	  This enables the support for ...
 
@@ -137,14 +133,5 @@ config QEDE_GENEVE
 	  to tunnel virtual network infrastructure in virtualized environments.
 	  Say Y here if you want to enable hardware offload support for
 	  Generic Network Virtualization Encapsulation (GENEVE) in the driver.
-
-config QED_RDMA
-	bool
-
-config QED_ISCSI
-	bool
-
-config QED_FCOE
-	bool
 
 endif # NET_VENDOR_QLOGIC

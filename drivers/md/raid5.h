@@ -224,16 +224,10 @@ struct stripe_head {
 	spinlock_t		batch_lock; /* only header's lock is useful */
 	struct list_head	batch_list; /* protected by head's batch lock*/
 
-	union {
-		struct r5l_io_unit	*log_io;
-		struct ppl_io_unit	*ppl_io;
-	};
-
+	struct r5l_io_unit	*log_io;
 	struct list_head	log_list;
 	sector_t		log_start; /* first meta block on the journal */
 	struct list_head	r5c; /* for r5c_cache->stripe_in_journal */
-
-	struct page		*ppl_page; /* partial parity of this stripe */
 	/**
 	 * struct stripe_operations
 	 * @target - STRIPE_OP_COMPUTE_BLK target
@@ -406,7 +400,6 @@ enum {
 	STRIPE_OP_BIODRAIN,
 	STRIPE_OP_RECONSTRUCT,
 	STRIPE_OP_CHECK,
-	STRIPE_OP_PARTIAL_PARITY,
 };
 
 /*
@@ -448,18 +441,6 @@ enum {
  * In stripe_handle, if we find pre-reading is necessary, we do it if
  * PREREAD_ACTIVE is set, else we set DELAYED which will send it to the delayed queue.
  * HANDLE gets cleared if stripe_handle leaves nothing locked.
- */
-
-/* Note: disk_info.rdev can be set to NULL asynchronously by raid5_remove_disk.
- * There are three safe ways to access disk_info.rdev.
- * 1/ when holding mddev->reconfig_mutex
- * 2/ when resync/recovery/reshape is known to be happening - i.e. in code that
- *    is called as part of performing resync/recovery/reshape.
- * 3/ while holding rcu_read_lock(), use rcu_dereference to get the pointer
- *    and if it is non-NULL, increment rdev->nr_pending before dropping the RCU
- *    lock.
- * When .rdev is set to NULL, the nr_pending count checked again and if
- * it has been incremented, the pointer is put back in .rdev.
  */
 
 struct disk_info {
@@ -707,11 +688,6 @@ struct r5conf {
 	int			group_cnt;
 	int			worker_cnt_per_group;
 	struct r5l_log		*log;
-	void			*log_private;
-
-	struct bio_list		pending_bios;
-	spinlock_t		pending_bios_lock;
-	bool			batch_bio_dispatch;
 };
 
 
@@ -787,4 +763,23 @@ extern struct stripe_head *
 raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 			int previous, int noblock, int noquiesce);
 extern int raid5_calc_degraded(struct r5conf *conf);
+extern int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev);
+extern void r5l_exit_log(struct r5l_log *log);
+extern int r5l_write_stripe(struct r5l_log *log, struct stripe_head *head_sh);
+extern void r5l_write_stripe_run(struct r5l_log *log);
+extern void r5l_flush_stripe_to_raid(struct r5l_log *log);
+extern void r5l_stripe_write_finished(struct stripe_head *sh);
+extern void r5c_use_extra_page(struct stripe_head *sh);
+extern void r5l_wake_reclaim(struct r5l_log *log, sector_t space);
+extern int r5l_handle_flush_request(struct r5l_log *log, struct bio *bio);
+extern void r5l_quiesce(struct r5l_log *log, int state);
+extern bool r5l_log_disk_error(struct r5conf *conf);
+extern void r5c_release_extra_page(struct stripe_head *sh);
+extern void r5c_handle_cached_data_endio(struct r5conf *conf,
+	struct stripe_head *sh, int disks, struct bio_list *return_bi);
+extern int r5c_cache_data(struct r5l_log *log, struct stripe_head *sh,
+			struct stripe_head_state *s);
+extern struct md_sysfs_entry r5c_journal_mode;
+extern void r5c_update_on_rdev_error(struct mddev *mddev);
+extern bool r5c_big_stripe_cached(struct r5conf *conf, sector_t sect);
 #endif

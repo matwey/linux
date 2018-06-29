@@ -39,7 +39,6 @@ static int ir_raw_event_thread(void *data)
 	int retval;
 
 	while (!kthread_should_stop()) {
-		klp_kgraft_mark_task_safe(current);
 
 		spin_lock_irq(&raw->lock);
 		retval = kfifo_len(&raw->kfifo);

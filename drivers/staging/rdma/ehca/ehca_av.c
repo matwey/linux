@@ -85,8 +85,7 @@ int ehca_calc_ipd(struct ehca_shca *shca, int port,
 	return 0;
 }
 
-struct ib_ah *ehca_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr,
-			     struct ib_udata *udata)
+struct ib_ah *ehca_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr)
 {
 	int ret;
 	struct ehca_av *av;

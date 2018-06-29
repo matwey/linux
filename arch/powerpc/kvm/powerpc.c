@@ -28,7 +28,7 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <asm/cputable.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/kvm_ppc.h>
 #include <asm/tlbflush.h>
 #include <asm/cputhreads.h>
@@ -432,16 +432,6 @@ err_out:
 	return -EINVAL;
 }
 
-bool kvm_arch_has_vcpu_debugfs(void)
-{
-	return false;
-}
-
-int kvm_arch_create_vcpu_debugfs(struct kvm_vcpu *vcpu)
-{
-	return 0;
-}
-
 void kvm_arch_destroy_vm(struct kvm *kvm)
 {
 	unsigned int i;
@@ -506,6 +496,11 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		/* We support this only for PR */
 		r = !hv_enabled;
 		break;
+#ifdef CONFIG_KVM_MMIO
+	case KVM_CAP_COALESCED_MMIO:
+		r = KVM_COALESCED_MMIO_PAGE_OFFSET;
+		break;
+#endif
 #ifdef CONFIG_KVM_MPIC
 	case KVM_CAP_IRQ_MPIC:
 		r = 1;

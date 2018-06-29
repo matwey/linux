@@ -75,8 +75,6 @@
 #include <asm/i8259.h>
 #include <asm/realmode.h>
 #include <asm/misc.h>
-#include <asm/qspinlock.h>
-#include <asm/spec_ctrl.h>
 
 /* Number of siblings per CPU package */
 int smp_num_siblings = 1;
@@ -218,8 +216,6 @@ static void notrace start_secondary(void *unused)
 	 * Check TSC synchronization with the BP:
 	 */
 	check_tsc_sync_target();
-
-	speculative_store_bypass_ht_init();
 
 	/*
 	 * Lock vector_lock and initialize the vectors on this cpu
@@ -1218,15 +1214,11 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	pr_info("CPU%d: ", 0);
 	print_cpu_info(&cpu_data(0));
 
-	native_pv_lock_init();
-
 	uv_system_init();
 
 	set_mtrr_aps_delayed_init();
 
 	smp_quirk_init_udelay();
-
-	speculative_store_bypass_ht_init();
 }
 
 void arch_enable_nonboot_cpus_begin(void)
@@ -1546,13 +1538,9 @@ void native_play_dead(void)
 	play_dead_common();
 	tboot_shutdown(TB_SHUTDOWN_WFS);
 
-	x86_disable_ibrs();
-
 	mwait_play_dead();	/* Only returns on failure */
 	if (cpuidle_play_dead())
 		hlt_play_dead();
-
-	x86_enable_ibrs();
 }
 
 #else /* ... !CONFIG_HOTPLUG_CPU */

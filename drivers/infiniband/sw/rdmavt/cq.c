@@ -50,7 +50,6 @@
 #include <linux/kthread.h>
 #include "cq.h"
 #include "vt.h"
-#include "trace.h"
 
 /**
  * rvt_cq_enter - add a new entry to the completion queue
@@ -94,7 +93,6 @@ void rvt_cq_enter(struct rvt_cq *cq, struct ib_wc *entry, bool solicited)
 		}
 		return;
 	}
-	trace_rvt_cq_enter(cq, entry, head);
 	if (cq->ip) {
 		wc->uqueue[head].wr_id = entry->wr_id;
 		wc->uqueue[head].status = entry->status;
@@ -121,17 +119,18 @@ void rvt_cq_enter(struct rvt_cq *cq, struct ib_wc *entry, bool solicited)
 	if (cq->notify == IB_CQ_NEXT_COMP ||
 	    (cq->notify == IB_CQ_SOLICITED &&
 	     (solicited || entry->status != IB_WC_SUCCESS))) {
+		struct kthread_worker *worker;
 		/*
 		 * This will cause send_complete() to be called in
 		 * another thread.
 		 */
-		spin_lock(&cq->rdi->n_cqs_lock);
-		if (likely(cq->rdi->worker)) {
+		smp_read_barrier_depends(); /* see rvt_cq_exit */
+		worker = cq->rdi->worker;
+		if (likely(worker)) {
 			cq->notify = RVT_CQ_NONE;
 			cq->triggered++;
-			queue_kthread_work(cq->rdi->worker, &cq->comptask);
+			queue_kthread_work(worker, &cq->comptask);
 		}
-		spin_unlock(&cq->rdi->n_cqs_lock);
 	}
 
 	spin_unlock_irqrestore(&cq->lock, flags);
@@ -241,15 +240,15 @@ struct ib_cq *rvt_create_cq(struct ib_device *ibdev,
 		}
 	}
 
-	spin_lock_irq(&rdi->n_cqs_lock);
+	spin_lock(&rdi->n_cqs_lock);
 	if (rdi->n_cqs_allocated == rdi->dparms.props.max_cq) {
-		spin_unlock_irq(&rdi->n_cqs_lock);
+		spin_unlock(&rdi->n_cqs_lock);
 		ret = ERR_PTR(-ENOMEM);
 		goto bail_ip;
 	}
 
 	rdi->n_cqs_allocated++;
-	spin_unlock_irq(&rdi->n_cqs_lock);
+	spin_unlock(&rdi->n_cqs_lock);
 
 	if (cq->ip) {
 		spin_lock_irq(&rdi->pending_lock);
@@ -297,9 +296,9 @@ int rvt_destroy_cq(struct ib_cq *ibcq)
 	struct rvt_dev_info *rdi = cq->rdi;
 
 	flush_kthread_work(&cq->comptask);
-	spin_lock_irq(&rdi->n_cqs_lock);
+	spin_lock(&rdi->n_cqs_lock);
 	rdi->n_cqs_allocated--;
-	spin_unlock_irq(&rdi->n_cqs_lock);
+	spin_unlock(&rdi->n_cqs_lock);
 	if (cq->ip)
 		kref_put(&cq->ip->ref, rvt_release_mmap_info);
 	else
@@ -484,7 +483,6 @@ int rvt_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *entry)
 		if (tail == wc->head)
 			break;
 		/* The kernel doesn't need a RMB since it has the lock. */
-		trace_rvt_cq_poll(cq, &wc->kqueue[tail], npolled);
 		*entry = wc->kqueue[tail];
 		if (tail >= cq->ibcq.cqe)
 			tail = 0;
@@ -543,16 +541,12 @@ void rvt_cq_exit(struct rvt_dev_info *rdi)
 {
 	struct kthread_worker *worker;
 
-	/* block future queuing from send_complete() */
-	spin_lock_irq(&rdi->n_cqs_lock);
 	worker = rdi->worker;
-	if (!worker) {
-		spin_unlock_irq(&rdi->n_cqs_lock);
+	if (!worker)
 		return;
-	}
+	/* blocks future queuing from send_complete() */
 	rdi->worker = NULL;
-	spin_unlock_irq(&rdi->n_cqs_lock);
-
+	smp_wmb(); /* See rdi_cq_enter */
 	flush_kthread_worker(worker);
 	kthread_stop(worker->task);
 	kfree(worker);

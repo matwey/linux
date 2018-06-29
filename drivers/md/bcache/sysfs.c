@@ -80,9 +80,8 @@ rw_attribute(writeback_delay);
 rw_attribute(writeback_rate);
 
 rw_attribute(writeback_rate_update_seconds);
-rw_attribute(writeback_rate_i_term_inverse);
+rw_attribute(writeback_rate_d_term);
 rw_attribute(writeback_rate_p_term_inverse);
-rw_attribute(writeback_rate_minimum);
 read_attribute(writeback_rate_debug);
 
 read_attribute(stripe_size);
@@ -130,16 +129,15 @@ SHOW(__bch_cached_dev)
 	sysfs_hprint(writeback_rate,	dc->writeback_rate.rate << 9);
 
 	var_print(writeback_rate_update_seconds);
-	var_print(writeback_rate_i_term_inverse);
+	var_print(writeback_rate_d_term);
 	var_print(writeback_rate_p_term_inverse);
-	var_print(writeback_rate_minimum);
 
 	if (attr == &sysfs_writeback_rate_debug) {
 		char rate[20];
 		char dirty[20];
 		char target[20];
 		char proportional[20];
-		char integral[20];
+		char derivative[20];
 		char change[20];
 		s64 next_io;
 
@@ -147,7 +145,7 @@ SHOW(__bch_cached_dev)
 		bch_hprint(dirty,	bcache_dev_sectors_dirty(&dc->disk) << 9);
 		bch_hprint(target,	dc->writeback_rate_target << 9);
 		bch_hprint(proportional,dc->writeback_rate_proportional << 9);
-		bch_hprint(integral,	dc->writeback_rate_integral_scaled << 9);
+		bch_hprint(derivative,	dc->writeback_rate_derivative << 9);
 		bch_hprint(change,	dc->writeback_rate_change << 9);
 
 		next_io = div64_s64(dc->writeback_rate.next - local_clock(),
@@ -158,11 +156,11 @@ SHOW(__bch_cached_dev)
 			       "dirty:\t\t%s\n"
 			       "target:\t\t%s\n"
 			       "proportional:\t%s\n"
-			       "integral:\t%s\n"
+			       "derivative:\t%s\n"
 			       "change:\t\t%s/sec\n"
 			       "next io:\t%llims\n",
 			       rate, dirty, target, proportional,
-			       integral, change, next_io);
+			       derivative, change, next_io);
 	}
 
 	sysfs_hprint(dirty_data,
@@ -214,7 +212,7 @@ STORE(__cached_dev)
 			    dc->writeback_rate.rate, 1, INT_MAX);
 
 	d_strtoul_nonzero(writeback_rate_update_seconds);
-	d_strtoul(writeback_rate_i_term_inverse);
+	d_strtoul(writeback_rate_d_term);
 	d_strtoul_nonzero(writeback_rate_p_term_inverse);
 
 	d_strtoi_h(sequential_cutoff);
@@ -323,7 +321,7 @@ static struct attribute *bch_cached_dev_files[] = {
 	&sysfs_writeback_percent,
 	&sysfs_writeback_rate,
 	&sysfs_writeback_rate_update_seconds,
-	&sysfs_writeback_rate_i_term_inverse,
+	&sysfs_writeback_rate_d_term,
 	&sysfs_writeback_rate_p_term_inverse,
 	&sysfs_writeback_rate_debug,
 	&sysfs_dirty_data,
@@ -619,21 +617,8 @@ STORE(__bch_cache_set)
 		bch_cache_accounting_clear(&c->accounting);
 	}
 
-	if (attr == &sysfs_trigger_gc) {
-		/*
-		 * Garbage collection thread only works when sectors_to_gc < 0,
-		 * when users write to sysfs entry trigger_gc, most of time
-		 * they want to forcibly triger gargage collection. Here -1 is
-		 * set to c->sectors_to_gc, to make gc_should_run() give a
-		 * chance to permit gc thread to run. "give a chance" means
-		 * before going into gc_should_run(), there is still chance
-		 * that c->sectors_to_gc being set to other positive value. So
-		 * writing sysfs entry trigger_gc won't always make sure gc
-		 * thread takes effect.
-		 */
-		atomic_set(&c->sectors_to_gc, -1);
+	if (attr == &sysfs_trigger_gc)
 		wake_up_gc(c);
-	}
 
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;
@@ -749,11 +734,6 @@ static struct attribute *bch_cache_set_internal_files[] = {
 };
 KTYPE(bch_cache_set_internal);
 
-static int __bch_cache_cmp(const void *l, const void *r)
-{
-	return *((uint16_t *)r) - *((uint16_t *)l);
-}
-
 SHOW(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
@@ -778,6 +758,9 @@ SHOW(__bch_cache)
 					       CACHE_REPLACEMENT(&ca->sb));
 
 	if (attr == &sysfs_priority_stats) {
+		int cmp(const void *l, const void *r)
+		{	return *((uint16_t *) r) - *((uint16_t *) l); }
+
 		struct bucket *b;
 		size_t n = ca->sb.nbuckets, i;
 		size_t unused = 0, available = 0, dirty = 0, meta = 0;
@@ -806,7 +789,7 @@ SHOW(__bch_cache)
 			p[i] = ca->buckets[i].prio;
 		mutex_unlock(&ca->set->bucket_lock);
 
-		sort(p, n, sizeof(uint16_t), __bch_cache_cmp, NULL);
+		sort(p, n, sizeof(uint16_t), cmp, NULL);
 
 		while (n &&
 		       !cached[n - 1])

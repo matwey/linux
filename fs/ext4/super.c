@@ -38,7 +38,7 @@
 #include <linux/log2.h>
 #include <linux/crc16.h>
 #include <linux/cleancache.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include <linux/kthread.h>
 #include <linux/freezer.h>
@@ -4530,7 +4530,7 @@ static int ext4_commit_super(struct super_block *sb, int sync)
 	mark_buffer_dirty(sbh);
 	if (sync) {
 		error = __sync_dirty_buffer(sbh,
-			REQ_SYNC | (test_opt(sb, BARRIER) ? REQ_FUA : 0));
+			test_opt(sb, BARRIER) ? REQ_FUA : REQ_SYNC);
 		if (error)
 			return error;
 

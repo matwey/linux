@@ -40,7 +40,6 @@
 #include <asm/fixmap.h>
 #include <asm/realmode.h>
 #include <asm/time.h>
-#include <asm/pgalloc.h>
 
 /*
  * We allocate runtime services regions bottom-up, starting from -4G, i.e.
@@ -48,17 +47,28 @@
  */
 static u64 efi_va = EFI_VA_START;
 
-struct efi_scratch efi_scratch;
+/*
+ * Scratch space used for switching the pagetable in the EFI stub
+ */
+struct efi_scratch {
+	u64 r15;
+	u64 prev_cr3;
+	pgd_t *efi_pgt;
+	bool use_pgd;
+	u64 phys_stack;
+} __packed;
 
 static void __init early_code_mapping_set_exec(int executable)
 {
 	efi_memory_desc_t *md;
+	void *p;
 
 	if (!(__supported_pte_mask & _PAGE_NX))
 		return;
 
 	/* Make EFI service code area executable */
-	for_each_efi_memory_desc(md) {
+	for (p = memmap.map; p < memmap.map_end; p += memmap.desc_size) {
+		md = p;
 		if (md->type == EFI_RUNTIME_SERVICES_CODE ||
 		    md->type == EFI_BOOT_SERVICES_CODE)
 			efi_set_executable(md, executable);
@@ -73,29 +83,19 @@ pgd_t * __init efi_call_phys_prolog(void)
 	int pgd;
 	int n_pgds;
 
-	if (!efi_enabled(EFI_OLD_MEMMAP)) {
-		save_pgd = (pgd_t *)read_cr3();
-		write_cr3((unsigned long)efi_scratch.efi_pgt);
-		goto out;
-	}
+	if (!efi_enabled(EFI_OLD_MEMMAP))
+		return NULL;
 
 	early_code_mapping_set_exec(1);
 
 	n_pgds = DIV_ROUND_UP((max_pfn << PAGE_SHIFT), PGDIR_SIZE);
-	save_pgd = kmalloc_array(n_pgds, sizeof(*save_pgd), GFP_KERNEL);
+	save_pgd = kmalloc(n_pgds * sizeof(pgd_t), GFP_KERNEL);
 
 	for (pgd = 0; pgd < n_pgds; pgd++) {
 		save_pgd[pgd] = *pgd_offset_k(pgd * PGDIR_SIZE);
 		vaddress = (unsigned long)__va(pgd * PGDIR_SIZE);
 		set_pgd(pgd_offset_k(pgd * PGDIR_SIZE), *pgd_offset_k(vaddress));
-		/*
-		 * pgprot API doesn't clear it for PGD
-		 *
-		 * Will be brought back automatically in _epilog()
-		 */
-		pgd_offset_k(pgd * PGDIR_SIZE)->pgd &= ~_PAGE_NX;
 	}
-out:
 	__flush_tlb_all();
 
 	return save_pgd;
@@ -109,11 +109,8 @@ void __init efi_call_phys_epilog(pgd_t *save_pgd)
 	int pgd_idx;
 	int nr_pgds;
 
-	if (!efi_enabled(EFI_OLD_MEMMAP)) {
-		write_cr3((unsigned long)save_pgd);
-		__flush_tlb_all();
+	if (!save_pgd)
 		return;
-	}
 
 	nr_pgds = DIV_ROUND_UP((max_pfn << PAGE_SHIFT) , PGDIR_SIZE);
 
@@ -126,97 +123,27 @@ void __init efi_call_phys_epilog(pgd_t *save_pgd)
 	early_code_mapping_set_exec(0);
 }
 
-static pgd_t *efi_pgd;
-
-/*
- * We need our own copy of the higher levels of the page tables
- * because we want to avoid inserting EFI region mappings (EFI_VA_END
- * to EFI_VA_START) into the standard kernel page tables. Everything
- * else can be shared, see efi_sync_low_kernel_mappings().
- */
-int __init efi_alloc_page_tables(void)
-{
-	pgd_t *pgd;
-	pud_t *pud;
-	gfp_t gfp_mask;
-
-	if (efi_enabled(EFI_OLD_MEMMAP))
-		return 0;
-
-	gfp_mask = GFP_KERNEL | __GFP_NOTRACK | __GFP_REPEAT | __GFP_ZERO;
-	efi_pgd = (pgd_t *)__get_free_pages(gfp_mask, PGD_ALLOCATION_ORDER);
-	if (!efi_pgd)
-		return -ENOMEM;
-
-	pgd = efi_pgd + pgd_index(EFI_VA_END);
-
-	pud = pud_alloc_one(NULL, 0);
-	if (!pud) {
-		free_page((unsigned long)efi_pgd);
-		return -ENOMEM;
-	}
-
-	pgd_populate(NULL, pgd, pud);
-
-	return 0;
-}
-
 /*
  * Add low kernel mappings for passing arguments to EFI functions.
  */
 void efi_sync_low_kernel_mappings(void)
 {
-	unsigned num_entries;
-	pgd_t *pgd_k, *pgd_efi;
-	pud_t *pud_k, *pud_efi;
+	unsigned num_pgds;
+	pgd_t *pgd = (pgd_t *)__va(real_mode_header->trampoline_pgd);
 
 	if (efi_enabled(EFI_OLD_MEMMAP))
 		return;
 
-	/*
-	 * We can share all PGD entries apart from the one entry that
-	 * covers the EFI runtime mapping space.
-	 *
-	 * Make sure the EFI runtime region mappings are guaranteed to
-	 * only span a single PGD entry and that the entry also maps
-	 * other important kernel regions.
-	 */
-	BUILD_BUG_ON(pgd_index(EFI_VA_END) != pgd_index(MODULES_END));
-	BUILD_BUG_ON((EFI_VA_START & PGDIR_MASK) !=
-			(EFI_VA_END & PGDIR_MASK));
+	num_pgds = pgd_index(MODULES_END - 1) - pgd_index(PAGE_OFFSET);
 
-	pgd_efi = efi_pgd + pgd_index(PAGE_OFFSET);
-	pgd_k = pgd_offset_k(PAGE_OFFSET);
-
-	num_entries = pgd_index(EFI_VA_END) - pgd_index(PAGE_OFFSET);
-	memcpy(pgd_efi, pgd_k, sizeof(pgd_t) * num_entries);
-
-	/*
-	 * We share all the PUD entries apart from those that map the
-	 * EFI regions. Copy around them.
-	 */
-	BUILD_BUG_ON((EFI_VA_START & ~PUD_MASK) != 0);
-	BUILD_BUG_ON((EFI_VA_END & ~PUD_MASK) != 0);
-
-	pgd_efi = efi_pgd + pgd_index(EFI_VA_END);
-	pud_efi = pud_offset(pgd_efi, 0);
-
-	pgd_k = pgd_offset_k(EFI_VA_END);
-	pud_k = pud_offset(pgd_k, 0);
-
-	num_entries = pud_index(EFI_VA_END);
-	memcpy(pud_efi, pud_k, sizeof(pud_t) * num_entries);
-
-	pud_efi = pud_offset(pgd_efi, EFI_VA_START);
-	pud_k = pud_offset(pgd_k, EFI_VA_START);
-
-	num_entries = PTRS_PER_PUD - pud_index(EFI_VA_START);
-	memcpy(pud_efi, pud_k, sizeof(pud_t) * num_entries);
+	memcpy(pgd + pgd_index(PAGE_OFFSET),
+		init_mm.pgd + pgd_index(PAGE_OFFSET),
+		sizeof(pgd_t) * num_pgds);
 }
 
 int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 {
-	unsigned long pfn, text;
+	unsigned long text;
 	struct page *page;
 	unsigned npages;
 	pgd_t *pgd;
@@ -224,8 +151,8 @@ int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 	if (efi_enabled(EFI_OLD_MEMMAP))
 		return 0;
 
-	efi_scratch.efi_pgt = (pgd_t *)__pa(efi_pgd);
-	pgd = efi_pgd;
+	efi_scratch.efi_pgt = (pgd_t *)(unsigned long)real_mode_header->trampoline_pgd;
+	pgd = __va(efi_scratch.efi_pgt);
 
 	/*
 	 * It can happen that the physical address of new_memmap lands in memory
@@ -233,8 +160,7 @@ int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 	 * and ident-map those pages containing the map before calling
 	 * phys_efi_set_virtual_address_map().
 	 */
-	pfn = pa_memmap >> PAGE_SHIFT;
-	if (kernel_map_pages_in_pgd(pgd, pfn, pa_memmap, num_pages, _PAGE_NX | _PAGE_RW)) {
+	if (kernel_map_pages_in_pgd(pgd, pa_memmap, pa_memmap, num_pages, _PAGE_NX)) {
 		pr_err("Error ident-mapping new memmap (0x%lx)!\n", pa_memmap);
 		return 1;
 	}
@@ -242,28 +168,12 @@ int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 	efi_scratch.use_pgd = true;
 
 	/*
-	 * Certain firmware versions are way too sentimential and still believe
-	 * they are exclusive and unquestionable owners of the first physical page,
-	 * even though they explicitly mark it as EFI_CONVENTIONAL_MEMORY
-	 * (but then write-access it later during SetVirtualAddressMap()).
-	 *
-	 * Create a 1:1 mapping for this page, to avoid triple faults during early
-	 * boot with such firmware. We are free to hand this page to the BIOS,
-	 * as trim_bios_range() will reserve the first page and isolate it away
-	 * from memory allocators anyway.
-	 */
-	if (kernel_map_pages_in_pgd(pgd, 0x0, 0x0, 1, _PAGE_RW)) {
-		pr_err("Failed to create 1:1 mapping for the first page!\n");
-		return 1;
-	}
-
-	/*
 	 * When making calls to the firmware everything needs to be 1:1
 	 * mapped and addressable with 32-bit pointers. Map the kernel
 	 * text and allocate a new stack because we can't rely on the
 	 * stack pointer being < 4GB.
 	 */
-	if (!IS_ENABLED(CONFIG_EFI_MIXED) || efi_is_native())
+	if (!IS_ENABLED(CONFIG_EFI_MIXED))
 		return 0;
 
 	page = alloc_page(GFP_KERNEL|__GFP_DMA32);
@@ -273,11 +183,10 @@ int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 	efi_scratch.phys_stack = virt_to_phys(page_address(page));
 	efi_scratch.phys_stack += PAGE_SIZE; /* stack grows down */
 
-	npages = (_etext - _text) >> PAGE_SHIFT;
+	npages = (_end - _text) >> PAGE_SHIFT;
 	text = __pa(_text);
-	pfn = text >> PAGE_SHIFT;
 
-	if (kernel_map_pages_in_pgd(pgd, pfn, text, npages, _PAGE_RW)) {
+	if (kernel_map_pages_in_pgd(pgd, text >> PAGE_SHIFT, text, npages, 0)) {
 		pr_err("Failed to map kernel text 1:1\n");
 		return 1;
 	}
@@ -287,20 +196,20 @@ int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 
 void __init efi_cleanup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 {
-	kernel_unmap_pages_in_pgd(efi_pgd, pa_memmap, num_pages);
+	pgd_t *pgd = (pgd_t *)__va(real_mode_header->trampoline_pgd);
+
+	kernel_unmap_pages_in_pgd(pgd, pa_memmap, num_pages);
 }
 
 static void __init __map_region(efi_memory_desc_t *md, u64 va)
 {
-	unsigned long flags = _PAGE_RW;
-	unsigned long pfn;
-	pgd_t *pgd = efi_pgd;
+	pgd_t *pgd = (pgd_t *)__va(real_mode_header->trampoline_pgd);
+	unsigned long pf = 0;
 
 	if (!(md->attribute & EFI_MEMORY_WB))
-		flags |= _PAGE_PCD;
+		pf |= _PAGE_PCD;
 
-	pfn = md->phys_addr >> PAGE_SHIFT;
-	if (kernel_map_pages_in_pgd(pgd, pfn, va, md->num_pages, flags))
+	if (kernel_map_pages_in_pgd(pgd, md->phys_addr, va, md->num_pages, pf))
 		pr_warn("Error mapping PA 0x%llx -> VA 0x%llx!\n",
 			   md->phys_addr, va);
 }
@@ -363,7 +272,6 @@ void __init efi_map_region(efi_memory_desc_t *md)
  */
 void __init efi_map_region_fixed(efi_memory_desc_t *md)
 {
-	__map_region(md, md->phys_addr);
 	__map_region(md, md->virt_addr);
 }
 
@@ -392,98 +300,21 @@ void __init parse_efi_setup(u64 phys_addr, u32 data_len)
 	efi_setup = phys_addr + sizeof(struct setup_data);
 }
 
-static int __init efi_update_mappings(efi_memory_desc_t *md, unsigned long pf)
+void __init efi_runtime_mkexec(void)
 {
-	unsigned long pfn;
-	pgd_t *pgd = efi_pgd;
-	int err1, err2;
-
-	/* Update the 1:1 mapping */
-	pfn = md->phys_addr >> PAGE_SHIFT;
-	err1 = kernel_map_pages_in_pgd(pgd, pfn, md->phys_addr, md->num_pages, pf);
-	if (err1) {
-		pr_err("Error while updating 1:1 mapping PA 0x%llx -> VA 0x%llx!\n",
-			   md->phys_addr, md->virt_addr);
-	}
-
-	err2 = kernel_map_pages_in_pgd(pgd, pfn, md->virt_addr, md->num_pages, pf);
-	if (err2) {
-		pr_err("Error while updating VA mapping PA 0x%llx -> VA 0x%llx!\n",
-			   md->phys_addr, md->virt_addr);
-	}
-
-	return err1 || err2;
-}
-
-static int __init efi_update_mem_attr(struct mm_struct *mm, efi_memory_desc_t *md)
-{
-	unsigned long pf = 0;
-
-	if (md->attribute & EFI_MEMORY_XP)
-		pf |= _PAGE_NX;
-
-	if (!(md->attribute & EFI_MEMORY_RO))
-		pf |= _PAGE_RW;
-
-	return efi_update_mappings(md, pf);
-}
-
-void __init efi_runtime_update_mappings(void)
-{
-	efi_memory_desc_t *md;
-
-	if (efi_enabled(EFI_OLD_MEMMAP)) {
-		if (__supported_pte_mask & _PAGE_NX)
-			runtime_code_page_mkexec();
-		return;
-	}
-
-	/*
-	 * Use the EFI Memory Attribute Table for mapping permissions if it
-	 * exists, since it is intended to supersede EFI_PROPERTIES_TABLE.
-	 */
-	if (efi_enabled(EFI_MEM_ATTR)) {
-		efi_memattr_apply_permissions(NULL, efi_update_mem_attr);
-		return;
-	}
-
-	/*
-	 * EFI_MEMORY_ATTRIBUTES_TABLE is intended to replace
-	 * EFI_PROPERTIES_TABLE. So, use EFI_PROPERTIES_TABLE to update
-	 * permissions only if EFI_MEMORY_ATTRIBUTES_TABLE is not
-	 * published by the firmware. Even if we find a buggy implementation of
-	 * EFI_MEMORY_ATTRIBUTES_TABLE, don't fall back to
-	 * EFI_PROPERTIES_TABLE, because of the same reason.
-	 */
-
-	if (!efi_enabled(EFI_NX_PE_DATA))
+	if (!efi_enabled(EFI_OLD_MEMMAP))
 		return;
 
-	for_each_efi_memory_desc(md) {
-		unsigned long pf = 0;
-
-		if (!(md->attribute & EFI_MEMORY_RUNTIME))
-			continue;
-
-		if (!(md->attribute & EFI_MEMORY_WB))
-			pf |= _PAGE_PCD;
-
-		if ((md->attribute & EFI_MEMORY_XP) ||
-			(md->type == EFI_RUNTIME_SERVICES_DATA))
-			pf |= _PAGE_NX;
-
-		if (!(md->attribute & EFI_MEMORY_RO) &&
-			(md->type != EFI_RUNTIME_SERVICES_CODE))
-			pf |= _PAGE_RW;
-
-		efi_update_mappings(md, pf);
-	}
+	if (__supported_pte_mask & _PAGE_NX)
+		runtime_code_page_mkexec();
 }
 
 void __init efi_dump_pagetable(void)
 {
 #ifdef CONFIG_EFI_PGT_DUMP
-	ptdump_walk_pgd_level(NULL, efi_pgd);
+	pgd_t *pgd = (pgd_t *)__va(real_mode_header->trampoline_pgd);
+
+	ptdump_walk_pgd_level(NULL, pgd);
 #endif
 }
 

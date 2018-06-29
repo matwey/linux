@@ -325,8 +325,17 @@ inv:
 		goto inv;
 	}
 
-	if (qp->state == IB_QPS_RTR && !(qp->r_flags & RVT_R_COMM_EST))
-		rvt_comm_est(qp);
+	if (qp->state == IB_QPS_RTR && !(qp->r_flags & RVT_R_COMM_EST)) {
+		qp->r_flags |= RVT_R_COMM_EST;
+		if (qp->ibqp.event_handler) {
+			struct ib_event ev;
+
+			ev.device = qp->ibqp.device;
+			ev.element.qp = &qp->ibqp;
+			ev.event = IB_EVENT_COMM_EST;
+			qp->ibqp.event_handler(&ev, qp->ibqp.qp_context);
+		}
+	}
 
 	/* OK, process the packet. */
 	switch (opcode) {
@@ -518,7 +527,7 @@ drop:
 	return;
 
 op_err:
-	rvt_rc_error(qp, IB_WC_LOC_QP_OP_ERR);
+	qib_rc_error(qp, IB_WC_LOC_QP_OP_ERR);
 	return;
 
 }

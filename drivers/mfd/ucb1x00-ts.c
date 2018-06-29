@@ -220,8 +220,6 @@ static int ucb1x00_thread(void *_ts)
 		if (frozen)
 			ignore = true;
 
-		klp_kgraft_mark_task_safe(current);
-
 		ucb1x00_adc_enable(ts->ucb);
 
 		x = ucb1x00_ts_read_xpos(ts);

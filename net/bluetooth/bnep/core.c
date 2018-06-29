@@ -492,7 +492,6 @@ static int bnep_session(void *arg)
 
 	add_wait_queue(sk_sleep(sk), &wait);
 	while (1) {
-		klp_kgraft_mark_task_safe(current);
 		/* Ensure session->terminate is updated */
 		smp_mb__before_atomic();
 

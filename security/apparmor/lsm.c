@@ -32,7 +32,6 @@
 #include "include/context.h"
 #include "include/file.h"
 #include "include/ipc.h"
-#include "include/net.h"
 #include "include/path.h"
 #include "include/policy.h"
 #include "include/procattr.h"
@@ -156,10 +155,10 @@ static int common_perm(int op, struct path *path, u32 mask,
 	struct aa_profile *profile;
 	int error = 0;
 
-	profile = aa_begin_current_profile();
+	profile = __aa_current_profile();
 	if (!unconfined(profile))
 		error = aa_path_perm(op, profile, path, 0, mask, cond);
-	aa_end_current_profile(profile);
+
 	return error;
 }
 
@@ -366,7 +365,6 @@ static int apparmor_inode_getattr(const struct path *path)
 
 static int apparmor_file_open(struct file *file, const struct cred *cred)
 {
-	const struct aa_task_cxt *cxt = cred_cxt(cred);
 	struct aa_file_cxt *fcxt = file->f_security;
 	struct aa_profile *profile;
 	int error = 0;
@@ -384,7 +382,7 @@ static int apparmor_file_open(struct file *file, const struct cred *cred)
 		return 0;
 	}
 
-	profile = aa_get_newest_profile(cxt->profile);
+	profile = aa_cred_profile(cred);
 	if (!unconfined(profile)) {
 		struct inode *inode = file_inode(file);
 		struct path_cond cond = { inode->i_uid, inode->i_mode };
@@ -394,7 +392,6 @@ static int apparmor_file_open(struct file *file, const struct cred *cred)
 		/* todo cache full allowed permissions set and state */
 		fcxt->allow = aa_map_file_to_perms(file);
 	}
-	aa_put_profile(profile);
 
 	return error;
 }
@@ -428,7 +425,7 @@ static int common_file_perm(int op, struct file *file, u32 mask)
 	    !mediated_filesystem(file->f_path.dentry))
 		return 0;
 
-	profile = aa_begin_current_profile();
+	profile = __aa_current_profile();
 
 	/* revalidate access, if task is unconfined, or the cached cred
 	 * doesn't match or if the request is for more permissions than
@@ -441,7 +438,6 @@ static int common_file_perm(int op, struct file *file, u32 mask)
 	    ((fprofile != profile) || (mask & ~fcxt->allow)))
 		error = aa_file_perm(op, profile, file, mask);
 
-	aa_end_current_profile(profile);
 	return error;
 }
 
@@ -600,112 +596,13 @@ fail:
 static int apparmor_task_setrlimit(struct task_struct *task,
 		unsigned int resource, struct rlimit *new_rlim)
 {
-	struct aa_profile *profile = aa_begin_current_profile();
+	struct aa_profile *profile = __aa_current_profile();
 	int error = 0;
 
 	if (!unconfined(profile))
 		error = aa_task_setrlimit(profile, task, resource, new_rlim);
 
-	aa_end_current_profile(profile);
 	return error;
-}
-
-static int apparmor_socket_create(int family, int type, int protocol, int kern)
-{
-	struct aa_profile *profile;
-	int error = 0;
-
-	if (kern)
-		return 0;
-
-	profile = __aa_current_profile();
-	if (!unconfined(profile))
-		error = aa_net_perm(OP_CREATE, profile, family, type, protocol,
-				    NULL);
-	return error;
-}
-
-static int apparmor_socket_bind(struct socket *sock,
-				struct sockaddr *address, int addrlen)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_BIND, sk);
-}
-
-static int apparmor_socket_connect(struct socket *sock,
-				   struct sockaddr *address, int addrlen)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_CONNECT, sk);
-}
-
-static int apparmor_socket_listen(struct socket *sock, int backlog)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_LISTEN, sk);
-}
-
-static int apparmor_socket_accept(struct socket *sock, struct socket *newsock)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_ACCEPT, sk);
-}
-
-static int apparmor_socket_sendmsg(struct socket *sock,
-				   struct msghdr *msg, int size)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_SENDMSG, sk);
-}
-
-static int apparmor_socket_recvmsg(struct socket *sock,
-				   struct msghdr *msg, int size, int flags)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_RECVMSG, sk);
-}
-
-static int apparmor_socket_getsockname(struct socket *sock)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_GETSOCKNAME, sk);
-}
-
-static int apparmor_socket_getpeername(struct socket *sock)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_GETPEERNAME, sk);
-}
-
-static int apparmor_socket_getsockopt(struct socket *sock, int level,
-				      int optname)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_GETSOCKOPT, sk);
-}
-
-static int apparmor_socket_setsockopt(struct socket *sock, int level,
-				      int optname)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_SETSOCKOPT, sk);
-}
-
-static int apparmor_socket_shutdown(struct socket *sock, int how)
-{
-	struct sock *sk = sock->sk;
-
-	return aa_revalidate_sk(OP_SOCK_SHUTDOWN, sk);
 }
 
 static struct security_hook_list apparmor_hooks[] = {
@@ -736,19 +633,6 @@ static struct security_hook_list apparmor_hooks[] = {
 
 	LSM_HOOK_INIT(getprocattr, apparmor_getprocattr),
 	LSM_HOOK_INIT(setprocattr, apparmor_setprocattr),
-
-	LSM_HOOK_INIT(socket_create, apparmor_socket_create),
-	LSM_HOOK_INIT(socket_bind, apparmor_socket_bind),
-	LSM_HOOK_INIT(socket_connect, apparmor_socket_connect),
-	LSM_HOOK_INIT(socket_listen, apparmor_socket_listen),
-	LSM_HOOK_INIT(socket_accept, apparmor_socket_accept),
-	LSM_HOOK_INIT(socket_sendmsg, apparmor_socket_sendmsg),
-	LSM_HOOK_INIT(socket_recvmsg, apparmor_socket_recvmsg),
-	LSM_HOOK_INIT(socket_getsockname, apparmor_socket_getsockname),
-	LSM_HOOK_INIT(socket_getpeername, apparmor_socket_getpeername),
-	LSM_HOOK_INIT(socket_getsockopt, apparmor_socket_getsockopt),
-	LSM_HOOK_INIT(socket_setsockopt, apparmor_socket_setsockopt),
-	LSM_HOOK_INIT(socket_shutdown, apparmor_socket_shutdown),
 
 	LSM_HOOK_INIT(cred_alloc_blank, apparmor_cred_alloc_blank),
 	LSM_HOOK_INIT(cred_free, apparmor_cred_free),
@@ -865,49 +749,51 @@ __setup("apparmor=", apparmor_enabled_setup);
 /* set global flag turning off the ability to load policy */
 static int param_set_aalockpolicy(const char *val, const struct kernel_param *kp)
 {
-	if (!policy_admin_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
+	if (aa_g_lock_policy)
+		return -EACCES;
 	return param_set_bool(val, kp);
 }
 
 static int param_get_aalockpolicy(char *buffer, const struct kernel_param *kp)
 {
-	if (!policy_view_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 	return param_get_bool(buffer, kp);
 }
 
 static int param_set_aabool(const char *val, const struct kernel_param *kp)
 {
-	if (!policy_admin_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 	return param_set_bool(val, kp);
 }
 
 static int param_get_aabool(char *buffer, const struct kernel_param *kp)
 {
-	if (!policy_view_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 	return param_get_bool(buffer, kp);
 }
 
 static int param_set_aauint(const char *val, const struct kernel_param *kp)
 {
-	if (!policy_admin_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 	return param_set_uint(val, kp);
 }
 
 static int param_get_aauint(char *buffer, const struct kernel_param *kp)
 {
-	if (!policy_view_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 	return param_get_uint(buffer, kp);
 }
 
 static int param_get_audit(char *buffer, struct kernel_param *kp)
 {
-	if (!policy_view_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 
 	if (!apparmor_enabled)
@@ -919,7 +805,7 @@ static int param_get_audit(char *buffer, struct kernel_param *kp)
 static int param_set_audit(const char *val, struct kernel_param *kp)
 {
 	int i;
-	if (!policy_admin_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 
 	if (!apparmor_enabled)
@@ -940,7 +826,7 @@ static int param_set_audit(const char *val, struct kernel_param *kp)
 
 static int param_get_mode(char *buffer, struct kernel_param *kp)
 {
-	if (!policy_admin_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 
 	if (!apparmor_enabled)
@@ -952,7 +838,7 @@ static int param_get_mode(char *buffer, struct kernel_param *kp)
 static int param_set_mode(const char *val, struct kernel_param *kp)
 {
 	int i;
-	if (!policy_admin_capable())
+	if (!capable(CAP_MAC_ADMIN))
 		return -EPERM;
 
 	if (!apparmor_enabled)

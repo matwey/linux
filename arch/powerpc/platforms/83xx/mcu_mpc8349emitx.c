@@ -66,7 +66,6 @@ static int shutdown_thread_fn(void *data)
 
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(HZ);
-		klp_kgraft_mark_task_safe(current);
 	}
 
 	return 0;

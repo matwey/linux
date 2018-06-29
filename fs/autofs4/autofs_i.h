@@ -35,7 +35,7 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <asm/current.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 /* #define DEBUG */
 

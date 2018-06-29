@@ -598,7 +598,6 @@ static int btmrvl_service_main_thread(void *data)
 	init_waitqueue_entry(&wait, current);
 
 	for (;;) {
-		klp_kgraft_mark_task_safe(current);
 		add_wait_queue(&thread->wait_q, &wait);
 
 		set_current_state(TASK_INTERRUPTIBLE);

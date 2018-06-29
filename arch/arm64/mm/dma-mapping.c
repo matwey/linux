@@ -19,7 +19,6 @@
 
 #include <linux/gfp.h>
 #include <linux/acpi.h>
-#include <linux/bootmem.h>
 #include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/genalloc.h>
@@ -29,8 +28,6 @@
 #include <linux/swiotlb.h>
 
 #include <asm/cacheflush.h>
-
-static int swiotlb __read_mostly;
 
 static pgprot_t __get_dma_pgprot(struct dma_attrs *attrs, pgprot_t prot,
 				 bool coherent)
@@ -43,7 +40,7 @@ static pgprot_t __get_dma_pgprot(struct dma_attrs *attrs, pgprot_t prot,
 static struct gen_pool *atomic_pool;
 
 #define DEFAULT_DMA_COHERENT_POOL_SIZE  SZ_256K
-static size_t atomic_pool_size __initdata = DEFAULT_DMA_COHERENT_POOL_SIZE;
+static size_t atomic_pool_size = DEFAULT_DMA_COHERENT_POOL_SIZE;
 
 static int __init early_coherent_pool(char *p)
 {
@@ -344,20 +341,6 @@ static int __swiotlb_get_sgtable(struct device *dev, struct sg_table *sgt,
 	return ret;
 }
 
-static int __swiotlb_dma_supported(struct device *hwdev, u64 mask)
-{
-	if (swiotlb)
-		return swiotlb_dma_supported(hwdev, mask);
-	return 1;
-}
-
-static int __swiotlb_dma_mapping_error(struct device *hwdev, dma_addr_t addr)
-{
-	if (swiotlb)
-		return swiotlb_dma_mapping_error(hwdev, addr);
-	return 0;
-}
-
 static struct dma_map_ops swiotlb_dma_ops = {
 	.alloc = __dma_alloc,
 	.free = __dma_free,
@@ -371,8 +354,8 @@ static struct dma_map_ops swiotlb_dma_ops = {
 	.sync_single_for_device = __swiotlb_sync_single_for_device,
 	.sync_sg_for_cpu = __swiotlb_sync_sg_for_cpu,
 	.sync_sg_for_device = __swiotlb_sync_sg_for_device,
-	.dma_supported = __swiotlb_dma_supported,
-	.mapping_error = __swiotlb_dma_mapping_error,
+	.dma_supported = swiotlb_dma_supported,
+	.mapping_error = swiotlb_dma_mapping_error,
 };
 
 static int __init atomic_pool_init(void)
@@ -530,10 +513,6 @@ EXPORT_SYMBOL(dummy_dma_ops);
 
 static int __init arm64_dma_init(void)
 {
-	if (swiotlb_force == SWIOTLB_FORCE ||
-	    max_pfn > (arm64_dma_phys_limit >> PAGE_SHIFT))
-		swiotlb = 1;
-
 	return atomic_pool_init();
 }
 arch_initcall(arm64_dma_init);
@@ -825,30 +804,56 @@ struct iommu_dma_notifier_data {
 static LIST_HEAD(iommu_dma_masters);
 static DEFINE_MUTEX(iommu_dma_notifier_lock);
 
+/*
+ * Temporarily "borrow" a domain feature flag to to tell if we had to resort
+ * to creating our own domain here, in case we need to clean it up again.
+ */
+#define __IOMMU_DOMAIN_FAKE_DEFAULT		(1U << 31)
+
 static bool do_iommu_attach(struct device *dev, const struct iommu_ops *ops,
 			   u64 dma_base, u64 size)
 {
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
 
 	/*
-	 * If the IOMMU driver has the DMA domain support that we require,
-	 * then the IOMMU core will have already configured a group for this
-	 * device, and allocated the default domain for that group.
+	 * Best case: The device is either part of a group which was
+	 * already attached to a domain in a previous call, or it's
+	 * been put in a default DMA domain by the IOMMU core.
 	 */
-	if (!domain)
-		goto out_err;
+	if (!domain) {
+		/*
+		 * Urgh. The IOMMU core isn't going to do default domains
+		 * for non-PCI devices anyway, until it has some means of
+		 * abstracting the entirely implementation-specific
+		 * sideband data/SoC topology/unicorn dust that may or
+		 * may not differentiate upstream masters.
+		 * So until then, HORRIBLE HACKS!
+		 */
+		domain = ops->domain_alloc(IOMMU_DOMAIN_DMA);
+		if (!domain)
+			goto out_no_domain;
 
-	if (domain->type == IOMMU_DOMAIN_DMA) {
-		if (iommu_dma_init_domain(domain, dma_base, size, dev))
-			goto out_err;
+		domain->ops = ops;
+		domain->type = IOMMU_DOMAIN_DMA | __IOMMU_DOMAIN_FAKE_DEFAULT;
 
-		dev->archdata.dma_ops = &iommu_dma_ops;
+		if (iommu_attach_device(domain, dev))
+			goto out_put_domain;
 	}
 
+	if (iommu_dma_init_domain(domain, dma_base, size))
+		goto out_detach;
+
+	dev->archdata.dma_ops = &iommu_dma_ops;
 	return true;
-out_err:
+
+out_detach:
+	iommu_detach_device(domain, dev);
+out_put_domain:
+	if (domain->type & __IOMMU_DOMAIN_FAKE_DEFAULT)
+		iommu_domain_free(domain);
+out_no_domain:
 	pr_warn("Failed to set up IOMMU for device %s; retaining platform DMA ops\n",
-		 dev_name(dev));
+		dev_name(dev));
 	return false;
 }
 
@@ -876,31 +881,39 @@ static int __iommu_attach_notifier(struct notifier_block *nb,
 {
 	struct iommu_dma_notifier_data *master, *tmp;
 
-	if (action != BUS_NOTIFY_BIND_DRIVER)
+	if (action != BUS_NOTIFY_ADD_DEVICE)
 		return 0;
 
 	mutex_lock(&iommu_dma_notifier_lock);
 	list_for_each_entry_safe(master, tmp, &iommu_dma_masters, list) {
-		if (data == master->dev && do_iommu_attach(master->dev,
-				master->ops, master->dma_base, master->size)) {
+		if (do_iommu_attach(master->dev, master->ops,
+				master->dma_base, master->size)) {
 			list_del(&master->list);
 			kfree(master);
-			break;
 		}
 	}
 	mutex_unlock(&iommu_dma_notifier_lock);
 	return 0;
 }
 
-static int __init register_iommu_dma_ops_notifier(struct bus_type *bus)
+static int register_iommu_dma_ops_notifier(struct bus_type *bus)
 {
 	struct notifier_block *nb = kzalloc(sizeof(*nb), GFP_KERNEL);
 	int ret;
 
 	if (!nb)
 		return -ENOMEM;
-
+	/*
+	 * The device must be attached to a domain before the driver probe
+	 * routine gets a chance to start allocating DMA buffers. However,
+	 * the IOMMU driver also needs a chance to configure the iommu_group
+	 * via its add_device callback first, so we need to make the attach
+	 * happen between those two points. Since the IOMMU core uses a bus
+	 * notifier with default priority for add_device, do the same but
+	 * with a lower priority to ensure the appropriate ordering.
+	 */
 	nb->notifier_call = __iommu_attach_notifier;
+	nb->priority = -100;
 
 	ret = bus_register_notifier(bus, nb);
 	if (ret) {
@@ -920,10 +933,10 @@ static int __init __iommu_dma_init(void)
 		ret = register_iommu_dma_ops_notifier(&platform_bus_type);
 	if (!ret)
 		ret = register_iommu_dma_ops_notifier(&amba_bustype);
-#ifdef CONFIG_PCI
+
+	/* handle devices queued before this arch_initcall */
 	if (!ret)
-		ret = register_iommu_dma_ops_notifier(&pci_bus_type);
-#endif
+		__iommu_attach_notifier(NULL, BUS_NOTIFY_ADD_DEVICE, NULL);
 	return ret;
 }
 arch_initcall(__iommu_dma_init);
@@ -954,8 +967,11 @@ void arch_teardown_dma_ops(struct device *dev)
 {
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
 
-	if (WARN_ON(domain))
+	if (domain) {
 		iommu_detach_device(domain, dev);
+		if (domain->type & __IOMMU_DOMAIN_FAKE_DEFAULT)
+			iommu_domain_free(domain);
+	}
 
 	dev->archdata.dma_ops = NULL;
 }
@@ -963,13 +979,13 @@ void arch_teardown_dma_ops(struct device *dev)
 #else
 
 static void __iommu_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
-				  const struct iommu_ops *iommu)
+				  struct iommu_ops *iommu)
 { }
 
 #endif  /* CONFIG_IOMMU_DMA */
 
 void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
-			const struct iommu_ops *iommu, bool coherent)
+			struct iommu_ops *iommu, bool coherent)
 {
 	if (!dev->archdata.dma_ops)
 		dev->archdata.dma_ops = &swiotlb_dma_ops;
@@ -977,4 +993,3 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 	dev->archdata.dma_coherent = coherent;
 	__iommu_setup_dma_ops(dev, dma_base, size, iommu);
 }
-EXPORT_SYMBOL_GPL(arch_setup_dma_ops);

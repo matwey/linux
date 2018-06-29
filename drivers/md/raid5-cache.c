@@ -344,8 +344,6 @@ void r5c_handle_cached_data_endio(struct r5conf *conf,
 	}
 }
 
-void r5l_wake_reclaim(struct r5l_log *log, sector_t space);
-
 /* Check whether we should flush some stripes to free up stripe cache */
 void r5c_check_stripe_cache_usage(struct r5conf *conf)
 {
@@ -1282,8 +1280,8 @@ static void r5l_write_super_and_discard_space(struct r5l_log *log,
 	 * there is a deadlock. We workaround this issue with a trylock.
 	 * FIXME: we could miss discard if we can't take reconfig mutex
 	 */
-	set_mask_bits(&mddev->sb_flags, 0,
-		BIT(MD_SB_CHANGE_DEVS) | BIT(MD_SB_CHANGE_PENDING));
+	set_mask_bits(&mddev->flags, 0,
+		BIT(MD_CHANGE_DEVS) | BIT(MD_CHANGE_PENDING));
 	if (!mddev_trylock(mddev))
 		return;
 	md_update_sb(mddev, 1);
@@ -1628,7 +1626,7 @@ static int r5l_log_write_empty_meta_block(struct r5l_log *log, sector_t pos,
 	mb->checksum = cpu_to_le32(crc32c_le(log->uuid_checksum,
 					     mb, PAGE_SIZE));
 	if (!sync_page_io(log->rdev, pos, PAGE_SIZE, page, REQ_OP_WRITE,
-			  REQ_SYNC | REQ_FUA, false)) {
+			  REQ_FUA, false)) {
 		__free_page(page);
 		return -EIO;
 	}
@@ -2201,7 +2199,7 @@ r5c_recovery_rewrite_data_only_stripes(struct r5l_log *log,
 		mb->checksum = cpu_to_le32(crc32c_le(log->uuid_checksum,
 						     mb, PAGE_SIZE));
 		sync_page_io(log->rdev, ctx->pos, PAGE_SIZE, page,
-			     REQ_OP_WRITE, REQ_SYNC | REQ_FUA, false);
+			     REQ_OP_WRITE, REQ_FUA, false);
 		sh->log_start = ctx->pos;
 		list_add_tail(&sh->r5c, &log->stripe_in_journal_list);
 		atomic_inc(&log->stripe_in_journal_count);
@@ -2300,7 +2298,7 @@ static void r5l_write_super(struct r5l_log *log, sector_t cp)
 	struct mddev *mddev = log->rdev->mddev;
 
 	log->rdev->journal_tail = cp;
-	set_bit(MD_SB_CHANGE_DEVS, &mddev->sb_flags);
+	set_bit(MD_CHANGE_DEVS, &mddev->flags);
 }
 
 static ssize_t r5c_journal_mode_show(struct mddev *mddev, char *page)
@@ -2623,7 +2621,9 @@ void r5c_finish_stripe_write_out(struct r5conf *conf,
 	}
 }
 
-int r5c_cache_data(struct r5l_log *log, struct stripe_head *sh)
+int
+r5c_cache_data(struct r5l_log *log, struct stripe_head *sh,
+	       struct stripe_head_state *s)
 {
 	struct r5conf *conf = sh->raid_conf;
 	int pages = 0;
@@ -2786,10 +2786,6 @@ int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev)
 {
 	struct request_queue *q = bdev_get_queue(rdev->bdev);
 	struct r5l_log *log;
-	char b[BDEVNAME_SIZE];
-
-	pr_debug("md/raid:%s: using device %s as journal\n",
-		 mdname(conf->mddev), bdevname(rdev->bdev, b));
 
 	if (PAGE_SIZE != 4096)
 		return -EINVAL;
@@ -2892,13 +2888,8 @@ io_kc:
 	return -EINVAL;
 }
 
-void r5l_exit_log(struct r5conf *conf)
+void r5l_exit_log(struct r5l_log *log)
 {
-	struct r5l_log *log = conf->log;
-
-	conf->log = NULL;
-	synchronize_rcu();
-
 	flush_work(&log->disable_writeback_work);
 	md_unregister_thread(&log->reclaim_thread);
 	mempool_destroy(log->meta_pool);

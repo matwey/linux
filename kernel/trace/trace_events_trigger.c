@@ -237,23 +237,28 @@ static ssize_t event_trigger_regex_write(struct file *file,
 	if (cnt >= PAGE_SIZE)
 		return -EINVAL;
 
-	buf = memdup_user_nul(ubuf, cnt);
-	if (IS_ERR(buf))
-		return PTR_ERR(buf);
+	buf = (char *)__get_free_page(GFP_TEMPORARY);
+	if (!buf)
+		return -ENOMEM;
 
+	if (copy_from_user(buf, ubuf, cnt)) {
+		free_page((unsigned long)buf);
+		return -EFAULT;
+	}
+	buf[cnt] = '\0';
 	strim(buf);
 
 	mutex_lock(&event_mutex);
 	event_file = event_file_data(file);
 	if (unlikely(!event_file)) {
 		mutex_unlock(&event_mutex);
-		kfree(buf);
+		free_page((unsigned long)buf);
 		return -ENODEV;
 	}
 	ret = trigger_process_regex(event_file, buf);
 	mutex_unlock(&event_mutex);
 
-	kfree(buf);
+	free_page((unsigned long)buf);
 	if (ret < 0)
 		goto out;
 

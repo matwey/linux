@@ -69,7 +69,7 @@
 #include <net/tcp_memcontrol.h>
 #include "slab.h"
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include <trace/events/vmscan.h>
 

@@ -172,16 +172,8 @@ static void ib_device_release(struct device *device)
 {
 	struct ib_device *dev = container_of(device, struct ib_device, dev);
 
-	WARN_ON(dev->reg_state == IB_DEV_REGISTERED);
-	if (dev->reg_state == IB_DEV_UNREGISTERED) {
-		/*
-		 * In IB_DEV_UNINITIALIZED state, cache or port table
-		 * is not even created. Free cache and port table only when
-		 * device reaches UNREGISTERED state.
-		 */
-		ib_cache_release_one(dev);
-		kfree(dev->port_immutable);
-	}
+	ib_cache_release_one(dev);
+	kfree(dev->port_immutable);
 	kfree(dev);
 }
 
@@ -262,8 +254,11 @@ static int add_client_context(struct ib_device *device, struct ib_client *client
 	unsigned long flags;
 
 	context = kmalloc(sizeof *context, GFP_KERNEL);
-	if (!context)
+	if (!context) {
+		printk(KERN_WARNING "Couldn't allocate client context for %s/%s\n",
+		       device->name, client->name);
 		return -ENOMEM;
+	}
 
 	context->client = client;
 	context->data   = NULL;
@@ -342,14 +337,6 @@ int ib_register_device(struct ib_device *device,
 	struct ib_client *client;
 	struct ib_udata uhw = {.outlen = 0, .inlen = 0};
 
-	WARN_ON_ONCE(!device->dev.parent && !device->dma_device);
-	WARN_ON_ONCE(device->dev.parent && device->dma_device
-		     && device->dev.parent != device->dma_device);
-	if (!device->dev.parent)
-		device->dev.parent = device->dma_device;
-	if (!device->dma_device)
-		device->dma_device = device->dev.parent;
-
 	mutex_lock(&device_mutex);
 
 	if (strchr(device->name, '%')) {
@@ -372,22 +359,24 @@ int ib_register_device(struct ib_device *device,
 
 	ret = ib_cache_setup_one(device);
 	if (ret) {
-		pr_warn("Couldn't set up InfiniBand P_Key/GID cache\n");
-		goto port_cleanup;
+		printk(KERN_WARNING "Couldn't set up InfiniBand P_Key/GID cache\n");
+		goto out;
 	}
 
 	memset(&device->attrs, 0, sizeof(device->attrs));
 	ret = device->query_device(device, &device->attrs, &uhw);
 	if (ret) {
-		pr_warn("Couldn't query the device attributes\n");
-		goto cache_cleanup;
+		printk(KERN_WARNING "Couldn't query the device attributes\n");
+		ib_cache_cleanup_one(device);
+		goto out;
 	}
 
 	ret = ib_device_register_sysfs(device, port_callback);
 	if (ret) {
-		pr_warn("Couldn't register device %s with driver model\n",
-			device->name);
-		goto cache_cleanup;
+		printk(KERN_WARNING "Couldn't register device %s with driver model\n",
+		       device->name);
+		ib_cache_cleanup_one(device);
+		goto out;
 	}
 
 	device->reg_state = IB_DEV_REGISTERED;
@@ -399,14 +388,6 @@ int ib_register_device(struct ib_device *device,
 	down_write(&lists_rwsem);
 	list_add_tail(&device->core_list, &device_list);
 	up_write(&lists_rwsem);
-	mutex_unlock(&device_mutex);
-	return 0;
-
-cache_cleanup:
-	ib_cache_cleanup_one(device);
-	ib_cache_release_one(device);
-port_cleanup:
-	kfree(device->port_immutable);
 out:
 	mutex_unlock(&device_mutex);
 	return ret;
@@ -681,7 +662,7 @@ int ib_query_port(struct ib_device *device,
 	union ib_gid gid;
 	int err;
 
-	if (!rdma_is_port_valid(device, port_num))
+	if (port_num < rdma_start_port(device) || port_num > rdma_end_port(device))
 		return -EINVAL;
 
 	memset(port_attr, 0, sizeof(*port_attr));
@@ -847,7 +828,7 @@ int ib_modify_port(struct ib_device *device,
 	if (!device->modify_port)
 		return -ENOSYS;
 
-	if (!rdma_is_port_valid(device, port_num))
+	if (port_num < rdma_start_port(device) || port_num > rdma_end_port(device))
 		return -EINVAL;
 
 	return device->modify_port(device, port_num, port_modify_mask,
@@ -986,29 +967,6 @@ struct net_device *ib_get_net_dev_by_params(struct ib_device *dev,
 }
 EXPORT_SYMBOL(ib_get_net_dev_by_params);
 
-static struct ibnl_client_cbs ibnl_ls_cb_table[] = {
-	[RDMA_NL_LS_OP_RESOLVE] = {
-		.dump = ib_nl_handle_resolve_resp,
-		.module = THIS_MODULE },
-	[RDMA_NL_LS_OP_SET_TIMEOUT] = {
-		.dump = ib_nl_handle_set_timeout,
-		.module = THIS_MODULE },
-	[RDMA_NL_LS_OP_IP_RESOLVE] = {
-		.dump = ib_nl_handle_ip_res_resp,
-		.module = THIS_MODULE },
-};
-
-static int ib_add_ibnl_clients(void)
-{
-	return ibnl_add_client(RDMA_NL_LS, ARRAY_SIZE(ibnl_ls_cb_table),
-			       ibnl_ls_cb_table);
-}
-
-static void ib_remove_ibnl_clients(void)
-{
-	ibnl_remove_client(RDMA_NL_LS);
-}
-
 static int __init ib_core_init(void)
 {
 	int ret;
@@ -1018,7 +976,8 @@ static int __init ib_core_init(void)
 		return -ENOMEM;
 
 	ib_comp_wq = alloc_workqueue("ib-comp-wq",
-			WQ_HIGHPRI | WQ_MEM_RECLAIM | WQ_SYSFS, 0);
+			WQ_UNBOUND | WQ_HIGHPRI | WQ_MEM_RECLAIM,
+			WQ_UNBOUND_MAX_ACTIVE);
 	if (!ib_comp_wq) {
 		ret = -ENOMEM;
 		goto err;
@@ -1036,42 +995,10 @@ static int __init ib_core_init(void)
 		goto err_sysfs;
 	}
 
-	ret = addr_init();
-	if (ret) {
-		pr_warn("Could't init IB address resolution\n");
-		goto err_ibnl;
-	}
-
-	ret = ib_mad_init();
-	if (ret) {
-		pr_warn("Couldn't init IB MAD\n");
-		goto err_addr;
-	}
-
-	ret = ib_sa_init();
-	if (ret) {
-		pr_warn("Couldn't init SA\n");
-		goto err_mad;
-	}
-
-	ret = ib_add_ibnl_clients();
-	if (ret) {
-		pr_warn("Couldn't register ibnl clients\n");
-		goto err_sa;
-	}
-
 	ib_cache_setup();
 
 	return 0;
 
-err_sa:
-	ib_sa_cleanup();
-err_mad:
-	ib_mad_cleanup();
-err_addr:
-	addr_cleanup();
-err_ibnl:
-	ibnl_cleanup();
 err_sysfs:
 	class_unregister(&ib_class);
 err_comp:
@@ -1084,10 +1011,6 @@ err:
 static void __exit ib_core_cleanup(void)
 {
 	ib_cache_cleanup();
-	ib_remove_ibnl_clients();
-	ib_sa_cleanup();
-	ib_mad_cleanup();
-	addr_cleanup();
 	ibnl_cleanup();
 	class_unregister(&ib_class);
 	destroy_workqueue(ib_comp_wq);

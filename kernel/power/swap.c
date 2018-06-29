@@ -579,9 +579,8 @@ static int crc32_threadfn(void *data)
 	unsigned i;
 
 	while (1) {
-		wait_event(d->go, ({ klp_kgraft_mark_task_safe(current);
-				  atomic_read(&d->ready) ||
-		                  kthread_should_stop(); }));
+		wait_event(d->go, atomic_read(&d->ready) ||
+		                  kthread_should_stop());
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			atomic_set(&d->stop, 1);
@@ -623,9 +622,8 @@ static int lzo_compress_threadfn(void *data)
 	struct cmp_data *d = data;
 
 	while (1) {
-		wait_event(d->go, ({ klp_kgraft_mark_task_safe(current);
-				  atomic_read(&d->ready) ||
-		                  kthread_should_stop(); }));
+		wait_event(d->go, atomic_read(&d->ready) ||
+		                  kthread_should_stop());
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			d->ret = -1;
@@ -1085,8 +1083,6 @@ static int load_image(struct swap_map_handle *handle,
 		snapshot_write_finalize(snapshot);
 		if (!snapshot_image_loaded(snapshot))
 			ret = -ENODATA;
-		if (!ret)
-			ret = snapshot_image_verify();
 	}
 	swsusp_show_speed(start, stop, nr_to_read, "Read");
 	return ret;
@@ -1116,9 +1112,8 @@ static int lzo_decompress_threadfn(void *data)
 	struct dec_data *d = data;
 
 	while (1) {
-		wait_event(d->go, ({ klp_kgraft_mark_task_safe(current);
-				  atomic_read(&d->ready) ||
-		                  kthread_should_stop(); }));
+		wait_event(d->go, atomic_read(&d->ready) ||
+		                  kthread_should_stop());
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			d->ret = -1;
@@ -1443,8 +1438,6 @@ out_finish:
 				}
 			}
 		}
-		if (!ret)
-			ret = snapshot_image_verify();
 	}
 	swsusp_show_speed(start, stop, nr_to_read, "Read");
 out_clean:

@@ -15,7 +15,6 @@
 #include <linux/thread_info.h>
 #include <linux/syscalls.h>
 #include <linux/bitmap.h>
-#include <linux/security.h>
 #include <asm/syscalls.h>
 
 /*
@@ -25,11 +24,11 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 {
 	struct thread_struct *t = &current->thread;
 	struct tss_struct *tss;
-	unsigned int i, max_long, bytes, bytes_updated, cpu;
+	unsigned int i, max_long, bytes, bytes_updated;
 
 	if ((from + num <= from) || (from + num > IO_BITMAP_BITS))
 		return -EINVAL;
-	if (turn_on && (!capable(CAP_SYS_RAWIO) || (get_securelevel() > 0)))
+	if (turn_on && !capable(CAP_SYS_RAWIO))
 		return -EPERM;
 
 	/*
@@ -55,8 +54,7 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	 * because the ->io_bitmap_max value must match the bitmap
 	 * contents:
 	 */
-	cpu = get_cpu();
-	tss = &per_cpu(cpu_tss_tramp, cpu);
+	tss = &per_cpu(cpu_tss, get_cpu());
 
 	if (turn_on)
 		bitmap_clear(t->io_bitmap_ptr, from, num);
@@ -78,8 +76,6 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	t->io_bitmap_max = bytes;
 
 	/* Update the TSS: */
-	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
-	tss = &per_cpu(cpu_tss, cpu);
 	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
 
 	put_cpu();
@@ -112,7 +108,7 @@ SYSCALL_DEFINE1(iopl, unsigned int, level)
 		return -EINVAL;
 	/* Trying to gain more privileges? */
 	if (level > old) {
-		if (!capable(CAP_SYS_RAWIO) || (get_securelevel() > 0))
+		if (!capable(CAP_SYS_RAWIO))
 			return -EPERM;
 	}
 	regs->flags = (regs->flags & ~X86_EFLAGS_IOPL) |

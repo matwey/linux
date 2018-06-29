@@ -375,7 +375,6 @@ static void raid10_end_read_request(struct bio *bio)
 	slot = r10_bio->read_slot;
 	dev = r10_bio->devs[slot].devnum;
 	rdev = r10_bio->devs[slot].rdev;
-	r10_bio->devs[slot].error = bio->bi_error;
 	/*
 	 * this branch is our 'one mirror IO has finished' event handler:
 	 */
@@ -466,7 +465,6 @@ static void raid10_end_write_request(struct bio *bio)
 		repl = 0;
 		rdev = conf->mirrors[dev].rdev;
 	}
-	r10_bio->devs[slot].error = bio->bi_error;
 	/*
 	 * this branch is our 'one mirror IO has finished' event handler:
 	 */
@@ -493,8 +491,6 @@ static void raid10_end_write_request(struct bio *bio)
 					 */
 					set_bit(R10BIO_WriteError, &r10_bio->state);
 				else {
-					if (bio->bi_error == -ETIMEDOUT)
-						set_bit(Timeout, &rdev->flags);
 					r10_bio->devs[slot].bio = NULL;
 					to_put = bio;
 					dec_rdev = 1;
@@ -894,10 +890,7 @@ static void flush_pending_writes(struct r10conf *conf)
 			bio->bi_next = NULL;
 			bio->bi_bdev = rdev->bdev;
 			if (test_bit(Faulty, &rdev->flags)) {
-				if (test_bit(Timeout, &rdev->flags))
-					bio->bi_error = -ETIMEDOUT;
-				else
-					bio->bi_error = -EIO;
+				bio->bi_error = -EIO;
 				bio_endio(bio);
 			} else if (unlikely((bio_op(bio) ==  REQ_OP_DISCARD) &&
 					    !blk_queue_discard(bdev_get_queue(bio->bi_bdev))))
@@ -1082,10 +1075,7 @@ static void raid10_unplug(struct blk_plug_cb *cb, bool from_schedule)
 		bio->bi_next = NULL;
 		bio->bi_bdev = rdev->bdev;
 		if (test_bit(Faulty, &rdev->flags)) {
-			if (test_bit(Timeout, &rdev->flags))
-				bio->bi_error = -ETIMEDOUT;
-			else
-				bio->bi_error = -EIO;
+			bio->bi_error = -EIO;
 			bio_endio(bio);
 		} else if (unlikely((bio_op(bio) ==  REQ_OP_DISCARD) &&
 				    !blk_queue_discard(bdev_get_queue(bio->bi_bdev))))
@@ -1098,122 +1088,23 @@ static void raid10_unplug(struct blk_plug_cb *cb, bool from_schedule)
 	kfree(plug);
 }
 
-static void raid10_read_request(struct mddev *mddev, struct bio *bio,
-				struct r10bio *r10_bio)
+static void __make_request(struct mddev *mddev, struct bio *bio)
 {
 	struct r10conf *conf = mddev->private;
+	struct r10bio *r10_bio;
 	struct bio *read_bio;
-	const int op = bio_op(bio);
-	const unsigned long do_sync = (bio->bi_opf & REQ_SYNC);
-	int sectors_handled;
-	int max_sectors;
-	sector_t sectors;
-	struct md_rdev *rdev;
-	int slot;
-
-	/*
-	 * Register the new request and wait if the reconstruction
-	 * thread has put up a bar for new requests.
-	 * Continue immediately if no resync is active currently.
-	 */
-	wait_barrier(conf);
-
-	sectors = bio_sectors(bio);
-	while (test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery) &&
-	    bio->bi_iter.bi_sector < conf->reshape_progress &&
-	    bio->bi_iter.bi_sector + sectors > conf->reshape_progress) {
-		/*
-		 * IO spans the reshape position.  Need to wait for reshape to
-		 * pass
-		 */
-		raid10_log(conf->mddev, "wait reshape");
-		allow_barrier(conf);
-		wait_event(conf->wait_barrier,
-			   conf->reshape_progress <= bio->bi_iter.bi_sector ||
-			   conf->reshape_progress >= bio->bi_iter.bi_sector +
-			   sectors);
-		wait_barrier(conf);
-	}
-
-read_again:
-	rdev = read_balance(conf, r10_bio, &max_sectors);
-	if (!rdev) {
-		raid_end_bio_io(r10_bio);
-		return;
-	}
-	slot = r10_bio->read_slot;
-
-	read_bio = bio_clone_mddev(bio, GFP_NOIO, mddev);
-	bio_trim(read_bio, r10_bio->sector - bio->bi_iter.bi_sector,
-		 max_sectors);
-
-	r10_bio->devs[slot].bio = read_bio;
-	r10_bio->devs[slot].rdev = rdev;
-
-	read_bio->bi_iter.bi_sector = r10_bio->devs[slot].addr +
-		choose_data_offset(r10_bio, rdev);
-	read_bio->bi_bdev = rdev->bdev;
-	read_bio->bi_end_io = raid10_end_read_request;
-	bio_set_op_attrs(read_bio, op, do_sync);
-	if (test_bit(FailFast, &rdev->flags) &&
-	    test_bit(R10BIO_FailFast, &r10_bio->state))
-	        read_bio->bi_opf |= MD_FAILFAST;
-	read_bio->bi_private = r10_bio;
-
-	if (mddev->gendisk)
-	        trace_block_bio_remap(bdev_get_queue(read_bio->bi_bdev),
-	                              read_bio, disk_devt(mddev->gendisk),
-	                              r10_bio->sector);
-	if (max_sectors < r10_bio->sectors) {
-		/*
-		 * Could not read all from this device, so we will need another
-		 * r10_bio.
-		 */
-		sectors_handled = (r10_bio->sector + max_sectors
-				   - bio->bi_iter.bi_sector);
-		r10_bio->sectors = max_sectors;
-		spin_lock_irq(&conf->device_lock);
-		if (bio->bi_phys_segments == 0)
-			bio->bi_phys_segments = 2;
-		else
-			bio->bi_phys_segments++;
-		spin_unlock_irq(&conf->device_lock);
-		/*
-		 * Cannot call generic_make_request directly as that will be
-		 * queued in __generic_make_request and subsequent
-		 * mempool_alloc might block waiting for it.  so hand bio over
-		 * to raid10d.
-		 */
-		reschedule_retry(r10_bio);
-
-		r10_bio = mempool_alloc(conf->r10bio_pool, GFP_NOIO);
-
-		r10_bio->master_bio = bio;
-		r10_bio->sectors = bio_sectors(bio) - sectors_handled;
-		r10_bio->state = 0;
-		r10_bio->mddev = mddev;
-		r10_bio->sector = bio->bi_iter.bi_sector + sectors_handled;
-		goto read_again;
-	} else
-		generic_make_request(read_bio);
-	return;
-}
-
-static void raid10_write_request(struct mddev *mddev, struct bio *bio,
-				 struct r10bio *r10_bio)
-{
-	struct r10conf *conf = mddev->private;
 	int i;
 	const int op = bio_op(bio);
+	const int rw = bio_data_dir(bio);
 	const unsigned long do_sync = (bio->bi_opf & REQ_SYNC);
 	const unsigned long do_fua = (bio->bi_opf & REQ_FUA);
 	unsigned long flags;
 	struct md_rdev *blocked_rdev;
 	struct blk_plug_cb *cb;
 	struct raid10_plug_cb *plug = NULL;
-	sector_t sectors;
 	int sectors_handled;
 	int max_sectors;
+	int sectors;
 
 	md_write_start(mddev, bio);
 
@@ -1228,9 +1119,8 @@ static void raid10_write_request(struct mddev *mddev, struct bio *bio,
 	while (test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery) &&
 	    bio->bi_iter.bi_sector < conf->reshape_progress &&
 	    bio->bi_iter.bi_sector + sectors > conf->reshape_progress) {
-		/*
-		 * IO spans the reshape position.  Need to wait for reshape to
-		 * pass
+		/* IO spans the reshape position.  Need to wait for
+		 * reshape to pass
 		 */
 		raid10_log(conf->mddev, "wait reshape");
 		allow_barrier(conf);
@@ -1240,8 +1130,8 @@ static void raid10_write_request(struct mddev *mddev, struct bio *bio,
 			   sectors);
 		wait_barrier(conf);
 	}
-
 	if (test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery) &&
+	    bio_data_dir(bio) == WRITE &&
 	    (mddev->reshape_backwards
 	     ? (bio->bi_iter.bi_sector < conf->reshape_safe &&
 		bio->bi_iter.bi_sector + sectors > conf->reshape_progress)
@@ -1249,16 +1139,108 @@ static void raid10_write_request(struct mddev *mddev, struct bio *bio,
 		bio->bi_iter.bi_sector < conf->reshape_progress))) {
 		/* Need to update reshape_position in metadata */
 		mddev->reshape_position = conf->reshape_progress;
-		set_mask_bits(&mddev->sb_flags, 0,
-			      BIT(MD_SB_CHANGE_DEVS) | BIT(MD_SB_CHANGE_PENDING));
+		set_mask_bits(&mddev->flags, 0,
+			      BIT(MD_CHANGE_DEVS) | BIT(MD_CHANGE_PENDING));
 		md_wakeup_thread(mddev->thread);
 		raid10_log(conf->mddev, "wait reshape metadata");
 		wait_event(mddev->sb_wait,
-			   !test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags));
+			   !test_bit(MD_CHANGE_PENDING, &mddev->flags));
 
 		conf->reshape_safe = mddev->reshape_position;
 	}
 
+	r10_bio = mempool_alloc(conf->r10bio_pool, GFP_NOIO);
+
+	r10_bio->master_bio = bio;
+	r10_bio->sectors = sectors;
+
+	r10_bio->mddev = mddev;
+	r10_bio->sector = bio->bi_iter.bi_sector;
+	r10_bio->state = 0;
+
+	/* We might need to issue multiple reads to different
+	 * devices if there are bad blocks around, so we keep
+	 * track of the number of reads in bio->bi_phys_segments.
+	 * If this is 0, there is only one r10_bio and no locking
+	 * will be needed when the request completes.  If it is
+	 * non-zero, then it is the number of not-completed requests.
+	 */
+	bio->bi_phys_segments = 0;
+	bio_clear_flag(bio, BIO_SEG_VALID);
+
+	if (rw == READ) {
+		/*
+		 * read balancing logic:
+		 */
+		struct md_rdev *rdev;
+		int slot;
+
+read_again:
+		rdev = read_balance(conf, r10_bio, &max_sectors);
+		if (!rdev) {
+			raid_end_bio_io(r10_bio);
+			return;
+		}
+		slot = r10_bio->read_slot;
+
+		read_bio = bio_clone_mddev(bio, GFP_NOIO, mddev);
+		bio_trim(read_bio, r10_bio->sector - bio->bi_iter.bi_sector,
+			 max_sectors);
+
+		r10_bio->devs[slot].bio = read_bio;
+		r10_bio->devs[slot].rdev = rdev;
+
+		read_bio->bi_iter.bi_sector = r10_bio->devs[slot].addr +
+			choose_data_offset(r10_bio, rdev);
+		read_bio->bi_bdev = rdev->bdev;
+		read_bio->bi_end_io = raid10_end_read_request;
+		bio_set_op_attrs(read_bio, op, do_sync);
+		if (test_bit(FailFast, &rdev->flags) &&
+		    test_bit(R10BIO_FailFast, &r10_bio->state))
+			read_bio->bi_opf |= MD_FAILFAST;
+		read_bio->bi_private = r10_bio;
+
+		if (mddev->gendisk)
+			trace_block_bio_remap(bdev_get_queue(read_bio->bi_bdev),
+					      read_bio, disk_devt(mddev->gendisk),
+					      r10_bio->sector);
+		if (max_sectors < r10_bio->sectors) {
+			/* Could not read all from this device, so we will
+			 * need another r10_bio.
+			 */
+			sectors_handled = (r10_bio->sector + max_sectors
+					   - bio->bi_iter.bi_sector);
+			r10_bio->sectors = max_sectors;
+			spin_lock_irq(&conf->device_lock);
+			if (bio->bi_phys_segments == 0)
+				bio->bi_phys_segments = 2;
+			else
+				bio->bi_phys_segments++;
+			spin_unlock_irq(&conf->device_lock);
+			/* Cannot call generic_make_request directly
+			 * as that will be queued in __generic_make_request
+			 * and subsequent mempool_alloc might block
+			 * waiting for it.  so hand bio over to raid10d.
+			 */
+			reschedule_retry(r10_bio);
+
+			r10_bio = mempool_alloc(conf->r10bio_pool, GFP_NOIO);
+
+			r10_bio->master_bio = bio;
+			r10_bio->sectors = bio_sectors(bio) - sectors_handled;
+			r10_bio->state = 0;
+			r10_bio->mddev = mddev;
+			r10_bio->sector = bio->bi_iter.bi_sector +
+				sectors_handled;
+			goto read_again;
+		} else
+			generic_make_request(read_bio);
+		return;
+	}
+
+	/*
+	 * WRITE:
+	 */
 	if (conf->pending_count >= max_queued_requests) {
 		md_wakeup_thread(mddev->thread);
 		raid10_log(mddev, "wait queued");
@@ -1319,7 +1301,8 @@ retry_write:
 			int bad_sectors;
 			int is_bad;
 
-			is_bad = is_badblock(rdev, dev_sector, max_sectors,
+			is_bad = is_badblock(rdev, dev_sector,
+					     max_sectors,
 					     &first_bad, &bad_sectors);
 			if (is_bad < 0) {
 				/* Mustn't write here until the bad block
@@ -1423,7 +1406,8 @@ retry_write:
 			r10_bio->devs[i].bio = mbio;
 
 			mbio->bi_iter.bi_sector	= (r10_bio->devs[i].addr+
-					   choose_data_offset(r10_bio, rdev));
+					   choose_data_offset(r10_bio,
+							      rdev));
 			mbio->bi_bdev = rdev->bdev;
 			mbio->bi_end_io	= raid10_end_write_request;
 			bio_set_op_attrs(mbio, op, do_sync | do_fua);
@@ -1474,7 +1458,8 @@ retry_write:
 			r10_bio->devs[i].repl_bio = mbio;
 
 			mbio->bi_iter.bi_sector	= (r10_bio->devs[i].addr +
-					   choose_data_offset(r10_bio, rdev));
+					   choose_data_offset(
+						   r10_bio, rdev));
 			mbio->bi_bdev = rdev->bdev;
 			mbio->bi_end_io	= raid10_end_write_request;
 			bio_set_op_attrs(mbio, op, do_sync | do_fua);
@@ -1530,36 +1515,6 @@ retry_write:
 		goto retry_write;
 	}
 	one_write_done(r10_bio);
-}
-
-static void __make_request(struct mddev *mddev, struct bio *bio)
-{
-	struct r10conf *conf = mddev->private;
-	struct r10bio *r10_bio;
-
-	r10_bio = mempool_alloc(conf->r10bio_pool, GFP_NOIO);
-
-	r10_bio->master_bio = bio;
-	r10_bio->sectors = bio_sectors(bio);
-
-	r10_bio->mddev = mddev;
-	r10_bio->sector = bio->bi_iter.bi_sector;
-	r10_bio->state = 0;
-
-	/*
-	 * We might need to issue multiple reads to different devices if there
-	 * are bad blocks around, so we keep track of the number of reads in
-	 * bio->bi_phys_segments.  If this is 0, there is only one r10_bio and
-	 * no locking will be needed when the request completes.  If it is
-	 * non-zero, then it is the number of not-completed requests.
-	 */
-	bio->bi_phys_segments = 0;
-	bio_clear_flag(bio, BIO_SEG_VALID);
-
-	if (bio_data_dir(bio) == READ)
-		raid10_read_request(mddev, bio, r10_bio);
-	else
-		raid10_write_request(mddev, bio, r10_bio);
 }
 
 static void raid10_make_request(struct mddev *mddev, struct bio *bio)
@@ -1729,8 +1684,8 @@ static void raid10_error(struct mddev *mddev, struct md_rdev *rdev)
 	set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 	set_bit(Blocked, &rdev->flags);
 	set_bit(Faulty, &rdev->flags);
-	set_mask_bits(&mddev->sb_flags, 0,
-		      BIT(MD_SB_CHANGE_DEVS) | BIT(MD_SB_CHANGE_PENDING));
+	set_mask_bits(&mddev->flags, 0,
+		      BIT(MD_CHANGE_DEVS) | BIT(MD_CHANGE_PENDING));
 	spin_unlock_irqrestore(&conf->device_lock, flags);
 	pr_crit("md/raid10:%s: Disk failure on %s, disabling device.\n"
 		"md/raid10:%s: Operation continuing on %d devices.\n",
@@ -2134,9 +2089,6 @@ static void sync_request_write(struct mddev *mddev, struct r10bio *r10_bio)
 		} else if (test_bit(FailFast, &rdev->flags)) {
 			/* Just give up on this device */
 			md_error(rdev->mddev, rdev);
-			if (test_bit(Faulty, &rdev->flags) &&
-			    r10_bio->devs[i].error == -ETIMEDOUT)
-				set_bit(Timeout, &rdev->flags);
 			continue;
 		}
 		/* Ok, we need to write this bio, either to correct an
@@ -2397,7 +2349,6 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 	struct md_rdev*rdev;
 	int max_read_errors = atomic_read(&mddev->max_corr_read_errors);
 	int d = r10_bio->devs[r10_bio->read_slot].devnum;
-	int read_error = r10_bio->devs[r10_bio->read_slot].error;
 
 	/* still own a reference to this rdev, so it cannot
 	 * have been cleared recently.
@@ -2421,9 +2372,6 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 		pr_notice("md/raid10:%s: %s: Failing raid device\n",
 			  mdname(mddev), b);
 		md_error(mddev, rdev);
-		if (test_bit(Faulty, &rdev->flags) &&
-		    read_error == -ETIMEDOUT)
-			set_bit(Timeout, &rdev->flags);
 		r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
 		return;
 	}
@@ -2673,12 +2621,9 @@ static void handle_read_error(struct mddev *mddev, struct r10bio *r10_bio)
 		freeze_array(conf, 1);
 		fix_read_error(conf, mddev, r10_bio);
 		unfreeze_array(conf);
-	} else {
+	} else
 		md_error(mddev, rdev);
-		if (test_bit(Faulty, &rdev->flags) &&
-		    r10_bio->devs[slot].error == -ETIMEDOUT)
-			set_bit(Timeout, &rdev->flags);
-	}
+
 	rdev_dec_pending(rdev, mddev);
 
 read_more:
@@ -2774,12 +2719,8 @@ static void handle_write_completed(struct r10conf *conf, struct r10bio *r10_bio)
 				if (!rdev_set_badblocks(
 					    rdev,
 					    r10_bio->devs[m].addr,
-					    r10_bio->sectors, 0)) {
+					    r10_bio->sectors, 0))
 					md_error(conf->mddev, rdev);
-					if (test_bit(Faulty, &rdev->flags) &&
-					    r10_bio->devs[m].error == -ETIMEDOUT)
-						set_bit(Timeout, &rdev->flags);
-				}
 			}
 			rdev = conf->mirrors[dev].replacement;
 			if (r10_bio->devs[m].repl_bio == NULL ||
@@ -2795,12 +2736,8 @@ static void handle_write_completed(struct r10conf *conf, struct r10bio *r10_bio)
 				if (!rdev_set_badblocks(
 					    rdev,
 					    r10_bio->devs[m].addr,
-					    r10_bio->sectors, 0)) {
+					    r10_bio->sectors, 0))
 					md_error(conf->mddev, rdev);
-					if (test_bit(Faulty, &rdev->flags) &&
-					    r10_bio->devs[m].error == -ETIMEDOUT)
-						set_bit(Timeout, &rdev->flags);
-				}
 			}
 		}
 		put_buf(r10_bio);
@@ -2867,10 +2804,10 @@ static void raid10d(struct md_thread *thread)
 	md_check_recovery(mddev);
 
 	if (!list_empty_careful(&conf->bio_end_io_list) &&
-	    !test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags)) {
+	    !test_bit(MD_CHANGE_PENDING, &mddev->flags)) {
 		LIST_HEAD(tmp);
 		spin_lock_irqsave(&conf->device_lock, flags);
-		if (!test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags)) {
+		if (!test_bit(MD_CHANGE_PENDING, &mddev->flags)) {
 			while (!list_empty(&conf->bio_end_io_list)) {
 				list_move(conf->bio_end_io_list.prev, &tmp);
 				conf->nr_queued--;
@@ -2928,7 +2865,7 @@ static void raid10d(struct md_thread *thread)
 		}
 
 		cond_resched();
-		if (mddev->sb_flags & ~(1<<MD_SB_CHANGE_PENDING))
+		if (mddev->flags & ~(1<<MD_CHANGE_PENDING))
 			md_check_recovery(mddev);
 	}
 	blk_finish_plug(&plug);
@@ -4313,7 +4250,7 @@ static int raid10_start_reshape(struct mddev *mddev)
 	spin_unlock_irq(&conf->device_lock);
 	mddev->raid_disks = conf->geo.raid_disks;
 	mddev->reshape_position = conf->reshape_progress;
-	set_bit(MD_SB_CHANGE_DEVS, &mddev->sb_flags);
+	set_bit(MD_CHANGE_DEVS, &mddev->flags);
 
 	clear_bit(MD_RECOVERY_SYNC, &mddev->recovery);
 	clear_bit(MD_RECOVERY_CHECK, &mddev->recovery);
@@ -4508,9 +4445,9 @@ static sector_t reshape_request(struct mddev *mddev, sector_t sector_nr,
 		else
 			mddev->curr_resync_completed = conf->reshape_progress;
 		conf->reshape_checkpoint = jiffies;
-		set_bit(MD_SB_CHANGE_DEVS, &mddev->sb_flags);
+		set_bit(MD_CHANGE_DEVS, &mddev->flags);
 		md_wakeup_thread(mddev->thread);
-		wait_event(mddev->sb_wait, mddev->sb_flags == 0 ||
+		wait_event(mddev->sb_wait, mddev->flags == 0 ||
 			   test_bit(MD_RECOVERY_INTR, &mddev->recovery));
 		if (test_bit(MD_RECOVERY_INTR, &mddev->recovery)) {
 			allow_barrier(conf);
@@ -4807,8 +4744,6 @@ static void end_reshape_write(struct bio *bio)
 	if (bio->bi_error) {
 		/* FIXME should record badblock */
 		md_error(mddev, rdev);
-		if (test_bit(Faulty, &rdev->flags) && bio->bi_error == -ETIMEDOUT)
-			set_bit(Timeout, &rdev->flags);
 	}
 
 	rdev_dec_pending(rdev, mddev);

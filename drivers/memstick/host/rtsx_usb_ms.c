@@ -685,8 +685,6 @@ static int rtsx_usb_detect_ms_card(void *__host)
 	int err;
 
 	for (;;) {
-		klp_kgraft_mark_task_safe(current);
-
 		pm_runtime_get_sync(ms_dev(host));
 		mutex_lock(&ucr->dev_mutex);
 

@@ -499,10 +499,7 @@ static void sysmmu_tlb_invalidate_flpdcache(struct sysmmu_drvdata *data,
 
 	spin_lock_irqsave(&data->lock, flags);
 	if (is_sysmmu_active(data))
-		if (sysmmu_block(data)) {
-			__sysmmu_tlb_invalidate_entry(data, iova, 1);
-			sysmmu_unblock(data);
-		}
+		__sysmmu_tlb_invalidate_flpdcache(data, iova);
 	spin_unlock_irqrestore(&data->lock, flags);
 
 	if (!IS_ERR(data->clk_master))

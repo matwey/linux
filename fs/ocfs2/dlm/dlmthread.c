@@ -756,10 +756,9 @@ in_progress:
 			continue;
 		}
 
-		wait_event_interruptible_timeout(dlm->dlm_thread_wq, ({
-						 klp_kgraft_mark_task_safe(current);
+		wait_event_interruptible_timeout(dlm->dlm_thread_wq,
 						 !dlm_dirty_list_empty(dlm) ||
-						 kthread_should_stop(); }),
+						 kthread_should_stop(),
 						 timeout);
 	}
 

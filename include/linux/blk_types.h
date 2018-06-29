@@ -180,7 +180,6 @@ enum req_flag_bits {
 	__REQ_PREFLUSH,		/* request for cache flush */
 	__REQ_RAHEAD,		/* read ahead, can fail anytime */
 	__REQ_BACKGROUND,	/* background IO */
-	__REQ_NOWAIT,           /* Don't wait if request will block */
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -197,7 +196,6 @@ enum req_flag_bits {
 #define REQ_PREFLUSH		(1ULL << __REQ_PREFLUSH)
 #define REQ_RAHEAD		(1ULL << __REQ_RAHEAD)
 #define REQ_BACKGROUND		(1ULL << __REQ_BACKGROUND)
-#define REQ_NOWAIT		(1ULL << __REQ_NOWAIT)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
@@ -220,15 +218,6 @@ static inline void bio_set_op_attrs(struct bio *bio, unsigned op,
 static inline bool op_is_write(unsigned int op)
 {
 	return (op & 1);
-}
-
-/*
- * Check if the bio or request is one that needs special treatment in the
- * flush state machine.
- */
-static inline bool op_is_flush(unsigned int op)
-{
-	return op & (REQ_FUA | REQ_PREFLUSH);
 }
 
 /*

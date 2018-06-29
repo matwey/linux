@@ -18,8 +18,6 @@
 
 #include "efistub.h"
 
-bool __nokaslr;
-
 static int efi_secureboot_enabled(efi_system_table_t *sys_table_arg)
 {
 	static efi_guid_t const var_guid = EFI_GLOBAL_VARIABLE_GUID;
@@ -147,25 +145,6 @@ void efi_char16_printk(efi_system_table_t *sys_table_arg,
 	out->output_string(out, str);
 }
 
-static struct screen_info *setup_graphics(efi_system_table_t *sys_table_arg)
-{
-	efi_guid_t gop_proto = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
-	efi_status_t status;
-	unsigned long size;
-	void **gop_handle = NULL;
-	struct screen_info *si = NULL;
-
-	size = 0;
-	status = efi_call_early(locate_handle, EFI_LOCATE_BY_PROTOCOL,
-				&gop_proto, NULL, &size, gop_handle);
-	if (status == EFI_BUFFER_TOO_SMALL) {
-		si = alloc_screen_info(sys_table_arg);
-		if (!si)
-			return NULL;
-		efi_setup_gop(sys_table_arg, si, &gop_proto, size);
-	}
-	return si;
-}
 
 /*
  * This function handles the architcture specific differences between arm and
@@ -204,17 +183,12 @@ unsigned long efi_entry(void *handle, efi_system_table_t *sys_table,
 	efi_guid_t loaded_image_proto = LOADED_IMAGE_PROTOCOL_GUID;
 	unsigned long reserve_addr = 0;
 	unsigned long reserve_size = 0;
-	struct screen_info *si;
 
 	/* Check if we were booted by the EFI firmware */
 	if (sys_table->hdr.signature != EFI_SYSTEM_TABLE_SIGNATURE)
 		goto fail;
 
 	pr_efi(sys_table, "Booting Linux Kernel...\n");
-
-	status = check_platform_features(sys_table);
-	if (status != EFI_SUCCESS)
-		goto fail;
 
 	/*
 	 * Get a handle to the loaded image protocol.  This is used to get
@@ -233,8 +207,14 @@ unsigned long efi_entry(void *handle, efi_system_table_t *sys_table,
 		pr_efi_err(sys_table, "Failed to find DRAM base\n");
 		goto fail;
 	}
-
-	si = setup_graphics(sys_table);
+	status = handle_kernel_image(sys_table, image_addr, &image_size,
+				     &reserve_addr,
+				     &reserve_size,
+				     dram_base, image);
+	if (status != EFI_SUCCESS) {
+		pr_efi_err(sys_table, "Failed to relocate kernel\n");
+		goto fail;
+	}
 
 	/*
 	 * Get the command line from EFI, using the LOADED_IMAGE
@@ -244,28 +224,7 @@ unsigned long efi_entry(void *handle, efi_system_table_t *sys_table,
 	cmdline_ptr = efi_convert_cmdline(sys_table, image, &cmdline_size);
 	if (!cmdline_ptr) {
 		pr_efi_err(sys_table, "getting command line via LOADED_IMAGE_PROTOCOL\n");
-		goto fail;
-	}
-
-	/* check whether 'nokaslr' was passed on the command line */
-	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
-		static const u8 default_cmdline[] = CONFIG_CMDLINE;
-		const u8 *str, *cmdline = cmdline_ptr;
-
-		if (IS_ENABLED(CONFIG_CMDLINE_FORCE))
-			cmdline = default_cmdline;
-		str = strstr(cmdline, "nokaslr");
-		if (str == cmdline || (str > cmdline && *(str - 1) == ' '))
-			__nokaslr = true;
-	}
-
-	status = handle_kernel_image(sys_table, image_addr, &image_size,
-				     &reserve_addr,
-				     &reserve_size,
-				     dram_base, image);
-	if (status != EFI_SUCCESS) {
-		pr_efi_err(sys_table, "Failed to relocate kernel\n");
-		goto fail_free_cmdline;
+		goto fail_free_image;
 	}
 
 	status = efi_parse_options(cmdline_ptr);
@@ -285,7 +244,7 @@ unsigned long efi_entry(void *handle, efi_system_table_t *sys_table,
 
 		if (status != EFI_SUCCESS) {
 			pr_efi_err(sys_table, "Failed to load device tree!\n");
-			goto fail_free_image;
+			goto fail_free_cmdline;
 		}
 	}
 
@@ -327,12 +286,12 @@ unsigned long efi_entry(void *handle, efi_system_table_t *sys_table,
 	efi_free(sys_table, initrd_size, initrd_addr);
 	efi_free(sys_table, fdt_size, fdt_addr);
 
+fail_free_cmdline:
+	efi_free(sys_table, cmdline_size, (unsigned long)cmdline_ptr);
+
 fail_free_image:
 	efi_free(sys_table, image_size, *image_addr);
 	efi_free(sys_table, reserve_size, reserve_addr);
-fail_free_cmdline:
-	free_screen_info(sys_table, si);
-	efi_free(sys_table, cmdline_size, (unsigned long)cmdline_ptr);
 fail:
 	return EFI_ERROR;
 }
@@ -344,10 +303,8 @@ fail:
  * The value chosen is the largest non-zero power of 2 suitable for this purpose
  * both on 32-bit and 64-bit ARM CPUs, to maximize the likelihood that it can
  * be mapped efficiently.
- * Since 32-bit ARM could potentially execute with a 1G/3G user/kernel split,
- * map everything below 1 GB.
  */
-#define EFI_RT_VIRTUAL_BASE	SZ_512M
+#define EFI_RT_VIRTUAL_BASE	0x40000000
 
 static int cmp_mem_desc(const void *l, const void *r)
 {

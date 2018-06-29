@@ -237,12 +237,11 @@ static int playback_thread(void *data)
 		int ret;
 
 		wait_event_interruptible(
-			channel->playback_waitq, ({
-			klp_kgraft_mark_task_safe(current);
+			channel->playback_waitq,
 			kthread_should_stop() ||
 			(channel->is_stream_running &&
 			 (mbo = most_get_mbo(channel->iface, channel->id,
-					     &audio_aim))); }));
+					     &audio_aim))));
 		if (!mbo)
 			continue;
 

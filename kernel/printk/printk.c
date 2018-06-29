@@ -33,7 +33,7 @@
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/syscalls.h>
-#include <linux/crash_core.h>
+#include <linux/kexec.h>
 #include <linux/kdb.h>
 #include <linux/ratelimit.h>
 #include <linux/kmsg_dump.h>
@@ -49,7 +49,7 @@
 #include <linux/kthread.h>
 #include <linux/sched/rt.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/sections.h>
 
 #define CREATE_TRACE_POINTS
@@ -985,7 +985,7 @@ const struct file_operations kmsg_fops = {
 	.release = devkmsg_release,
 };
 
-#ifdef CONFIG_CRASH_CORE
+#ifdef CONFIG_KEXEC_CORE
 /*
  * This appends the listed symbols to /proc/vmcore
  *
@@ -994,7 +994,7 @@ const struct file_operations kmsg_fops = {
  * symbols are specifically used so that utilities can access and extract the
  * dmesg log from a vmcore file after a crash.
  */
-void log_buf_vmcoreinfo_setup(void)
+void log_buf_kexec_setup(void)
 {
 	VMCOREINFO_SYMBOL(log_buf);
 	VMCOREINFO_SYMBOL(log_buf_len);
@@ -2980,7 +2980,6 @@ static int printk_kthread_func(void *data)
 			schedule();
 
 		__set_current_state(TASK_RUNNING);
-		klp_kgraft_mark_task_safe(current);
 		/*
 		 * Avoid an infinite loop when console_unlock() cannot
 		 * access consoles, e.g. because console_suspended is

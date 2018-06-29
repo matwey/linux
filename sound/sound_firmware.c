@@ -4,7 +4,7 @@
 #include <linux/file.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include "oss/sound_firmware.h"
 
 static int do_mod_firmware_load(const char *fn, char **fp)

@@ -814,7 +814,7 @@ static int recv_pma_get_classportinfo(struct ib_pma_mad *pmp)
 	 * Expected response time is 4.096 usec. * 2^18 == 1.073741824
 	 * sec.
 	 */
-	ib_set_cpi_resp_time(p, 18);
+	p->resp_time_value = 18;
 
 	return reply((struct ib_smp *) pmp);
 }

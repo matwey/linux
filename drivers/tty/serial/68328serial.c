@@ -40,7 +40,7 @@
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/delay.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 /* (es) */
 /* note: perhaps we can murge these files, so that you can just

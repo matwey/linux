@@ -308,18 +308,9 @@ static int usb_stor_control_thread(void * __us)
 	struct Scsi_Host *host = us_to_host(us);
 
 	for (;;) {
-		long to;
-
 		usb_stor_dbg(us, "*** thread sleeping\n");
-		to = wait_for_completion_interruptible_timeout(&us->cmnd_ready,
-				HZ * 3);
-		if (to < 0)
+		if (wait_for_completion_interruptible(&us->cmnd_ready))
 			break;
-
-		if (!to) {
-			klp_kgraft_mark_task_safe(current);
-			continue;
-		}
 
 		usb_stor_dbg(us, "*** thread awakened\n");
 

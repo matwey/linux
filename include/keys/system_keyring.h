@@ -22,11 +22,6 @@ static inline struct key *get_system_trusted_keyring(void)
 {
 	return system_trusted_keyring;
 }
-
-#ifdef CONFIG_SYSTEM_BLACKLIST_KEYRING
-extern struct key *system_blacklist_keyring;
-#endif
-
 #else
 static inline struct key *get_system_trusted_keyring(void)
 {

@@ -23,7 +23,7 @@
 #include <linux/vmalloc.h>
 #include <linux/security.h>
 #include <linux/uio.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include "internal.h"
 
 #define KEY_MAX_DESC_SIZE 4096
@@ -747,7 +747,7 @@ long keyctl_read_key(key_serial_t keyid, char __user *buffer, size_t buflen)
 	if (ret == 0)
 		goto can_read_key;
 	if (ret != -EACCES)
-		goto error2;
+		goto error;
 
 	/* we can't; see if it's searchable from this process's keyrings
 	 * - we automatically take account of the fact that it may be
@@ -1379,9 +1379,11 @@ long keyctl_assume_authority(key_serial_t id)
 	}
 
 	ret = keyctl_change_reqkey_auth(authkey);
-	if (ret == 0)
-		ret = authkey->serial;
+	if (ret < 0)
+		goto error;
 	key_put(authkey);
+
+	ret = authkey->serial;
 error:
 	return ret;
 }

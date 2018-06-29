@@ -37,7 +37,7 @@
 #include "hns_roce_common.h"
 #include "hns_roce_device.h"
 #include "hns_roce_hem.h"
-#include <rdma/hns-abi.h>
+#include "hns_roce_user.h"
 
 #define SQP_NUM				(2 * HNS_ROCE_MAX_PORTS)
 

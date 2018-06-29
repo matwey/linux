@@ -199,8 +199,8 @@ Type: vm ioctl
 Parameters: vcpu id (apic id on x86)
 Returns: vcpu fd on success, -1 on error
 
-This API adds a vcpu to a virtual machine. No more than max_vcpus may be added.
-The vcpu id is an integer in the range [0, max_vcpu_id).
+This API adds a vcpu to a virtual machine.  The vcpu id is a small integer
+in the range [0, max_vcpus).
 
 The recommended max_vcpus value can be retrieved using the KVM_CAP_NR_VCPUS of
 the KVM_CHECK_EXTENSION ioctl() at run-time.
@@ -211,12 +211,6 @@ If the KVM_CAP_NR_VCPUS does not exist, you should assume that max_vcpus is 4
 cpus max.
 If the KVM_CAP_MAX_VCPUS does not exist, you should assume that max_vcpus is
 same as the value returned from KVM_CAP_NR_VCPUS.
-
-The maximum possible value for max_vcpu_id can be retrieved using the
-KVM_CAP_MAX_VCPU_ID of the KVM_CHECK_EXTENSION ioctl() at run-time.
-
-If the KVM_CAP_MAX_VCPU_ID does not exist, you should assume that max_vcpu_id
-is the same as the value returned from KVM_CAP_MAX_VCPUS.
 
 On powerpc using book3s_hv mode, the vcpus are mapped onto virtual
 threads in one or more virtual CPU cores.  (This is because the
@@ -1433,15 +1427,12 @@ KVM_ASSIGN_DEV_IRQ. Partial deassignment of host or guest IRQ is allowed.
 4.52 KVM_SET_GSI_ROUTING
 
 Capability: KVM_CAP_IRQ_ROUTING
-Architectures: x86 s390 arm arm64
+Architectures: x86 s390
 Type: vm ioctl
 Parameters: struct kvm_irq_routing (in)
 Returns: 0 on success, -1 on error
 
 Sets the GSI routing table entries, overwriting any previously set entries.
-
-On arm/arm64, GSI routing has the following limitation:
-- GSI routing does not apply to KVM_IRQ_LINE but only to KVM_IRQFD.
 
 struct kvm_irq_routing {
 	__u32 nr;
@@ -1460,7 +1451,6 @@ struct kvm_irq_routing_entry {
 		struct kvm_irq_routing_irqchip irqchip;
 		struct kvm_irq_routing_msi msi;
 		struct kvm_irq_routing_s390_adapter adapter;
-		struct kvm_irq_routing_hv_sint hv_sint;
 		__u32 pad[8];
 	} u;
 };
@@ -1469,13 +1459,8 @@ struct kvm_irq_routing_entry {
 #define KVM_IRQ_ROUTING_IRQCHIP 1
 #define KVM_IRQ_ROUTING_MSI 2
 #define KVM_IRQ_ROUTING_S390_ADAPTER 3
-#define KVM_IRQ_ROUTING_HV_SINT 4
 
-flags:
-- KVM_MSI_VALID_DEVID: used along with KVM_IRQ_ROUTING_MSI
-  routing entry type, specifies that the devid field contains
-  a valid value.
-- zero otherwise
+No flags are specified so far, the corresponding field must be set to zero.
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
@@ -1486,24 +1471,8 @@ struct kvm_irq_routing_msi {
 	__u32 address_lo;
 	__u32 address_hi;
 	__u32 data;
-	union {
-		__u32 pad;
-		__u32 devid;
-	};
+	__u32 pad;
 };
-
-devid: If KVM_MSI_VALID_DEVID is set, contains a unique device identifier
-       for the device that wrote the MSI message.
-       For PCI, this is usually a BFD identifier in the lower 16 bits.
-
-The per-VM KVM_CAP_MSI_DEVID capability advertises the requirement to
-provide the device ID. If this capability is not set, userland cannot
-rely on the kernel to allow the KVM_MSI_VALID_DEVID flag being set.
-
-On x86, address_hi is ignored unless the KVM_X2APIC_API_USE_32BIT_IDS
-feature of KVM_CAP_X2APIC_API capability is enabled.  If it is enabled,
-address_hi bits 31-8 provide bits 31-8 of the destination id.  Bits 7-0 of
-address_hi must be zero.
 
 struct kvm_irq_routing_s390_adapter {
 	__u64 ind_addr;
@@ -1513,10 +1482,6 @@ struct kvm_irq_routing_s390_adapter {
 	__u32 adapter_id;
 };
 
-struct kvm_irq_routing_hv_sint {
-	__u32 vcpu;
-	__u32 sint;
-};
 
 4.53 KVM_ASSIGN_SET_MSIX_NR (deprecated)
 
@@ -1606,17 +1571,6 @@ struct kvm_lapic_state {
 Reads the Local APIC registers and copies them into the input argument.  The
 data format and layout are the same as documented in the architecture manual.
 
-If KVM_X2APIC_API_USE_32BIT_IDS feature of KVM_CAP_X2APIC_API is
-enabled, then the format of APIC_ID register depends on the APIC mode
-(reported by MSR_IA32_APICBASE) of its VCPU.  x2APIC stores APIC ID in
-the APIC_ID register (bytes 32-35).  xAPIC only allows an 8-bit APIC ID
-which is stored in bits 31-24 of the APIC register, or equivalently in
-byte 35 of struct kvm_lapic_state's regs field.  KVM_GET_LAPIC must then
-be called after MSR_IA32_APICBASE has been set with KVM_SET_MSR.
-
-If KVM_X2APIC_API_USE_32BIT_IDS feature is disabled, struct kvm_lapic_state
-always uses xAPIC format.
-
 
 4.58 KVM_SET_LAPIC
 
@@ -1633,10 +1587,6 @@ struct kvm_lapic_state {
 
 Copies the input argument into the Local APIC registers.  The data format
 and layout are the same as documented in the architecture manual.
-
-The format of the APIC ID register (bytes 32-35 of struct kvm_lapic_state's
-regs field) depends on the state of the KVM_CAP_X2APIC_API capability.
-See the note in KVM_GET_LAPIC.
 
 
 4.59 KVM_IOEVENTFD
@@ -2195,7 +2145,7 @@ after pausing the vcpu, but before it is resumed.
 4.71 KVM_SIGNAL_MSI
 
 Capability: KVM_CAP_SIGNAL_MSI
-Architectures: x86 arm arm64
+Architectures: x86
 Type: vm ioctl
 Parameters: struct kvm_msi (in)
 Returns: >0 on delivery, 0 if guest blocked the MSI, and -1 on error
@@ -2208,22 +2158,10 @@ struct kvm_msi {
 	__u32 address_hi;
 	__u32 data;
 	__u32 flags;
-	__u32 devid;
-	__u8  pad[12];
+	__u8  pad[16];
 };
 
-flags: KVM_MSI_VALID_DEVID: devid contains a valid value
-devid: If KVM_MSI_VALID_DEVID is set, contains a unique device identifier
-       for the device that wrote the MSI message.
-       For PCI, this is usually a BFD identifier in the lower 16 bits.
-
-The per-VM KVM_CAP_MSI_DEVID capability advertises the need to provide
-the device ID. If this capability is not set, userland cannot rely on
-the kernel to allow the KVM_MSI_VALID_DEVID flag being set.
-
-On x86, address_hi is ignored unless the KVM_CAP_X2APIC_API capability is
-enabled.  If it is enabled, address_hi bits 31-8 provide bits 31-8 of the
-destination id.  Bits 7-0 of address_hi must be zero.
+No flags are defined so far. The corresponding field must be 0.
 
 
 4.71 KVM_CREATE_PIT2
@@ -2396,13 +2334,9 @@ Note that closing the resamplefd is not sufficient to disable the
 irqfd.  The KVM_IRQFD_FLAG_RESAMPLE is only necessary on assignment
 and need not be specified with KVM_IRQFD_FLAG_DEASSIGN.
 
-On arm/arm64, gsi routing being supported, the following can happen:
-- in case no routing entry is associated to this gsi, injection fails
-- in case the gsi is associated to an irqchip routing entry,
-  irqchip.pin + 32 corresponds to the injected SPI ID.
-- in case the gsi is associated to an MSI routing entry, the MSI
-  message and device ID are translated into an LPI (support restricted
-  to GICv3 ITS in-kernel emulation).
+On ARM/ARM64, the gsi field in the kvm_irqfd struct specifies the Shared
+Peripheral Interrupt (SPI) index, such that the GIC interrupt ID is
+given by gsi + 32.
 
 4.76 KVM_PPC_ALLOCATE_HTAB
 
@@ -2568,9 +2502,8 @@ struct kvm_create_device {
 
 4.80 KVM_SET_DEVICE_ATTR/KVM_GET_DEVICE_ATTR
 
-Capability: KVM_CAP_DEVICE_CTRL, KVM_CAP_VM_ATTRIBUTES for vm device,
-  KVM_CAP_VCPU_ATTRIBUTES for vcpu device
-Type: device ioctl, vm ioctl, vcpu ioctl
+Capability: KVM_CAP_DEVICE_CTRL, KVM_CAP_VM_ATTRIBUTES for vm device
+Type: device ioctl, vm ioctl
 Parameters: struct kvm_device_attr
 Returns: 0 on success, -1 on error
 Errors:
@@ -2595,9 +2528,8 @@ struct kvm_device_attr {
 
 4.81 KVM_HAS_DEVICE_ATTR
 
-Capability: KVM_CAP_DEVICE_CTRL, KVM_CAP_VM_ATTRIBUTES for vm device,
-  KVM_CAP_VCPU_ATTRIBUTES for vcpu device
-Type: device ioctl, vm ioctl, vcpu ioctl
+Capability: KVM_CAP_DEVICE_CTRL, KVM_CAP_VM_ATTRIBUTES for vm device
+Type: device ioctl, vm ioctl
 Parameters: struct kvm_device_attr
 Returns: 0 on success, -1 on error
 Errors:
@@ -2640,8 +2572,6 @@ Possible features:
 	  Depends on KVM_CAP_ARM_EL1_32BIT (arm64 only).
 	- KVM_ARM_VCPU_PSCI_0_2: Emulate PSCI v0.2 for the CPU.
 	  Depends on KVM_CAP_ARM_PSCI_0_2.
-	- KVM_ARM_VCPU_PMU_V3: Emulate PMUv3 for the CPU.
-	  Depends on KVM_CAP_ARM_PMU_V3.
 
 
 4.83 KVM_ARM_PREFERRED_TARGET
@@ -3741,29 +3671,6 @@ Fails if VCPU has already been created, or if the irqchip is already in the
 kernel (i.e. KVM_CREATE_IRQCHIP has already been called).
 
 
-7.7 KVM_CAP_X2APIC_API
-
-Architectures: x86
-Parameters: args[0] - features that should be enabled
-Returns: 0 on success, -EINVAL when args[0] contains invalid features
-
-Valid feature flags in args[0] are
-
-#define KVM_X2APIC_API_USE_32BIT_IDS            (1ULL << 0)
-#define KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK  (1ULL << 1)
-
-Enabling KVM_X2APIC_API_USE_32BIT_IDS changes the behavior of
-KVM_SET_GSI_ROUTING, KVM_SIGNAL_MSI, KVM_SET_LAPIC, and KVM_GET_LAPIC,
-allowing the use of 32-bit APIC IDs.  See KVM_CAP_X2APIC_API in their
-respective sections.
-
-KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK must be enabled for x2APIC to work
-in logical mode or with more than 255 VCPUs.  Otherwise, KVM treats 0xff
-as a broadcast even in x2APIC mode in order to support physical x2APIC
-without interrupt remapping.  This is undesirable in logical mode,
-where 0xff represents CPUs 0-7 in cluster 0.
-
-
 8. Other capabilities.
 ----------------------
 
@@ -3779,66 +3686,3 @@ available, means that that the kernel has an implementation of the
 H_RANDOM hypercall backed by a hardware random-number generator.
 If present, the kernel H_RANDOM handler can be enabled for guest use
 with the KVM_CAP_PPC_ENABLE_HCALL capability.
-
-8.8 KVM_CAP_X86_GUEST_MWAIT
-
-Architectures: x86
-
-This capability indicates that guest using memory monotoring instructions
-(MWAIT/MWAITX) to stop the virtual CPU will not cause a VM exit.  As such time
-spent while virtual CPU is halted in this way will then be accounted for as
-guest running time on the host (as opposed to e.g. HLT).
-
-8.2 KVM_CAP_HYPERV_SYNIC
-
-Architectures: x86
-This capability, if KVM_CHECK_EXTENSION indicates that it is
-available, means that that the kernel has an implementation of the
-Hyper-V Synthetic interrupt controller(SynIC). Hyper-V SynIC is
-used to support Windows Hyper-V based guest paravirt drivers(VMBus).
-
-In order to use SynIC, it has to be activated by setting this
-capability via KVM_ENABLE_CAP ioctl on the vcpu fd. Note that this
-will disable the use of APIC hardware virtualization even if supported
-by the CPU, as it's incompatible with SynIC auto-EOI behavior.
-
-8.5 KVM_CAP_ARM_USER_IRQ
-
-Architectures: arm, arm64
-This capability, if KVM_CHECK_EXTENSION indicates that it is available, means
-that if userspace creates a VM without an in-kernel interrupt controller, it
-will be notified of changes to the output level of in-kernel emulated devices,
-which can generate virtual interrupts, presented to the VM.
-For such VMs, on every return to userspace, the kernel
-updates the vcpu's run->s.regs.device_irq_level field to represent the actual
-output level of the device.
-
-Whenever kvm detects a change in the device output level, kvm guarantees at
-least one return to userspace before running the VM.  This exit could either
-be a KVM_EXIT_INTR or any other exit event, like KVM_EXIT_MMIO. This way,
-userspace can always sample the device output level and re-compute the state of
-the userspace interrupt controller.  Userspace should always check the state
-of run->s.regs.device_irq_level on every kvm exit.
-The value in run->s.regs.device_irq_level can represent both level and edge
-triggered interrupt signals, depending on the device.  Edge triggered interrupt
-signals will exit to userspace with the bit in run->s.regs.device_irq_level
-set exactly once per edge signal.
-
-The field run->s.regs.device_irq_level is available independent of
-run->kvm_valid_regs or run->kvm_dirty_regs bits.
-
-If KVM_CAP_ARM_USER_IRQ is supported, the KVM_CHECK_EXTENSION ioctl returns a
-number larger than 0 indicating the version of this capability is implemented
-and thereby which bits in in run->s.regs.device_irq_level can signal values.
-
-Currently the following bits are defined for the device_irq_level bitmap:
-
-  KVM_CAP_ARM_USER_IRQ >= 1:
-
-    KVM_ARM_DEV_EL1_VTIMER -  EL1 virtual timer
-    KVM_ARM_DEV_EL1_PTIMER -  EL1 physical timer
-    KVM_ARM_DEV_PMU        -  ARM PMU overflow interrupt signal
-
-Future versions of kvm may implement additional events. These will get
-indicated by returning a higher number from KVM_CHECK_EXTENSION and will be
-listed above.

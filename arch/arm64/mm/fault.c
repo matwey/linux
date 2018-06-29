@@ -133,11 +133,6 @@ int ptep_set_access_flags(struct vm_area_struct *vma,
 }
 #endif
 
-static bool is_el1_instruction_abort(unsigned int esr)
-{
-	return ESR_ELx_EC(esr) == ESR_ELx_EC_IABT_CUR;
-}
-
 /*
  * The kernel tried to access some page that wasn't present.
  */
@@ -146,9 +141,8 @@ static void __do_kernel_fault(struct mm_struct *mm, unsigned long addr,
 {
 	/*
 	 * Are we prepared to handle this kernel fault?
-	 * We are almost certainly not prepared to handle instruction faults.
 	 */
-	if (!is_el1_instruction_abort(esr) && fixup_exception(regs))
+	if (fixup_exception(regs))
 		return;
 
 	/*
@@ -210,6 +204,8 @@ static void do_bad_area(unsigned long addr, unsigned int esr, struct pt_regs *re
 #define VM_FAULT_BADMAP		0x010000
 #define VM_FAULT_BADACCESS	0x020000
 
+#define ESR_LNX_EXEC		(1 << 24)
+
 static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 			   unsigned int mm_flags, unsigned long vm_flags,
 			   struct task_struct *tsk)
@@ -248,24 +244,12 @@ out:
 	return fault;
 }
 
-static inline bool is_permission_fault(unsigned int esr, struct pt_regs *regs)
+static inline int permission_fault(unsigned int esr)
 {
-	unsigned int ec       = ESR_ELx_EC(esr);
+	unsigned int ec       = (esr & ESR_ELx_EC_MASK) >> ESR_ELx_EC_SHIFT;
 	unsigned int fsc_type = esr & ESR_ELx_FSC_TYPE;
 
-	if (ec != ESR_ELx_EC_DABT_CUR && ec != ESR_ELx_EC_IABT_CUR)
-		return false;
-
-	if (system_uses_ttbr0_pan())
-		return fsc_type == ESR_ELx_FSC_FAULT &&
-			(regs->pstate & PSR_PAN_BIT);
-	else
-		return fsc_type == ESR_ELx_FSC_PERM;
-}
-
-static bool is_el0_instruction_abort(unsigned int esr)
-{
-	return ESR_ELx_EC(esr) == ESR_ELx_EC_IABT_LOW;
+	return (ec == ESR_ELx_EC_DABT_CUR && fsc_type == ESR_ELx_FSC_PERM);
 }
 
 static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
@@ -294,22 +278,19 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	if (user_mode(regs))
 		mm_flags |= FAULT_FLAG_USER;
 
-	if (is_el0_instruction_abort(esr)) {
+	if (esr & ESR_LNX_EXEC) {
 		vm_flags = VM_EXEC;
 	} else if ((esr & ESR_ELx_WNR) && !(esr & ESR_ELx_CM)) {
 		vm_flags = VM_WRITE;
 		mm_flags |= FAULT_FLAG_WRITE;
 	}
 
-	if (addr < TASK_SIZE && is_permission_fault(esr, regs)) {
+	if (permission_fault(esr) && (addr < USER_DS)) {
 		if (get_thread_info(regs->sp)->addr_limit == KERNEL_DS)
-			die("Accessing user space memory with fs=KERNEL_DS", regs, esr);
-
-		if (is_el1_instruction_abort(esr))
-			die("Attempting to execute userspace memory", regs, esr);
+			panic("Accessing user space memory with fs=KERNEL_DS");
 
 		if (!search_exception_tables(regs->pc))
-			die("Accessing user space memory outside uaccess.h routines", regs, esr);
+			panic("Accessing user space memory outside uaccess.h routines");
 	}
 
 	/*
@@ -562,28 +543,6 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 	arm64_notify_die("", regs, &info, esr);
 }
 
-asmlinkage void __exception do_el0_irq_bp_hardening(void)
-{
-	/* PC has already been checked in entry.S */
-	arm64_apply_bp_hardening();
-}
-
-asmlinkage void __exception do_el0_ia_bp_hardening(unsigned long addr,
-						   unsigned int esr,
-						   struct pt_regs *regs)
-{
-	/*
-	 * We've taken an instruction abort from userspace and not yet
-	 * re-enabled IRQs. If the address is a kernel address, apply
-	 * BP hardening prior to enabling IRQs and pre-emption.
-	 */
-	if (addr > TASK_SIZE)
-		arm64_apply_bp_hardening();
-
-	local_irq_enable();
-	do_mem_abort(addr, esr, regs);
-}
-
 /*
  * Handle stack alignment exceptions.
  */
@@ -593,12 +552,6 @@ asmlinkage void __exception do_sp_pc_abort(unsigned long addr,
 {
 	struct siginfo info;
 	struct task_struct *tsk = current;
-
-	if (user_mode(regs)) {
-		if (instruction_pointer(regs) > TASK_SIZE)
-			arm64_apply_bp_hardening();
-		local_irq_enable();
-	}
 
 	if (show_unhandled_signals && unhandled_signal(tsk, SIGBUS))
 		pr_info_ratelimited("%s[%d]: %s exception: pc=%p sp=%p\n",
@@ -650,9 +603,6 @@ asmlinkage int __exception do_debug_exception(unsigned long addr,
 {
 	const struct fault_info *inf = debug_fault_info + DBG_ESR_EVT(esr);
 	struct siginfo info;
-
-	if (user_mode(regs) && instruction_pointer(regs) > TASK_SIZE)
-		arm64_apply_bp_hardening();
 
 	if (!inf->fn(addr, esr, regs))
 		return 1;

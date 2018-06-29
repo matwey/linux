@@ -142,17 +142,6 @@ struct cpuinfo_x86 {
 	u32			microcode;
 };
 
-struct cpuid_regs {
-	u32 eax, ebx, ecx, edx;
-};
-
-enum cpuid_regs_idx {
-	CPUID_EAX = 0,
-	CPUID_EBX,
-	CPUID_ECX,
-	CPUID_EDX,
-};
-
 #define X86_VENDOR_INTEL	0
 #define X86_VENDOR_CYRIX	1
 #define X86_VENDOR_AMD		2
@@ -194,9 +183,6 @@ extern void identify_secondary_cpu(struct cpuinfo_x86 *);
 extern void print_cpu_info(struct cpuinfo_x86 *);
 void print_cpu_msr(struct cpuinfo_x86 *);
 extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
-extern u32 get_scattered_cpuid_leaf(unsigned int level,
-				    unsigned int sub_leaf,
-				    enum cpuid_regs_idx reg);
 extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
 extern void init_amd_cacheinfo(struct cpuinfo_x86 *c);
 
@@ -319,23 +305,18 @@ struct tss_struct {
 	/*
 	 * Space for the temporary SYSENTER stack:
 	 */
-	/* IRQ stacks have to maintain 16-bytes alignment! */
-#ifndef __GENKSYMS__
-	u8			pad;
-#endif
 	unsigned long		SYSENTER_stack[64];
 
-} __attribute__((__aligned__(PAGE_SIZE)));
+} ____cacheline_aligned;
+
 #ifndef __GENKSYMS__
-DECLARE_PER_CPU_PAGE_ALIGNED(struct tss_struct, cpu_tss);
+DECLARE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss);
 #else
 DECLARE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss);
 #endif
 
 #ifdef CONFIG_X86_32
 DECLARE_PER_CPU(unsigned long, cpu_current_top_of_stack);
-#else
-DECLARE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss_tramp);
 #endif
 
 /*

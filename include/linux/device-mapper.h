@@ -22,13 +22,10 @@ struct bio_vec;
 /*
  * Type of table, mapped_device's mempool and request_queue
  */
-enum dm_queue_mode {
-	DM_TYPE_NONE		 = 0,
-	DM_TYPE_BIO_BASED	 = 1,
-	DM_TYPE_REQUEST_BASED	 = 2,
-	DM_TYPE_MQ_REQUEST_BASED = 3,
-	DM_TYPE_DAX_BIO_BASED	 = 4,
-};
+#define DM_TYPE_NONE			0
+#define DM_TYPE_BIO_BASED		1
+#define DM_TYPE_REQUEST_BASED		2
+#define DM_TYPE_MQ_REQUEST_BASED	3
 
 typedef enum { STATUSTYPE_INFO, STATUSTYPE_TABLE } status_type_t;
 
@@ -127,14 +124,6 @@ typedef void (*dm_io_hints_fn) (struct dm_target *ti,
  */
 typedef int (*dm_busy_fn) (struct dm_target *ti);
 
-/*
- * Returns:
- *  < 0 : error
- * >= 0 : the number of bytes accessible at the address
- */
-typedef long (*dm_direct_access_fn) (struct dm_target *ti, sector_t sector,
-				     void **kaddr, pfn_t *pfn, long size);
-
 void dm_error(const char *message);
 
 struct dm_dev {
@@ -181,7 +170,6 @@ struct target_type {
 	dm_busy_fn busy;
 	dm_iterate_devices_fn iterate_devices;
 	dm_io_hints_fn io_hints;
-	dm_direct_access_fn direct_access;
 
 	/* For internal device-mapper use. */
 	struct list_head list;
@@ -469,7 +457,7 @@ void dm_table_add_target_callbacks(struct dm_table *t, struct dm_target_callback
  * Useful for "hybrid" target (supports both bio-based
  * and request-based).
  */
-void dm_table_set_type(struct dm_table *t, enum dm_queue_mode type);
+void dm_table_set_type(struct dm_table *t, unsigned type);
 
 /*
  * Finally call this to make the table ready for use.
