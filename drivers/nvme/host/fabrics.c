@@ -534,80 +534,66 @@ static struct nvmf_transport_ops *nvmf_lookup_transport(
 	return NULL;
 }
 
-int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
-		struct request *rq, bool queue_live, bool is_connected)
+/*
+ * For something we're not in a state to send to the device the default action
+ * is to busy it and retry it after the controller state is recovered.  However,
+ * anything marked for failfast or nvme multipath is immediately failed.
+ *
+ * Note: commands used to initialize the controller will be marked for failfast.
+ * Note: nvme cli/ioctl commands are marked for failfast.
+ */
+int nvmf_fail_nonready_command(struct request *rq)
 {
-	struct nvme_command *cmd = nvme_req(rq)->cmd;
-
-	if (ctrl->state == NVME_CTRL_LIVE && is_connected)
-		return 0;
-
-	switch (ctrl->state) {
-	case NVME_CTRL_DELETING:
-		goto reject_io;
-
-	case NVME_CTRL_NEW:
-	case NVME_CTRL_RECONNECTING:
-		if (!is_connected)
-			/*
-			 * This is the case of starting a new
-			 * association but connectivity was lost
-			 * before it was fully created. We need to
-			 * error the commands used to initialize the
-			 * controller so the reconnect can go into a
-			 * retry attempt. The commands should all be
-			 * marked REQ_FAILFAST_DRIVER, which will hit
-			 * the reject path below. Anything else will
-			 * be queued while the state settles.
-			 */
-			goto reject_or_queue_io;
-
-		if (queue_live ||
-		    (rq->cmd_type == REQ_TYPE_DRV_PRIV &&
-		     cmd->common.opcode == nvme_fabrics_command &&
-		     cmd->fabrics.fctype == nvme_fabrics_type_connect))
-			/*
-			 * let anything to a live queue through.
-			 * Typically this will be commands to the admin
-			 * queue which are either being used to initialize
-			 * the controller or are commands being issued
-			 * via the cli/ioctl path.
-			 *
-			 * if the q isn't live, allow only the connect
-			 * command through.
-			 */
-			return 0;
-
-		/*
-		 * q isn't live to accept the command.
-		 * fall-thru to the reject_or_queue_io clause
-		 */
-		break;
-
-	/* these cases fall-thru
-	 * case NVME_CTRL_LIVE:
-	 * case NVME_CTRL_RESETTING:
-	 */
-	default:
-		break;
-	}
-
-reject_or_queue_io:
-	/*
-	 * Any other new io is something we're not in a state to send
-	 * to the device. Default action is to busy it and retry it
-	 * after the controller state is recovered. However, anything
-	 * marked for failfast or nvme multipath is immediately failed.
-	 * Note: commands used to initialize the controller will be
-	 *  marked for failfast.
-	 * Note: nvme cli/ioctl commands are marked for failfast.
-	 */
 	if (!blk_noretry_request(rq))
 		return BLK_MQ_RQ_QUEUE_BUSY; /* try again later */
-
-reject_io:
 	nvme_req(rq)->status = NVME_SC_ABORT_REQ;
 	return BLK_MQ_RQ_QUEUE_ERROR;
+}
+EXPORT_SYMBOL_GPL(nvmf_fail_nonready_command);
+
+bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
+		bool queue_live)
+{
+	struct nvme_request *req = nvme_req(rq);
+
+	/*
+	 * If we are in some state of setup or teardown only allow
+	 * internally generated commands.
+	 */
+	if (rq->cmd_type != REQ_TYPE_DRV_PRIV || req->flags & NVME_REQ_USERCMD)
+		return false;
+
+	/*
+	 * Only allow commands on a live queue, except for the connect command,
+	 * which is require to set the queue live in the appropinquate states.
+	 */
+	switch (ctrl->state) {
+	case NVME_CTRL_NEW:
+	case NVME_CTRL_RECONNECTING:
+		if (req->cmd->common.opcode == nvme_fabrics_command &&
+		    req->cmd->fabrics.fctype == nvme_fabrics_type_connect)
+			return true;
+		break;
+	default:
+		break;
+	case NVME_CTRL_DEAD:
+		return false;
+	}
+
+	return queue_live;
+}
+EXPORT_SYMBOL_GPL(__nvmf_check_ready);
+
+int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
+	struct request *rq, bool queue_live, bool is_connected)
+{
+	if (!is_connected)
+		return BLK_MQ_RQ_QUEUE_BUSY;
+	if (!nvmf_check_ready(ctrl, rq, queue_live)) {
+		nvme_req(rq)->status = NVME_SC_ABORT_REQ;
+		return BLK_MQ_RQ_QUEUE_ERROR;
+	}
+	return 0;
 }
 EXPORT_SYMBOL_GPL(nvmf_check_if_ready);
 
@@ -710,10 +696,6 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 			opts->discovery_nqn =
 				!(strcmp(opts->subsysnqn,
 					 NVME_DISC_SUBSYS_NAME));
-			if (opts->discovery_nqn) {
-				opts->kato = 0;
-				opts->nr_io_queues = 0;
-			}
 			break;
 		case NVMF_OPT_TRADDR:
 			p = match_strdup(args);
@@ -861,6 +843,11 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 		}
 	}
 
+	if (opts->discovery_nqn) {
+		opts->kato = 0;
+		opts->nr_io_queues = 0;
+		opts->duplicate_connect = true;
+	}
 	if (ctrl_loss_tmo < 0)
 		opts->max_reconnects = -1;
 	else
