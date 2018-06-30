@@ -1456,14 +1456,13 @@ static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_command *c = sqe->data;
 	bool flush = false;
 	struct ib_device *dev;
+	bool queue_ready = test_bit(NVME_RDMA_Q_LIVE, &queue->flags);
 	int ret;
 
 	WARN_ON_ONCE(rq->tag < 0);
 
-	ret = nvmf_check_if_ready(&queue->ctrl->ctrl, rq,
-		test_bit(NVME_RDMA_Q_LIVE, &queue->flags), true);
-	if (unlikely(ret))
-		goto err;
+	if (!nvmf_check_ready(&queue->ctrl->ctrl, rq, queue_ready))
+		return nvmf_fail_nonready_command(rq);
 
 	dev = queue->device->dev;
 	ib_dma_sync_single_for_cpu(dev, sqe->dma,
