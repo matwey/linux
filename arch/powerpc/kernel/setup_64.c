@@ -503,7 +503,8 @@ static void __init exc_lvl_early_init(void)
 
 /*
  * Stack space used when we detect a bad kernel stack pointer, and
- * early in SMP boots before relocation is enabled.
+ * early in SMP boots before relocation is enabled. Exclusive emergency
+ * stack for machine checks.
  */
 static void __init emergency_stack_init(void)
 {
@@ -526,6 +527,11 @@ static void __init emergency_stack_init(void)
 		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
 		sp += THREAD_SIZE;
 		paca[i].emergency_sp = __va(sp);
+
+		/* emergency stack for machine check exception handling. */
+		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
+		sp += THREAD_SIZE;
+		paca[i].aux_ptr->mc_emergency_sp = __va(sp);
 	}
 }
 
