@@ -205,6 +205,8 @@ int main(void)
 	OFFSET(PACA_RFI_FLUSH_FALLBACK_AREA, paca_aux_struct, rfi_flush_fallback_area);
 	OFFSET(PACA_EXRFI, paca_aux_struct, exrfi);
 	OFFSET(PACA_L1D_FLUSH_SIZE, paca_aux_struct, l1d_flush_size);
+	DEFINE(PACAMCEMERGSP, offsetof(struct paca_aux_struct, mc_emergency_sp));
+	DEFINE(PACA_IN_MCE, offsetof(struct paca_aux_struct, in_mce));
 #endif /* CONFIG_PPC_STD_MMU_64 */
 	DEFINE(PACAEMERGSP, offsetof(struct paca_struct, emergency_sp));
 
