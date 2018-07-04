@@ -4262,32 +4262,24 @@ lpfc_sli4_fcf_redisc_wait_tmo(unsigned long ptr)
  * @phba: pointer to lpfc hba data structure.
  * @acqe_link: pointer to the async link completion queue entry.
  *
- * This routine is to parse the SLI4 link-attention link fault code and
- * translate it into the base driver's read link attention mailbox command
- * status.
- *
- * Return: Link-attention status in terms of base driver's coding.
+ * This routine is to parse the SLI4 link-attention link fault code.
  **/
-static uint16_t
+static void
 lpfc_sli4_parse_latt_fault(struct lpfc_hba *phba,
 			   struct lpfc_acqe_link *acqe_link)
 {
-	uint16_t latt_fault;
-
 	switch (bf_get(lpfc_acqe_link_fault, acqe_link)) {
 	case LPFC_ASYNC_LINK_FAULT_NONE:
 	case LPFC_ASYNC_LINK_FAULT_LOCAL:
 	case LPFC_ASYNC_LINK_FAULT_REMOTE:
-		latt_fault = 0;
+	case LPFC_ASYNC_LINK_FAULT_LR_LRR:
 		break;
 	default:
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-				"0398 Invalid link fault code: x%x\n",
+				"0398 Unknown link fault code: x%x\n",
 				bf_get(lpfc_acqe_link_fault, acqe_link));
-		latt_fault = MBXERR_ERROR;
 		break;
 	}
-	return latt_fault;
 }
 
 /**
@@ -4559,9 +4551,12 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 	 * the READ_TOPOLOGY completion routine to continue without actually
 	 * sending the READ_TOPOLOGY mailbox command to the port.
 	 */
-	/* Parse and translate status field */
+	/* Initialize completion status */
 	mb = &pmb->u.mb;
-	mb->mbxStatus = lpfc_sli4_parse_latt_fault(phba, acqe_link);
+	mb->mbxStatus = MBX_SUCCESS;
+
+	/* Parse port fault information field */
+	lpfc_sli4_parse_latt_fault(phba, acqe_link);
 
 	/* Parse and translate link attention fields */
 	la = (struct lpfc_mbx_read_top *) &pmb->u.mb.un.varReadTop;
@@ -4689,10 +4684,12 @@ lpfc_sli4_async_fc_evt(struct lpfc_hba *phba, struct lpfc_acqe_fc_la *acqe_fc)
 			break;
 		}
 
-		/* Parse and translate status field */
+		/* Initialize completion status */
 		mb = &pmb->u.mb;
-		mb->mbxStatus = lpfc_sli4_parse_latt_fault(phba,
-							   (void *)acqe_fc);
+		mb->mbxStatus = MBX_SUCCESS;
+
+		/* Parse port fault information field */
+		lpfc_sli4_parse_latt_fault(phba, (void *)acqe_fc);
 
 		/* Parse and translate link attention fields */
 		la = (struct lpfc_mbx_read_top *)&pmb->u.mb.un.varReadTop;
@@ -5834,6 +5831,8 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	int fof_vectors = 0;
 	int extra;
 	uint64_t wwn;
+	u32 if_type;
+	u32 if_fam;
 
 	phba->sli4_hba.num_online_cpu = num_online_cpus();
 	phba->sli4_hba.num_present_cpu = lpfc_present_cpu;
@@ -6156,15 +6155,28 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	 */
 	rc = lpfc_get_sli4_parameters(phba, mboxq);
 	if (rc) {
+		if_type = bf_get(lpfc_sli_intf_if_type,
+				 &phba->sli4_hba.sli_intf);
+		if_fam = bf_get(lpfc_sli_intf_sli_family,
+				&phba->sli4_hba.sli_intf);
 		if (phba->sli4_hba.extents_in_use &&
 		    phba->sli4_hba.rpi_hdrs_in_use) {
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"2999 Unsupported SLI4 Parameters "
 				"Extents and RPI headers enabled.\n");
+			if (if_type == LPFC_SLI_INTF_IF_TYPE_0 &&
+			    if_fam ==  LPFC_SLI_INTF_FAMILY_BE2) {
+				mempool_free(mboxq, phba->mbox_mem_pool);
+				rc = -EIO;
+				goto out_free_bsmbx;
+			}
 		}
-		mempool_free(mboxq, phba->mbox_mem_pool);
-		rc = -EIO;
-		goto out_free_bsmbx;
+		if (!(if_type == LPFC_SLI_INTF_IF_TYPE_0 &&
+		      if_fam == LPFC_SLI_INTF_FAMILY_BE2)) {
+			mempool_free(mboxq, phba->mbox_mem_pool);
+			rc = -EIO;
+			goto out_free_bsmbx;
+		}
 	}
 
 	mempool_free(mboxq, phba->mbox_mem_pool);
@@ -7742,6 +7754,40 @@ lpfc_sli4_read_config(struct lpfc_hba *phba)
 				phba->sli4_hba.max_cfg_param.max_wq,
 				phba->sli4_hba.max_cfg_param.max_rq);
 
+		/*
+		 * Calculate NVME queue resources based on how
+		 * many WQ/CQs are available.
+		 */
+		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME) {
+			length = phba->sli4_hba.max_cfg_param.max_wq;
+			if (phba->sli4_hba.max_cfg_param.max_cq <
+			    phba->sli4_hba.max_cfg_param.max_wq)
+				length = phba->sli4_hba.max_cfg_param.max_cq;
+
+			/*
+			 * Whats left after this can go toward NVME.
+			 * The minus 6 accounts for ELS, NVME LS, MBOX
+			 * fof plus a couple extra. When configured for
+			 * NVMET, FCP io channel WQs are not created.
+			 */
+			length -= 6;
+			if (!phba->nvmet_support)
+				length -= phba->cfg_fcp_io_channel;
+
+			if (phba->cfg_nvme_io_channel > length) {
+				lpfc_printf_log(
+					phba, KERN_ERR, LOG_SLI,
+					"2005 Reducing NVME IO channel to %d: "
+					"WQ %d CQ %d NVMEIO %d FCPIO %d\n",
+					length,
+					phba->sli4_hba.max_cfg_param.max_wq,
+					phba->sli4_hba.max_cfg_param.max_cq,
+					phba->cfg_nvme_io_channel,
+					phba->cfg_fcp_io_channel);
+
+				phba->cfg_nvme_io_channel = length;
+			}
+		}
 	}
 
 	if (rc)
@@ -9450,11 +9496,6 @@ lpfc_sli4_pci_mem_setup(struct lpfc_hba *phba)
 		return error;
 	}
 
-	if (pci_read_config_dword(pdev, LPFC_SLI_ASIC_VER,
-				  &phba->sli4_hba.sli_asic_ver.word0)) {
-		return error;
-	}
-
 	/* There is no SLI3 failback for SLI4 devices. */
 	if (bf_get(lpfc_sli_intf_valid, &phba->sli4_hba.sli_intf) !=
 	    LPFC_SLI_INTF_VALID) {
@@ -10887,9 +10928,7 @@ lpfc_get_sli4_parameters(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 	if ((bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) ==
 	    LPFC_SLI_INTF_IF_TYPE_2) &&
 	    (bf_get(lpfc_sli_intf_sli_family, &phba->sli4_hba.sli_intf) ==
-		 LPFC_SLI_INTF_FAMILY_LNCR_A0) &&
-	    (bf_get(lpfc_sli_asic_ver, &phba->sli4_hba.sli_asic_ver) ==
-	    LPFC_SLI_ASIC_VER_A))
+		 LPFC_SLI_INTF_FAMILY_LNCR_A0))
 		exp_wqcq_pages = false;
 
 	if ((bf_get(cfg_cqpsize, mbx_sli4_parameters) & LPFC_CQ_16K_PAGE_SZ) &&
