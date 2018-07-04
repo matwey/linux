@@ -103,17 +103,6 @@ struct lpfc_sli_intf {
 #define LPFC_SLI_INTF_IF_TYPE_VIRT	1
 };
 
-struct lpfc_sli_asic_rev {
-	u32 word0;
-#define LPFC_SLI_ASIC_VER_A	0x0
-#define LPFC_SLI_ASIC_VER_B	0x1
-#define LPFC_SLI_ASIC_VER_C	0x2
-#define LPFC_SLI_ASIC_VER_D	0x3
-#define lpfc_sli_asic_ver_SHIFT		4
-#define lpfc_sli_asic_ver_MASK		0x0000000F
-#define lpfc_sli_asic_ver_WORD		word0
-};
-
 #define LPFC_SLI4_MBX_EMBED	true
 #define LPFC_SLI4_MBX_NEMBED	false
 
@@ -3829,6 +3818,7 @@ struct lpfc_acqe_link {
 #define LPFC_ASYNC_LINK_FAULT_NONE	0x0
 #define LPFC_ASYNC_LINK_FAULT_LOCAL	0x1
 #define LPFC_ASYNC_LINK_FAULT_REMOTE	0x2
+#define LPFC_ASYNC_LINK_FAULT_LR_LRR	0x3
 #define lpfc_acqe_logical_link_speed_SHIFT	16
 #define lpfc_acqe_logical_link_speed_MASK	0x0000FFFF
 #define lpfc_acqe_logical_link_speed_WORD	word1

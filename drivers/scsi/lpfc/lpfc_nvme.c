@@ -839,9 +839,22 @@ lpfc_nvme_io_cmd_wqe_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pwqeIn,
 
 	/* Sanity check on return of outstanding command */
 	if (!lpfc_ncmd || !lpfc_ncmd->nvmeCmd || !lpfc_ncmd->nrport) {
+		if (!lpfc_ncmd) {
+			lpfc_printf_vlog(vport, KERN_ERR,
+					 LOG_NODE | LOG_NVME_IOERR,
+					 "6071 Null lpfc_ncmd pointer. No "
+					 "release, skip completion\n");
+			return;
+		}
+
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_NODE | LOG_NVME_IOERR,
-				 "6071 Completion pointers bad on wqe %p.\n",
-				 wcqe);
+				 "6066 Missing cmpl ptrs: lpfc_ncmd %p, "
+				 "nvmeCmd %p nrport %p\n",
+				 lpfc_ncmd, lpfc_ncmd->nvmeCmd,
+				 lpfc_ncmd->nrport);
+
+		/* Release the lpfc_ncmd regardless of the missing elements. */
+		lpfc_release_nvme_buf(phba, lpfc_ncmd);
 		return;
 	}
 	nCmd = lpfc_ncmd->nvmeCmd;
@@ -1339,9 +1352,10 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	vport = lport->vport;
 
 	if (unlikely(!hw_queue_handle)) {
-		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_ABTS,
-				 "6129 Fail Abort, NULL hw_queue_handle\n");
-		ret = -EINVAL;
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
+				 "6117 Fail IO, NULL hw_queue_handle\n");
+		atomic_inc(&lport->xmt_fcp_err);
+		ret = -EBUSY;
 		goto out_fail;
 	}
 
@@ -1353,12 +1367,18 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	}
 
 	if (vport->load_flag & FC_UNLOADING) {
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
+				 "6124 Fail IO, Driver unload\n");
+		atomic_inc(&lport->xmt_fcp_err);
 		ret = -ENODEV;
 		goto out_fail;
 	}
 
 	freqpriv = pnvme_fcreq->private;
 	if (unlikely(!freqpriv)) {
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
+				 "6158 Fail IO, NULL request data\n");
+		atomic_inc(&lport->xmt_fcp_err);
 		ret = -EINVAL;
 		goto out_fail;
 	}
@@ -1376,32 +1396,26 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	 */
 	ndlp = rport->ndlp;
 	if (!ndlp || !NLP_CHK_NODE_ACT(ndlp)) {
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_NODE | LOG_NVME_IOERR,
-				 "6053 rport %p, ndlp %p, DID x%06x "
-				 "ndlp not ready.\n",
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NODE | LOG_NVME_IOERR,
+				 "6053 Fail IO, ndlp not ready: rport %p "
+				  "ndlp %p, DID x%06x\n",
 				 rport, ndlp, pnvme_rport->port_id);
-
-		ndlp = lpfc_findnode_did(vport, pnvme_rport->port_id);
-		if (!ndlp) {
-			lpfc_printf_vlog(vport, KERN_ERR, LOG_NVME_IOERR,
-					 "6066 Missing node for DID %x\n",
-					 pnvme_rport->port_id);
-			atomic_inc(&lport->xmt_fcp_bad_ndlp);
-			ret = -ENODEV;
-			goto out_fail;
-		}
+		atomic_inc(&lport->xmt_fcp_err);
+		ret = -EBUSY;
+		goto out_fail;
 	}
 
 	/* The remote node has to be a mapped target or it's an error. */
 	if ((ndlp->nlp_type & NLP_NVME_TARGET) &&
 	    (ndlp->nlp_state != NLP_STE_MAPPED_NODE)) {
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_NODE | LOG_NVME_IOERR,
-				 "6036 rport %p, DID x%06x not ready for "
-				 "IO. State x%x, Type x%x\n",
-				 rport, pnvme_rport->port_id,
-				 ndlp->nlp_state, ndlp->nlp_type);
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NODE | LOG_NVME_IOERR,
+				 "6036 Fail IO, DID x%06x not ready for "
+				 "IO. State x%x, Type x%x Flg x%x\n",
+				 pnvme_rport->port_id,
+				 ndlp->nlp_state, ndlp->nlp_type,
+				 ndlp->upcall_flags);
 		atomic_inc(&lport->xmt_fcp_bad_ndlp);
-		ret = -ENODEV;
+		ret = -EBUSY;
 		goto out_fail;
 
 	}
@@ -1419,9 +1433,16 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	if (lpfc_ncmd == NULL) {
 		atomic_inc(&lport->xmt_fcp_noxri);
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
-				 "6065 driver's buffer pool is empty, "
-				 "IO failed\n");
+				 "6065 Fail IO, driver buffer pool is empty: "
+				 "idx %d DID %x pend %d qdepth %d\n",
+				 lpfc_queue_info->index, ndlp->nlp_DID,
+				 atomic_read(&ndlp->cmd_pending),
+				 ndlp->cmd_qdepth);
 		ret = -EBUSY;
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
+				 "6174 Fail IO, ndlp qdepth exceeded: "
+				 "idx %d DID %x\n",
+				 lpfc_queue_info->index, ndlp->nlp_DID);
 		goto out_fail;
 	}
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
@@ -1460,6 +1481,11 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	lpfc_nvme_prep_io_cmd(vport, lpfc_ncmd, ndlp, cstat);
 	ret = lpfc_nvme_prep_io_dma(vport, lpfc_ncmd);
 	if (ret) {
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
+				 "6175 Fail IO, Prep DMA: "
+				 "idx %d DID %x\n",
+				 lpfc_queue_info->index, ndlp->nlp_DID);
+		atomic_inc(&lport->xmt_fcp_err);
 		ret = -ENOMEM;
 		goto out_free_nvme_buf;
 	}
@@ -1475,7 +1501,7 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 		atomic_inc(&lport->xmt_fcp_wqerr);
 		atomic_dec(&ndlp->cmd_pending);
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
-				 "6113 FCP could not issue WQE err %x "
+				 "6113 Fail IO, Could not issue WQE err %x "
 				 "sid: x%x did: x%x oxid: x%x\n",
 				 ret, vport->fc_myDID, ndlp->nlp_DID,
 				 lpfc_ncmd->cur_iocbq.sli4_xritag);
@@ -2350,6 +2376,7 @@ lpfc_nvme_create_localport(struct lpfc_vport *vport)
 		atomic_set(&lport->xmt_fcp_noxri, 0);
 		atomic_set(&lport->xmt_fcp_bad_ndlp, 0);
 		atomic_set(&lport->xmt_fcp_qdepth, 0);
+		atomic_set(&lport->xmt_fcp_err, 0);
 		atomic_set(&lport->xmt_fcp_wqerr, 0);
 		atomic_set(&lport->xmt_fcp_abort, 0);
 		atomic_set(&lport->xmt_ls_abort, 0);
@@ -2709,6 +2736,15 @@ lpfc_nvme_unregister_port(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 		 * The transport will update it.
 		 */
 		ndlp->upcall_flags |= NLP_WAIT_FOR_UNREG;
+
+		/* Don't let the host nvme transport keep sending keep-alives
+		 * on this remoteport. Vport is unloading, no recovery. The
+		 * return values is ignored.  The upcall is a courtesy to the
+		 * transport.
+		 */
+		if (vport->load_flag & FC_UNLOADING)
+			(void)nvme_fc_set_remoteport_devloss(remoteport, 0);
+
 		ret = nvme_fc_unregister_remoteport(remoteport);
 		if (ret != 0) {
 			lpfc_nlp_put(ndlp);

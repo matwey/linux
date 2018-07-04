@@ -297,6 +297,13 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 	len = snprintf(buf, PAGE_SIZE, "NVME Initiator Enabled\n");
 
 	spin_lock_irq(shost->host_lock);
+	len += snprintf(buf + len, PAGE_SIZE - len,
+			"XRI Dist lpfc%d Total %d NVME %d SCSI %d ELS %d\n",
+			phba->brd_no,
+			phba->sli4_hba.max_cfg_param.max_xri,
+			phba->sli4_hba.nvme_xri_max,
+			phba->sli4_hba.scsi_xri_max,
+			lpfc_sli4_get_els_iocb_cnt(phba));
 
 	/* Port state is only one of two values for now. */
 	if (localport->port_id)
@@ -405,11 +412,12 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 
 	len += snprintf(buf+len, PAGE_SIZE-len,
 			"      abort %08x noxri %08x nondlp %08x qdepth %08x "
-			"wqerr %08x\n",
+			"wqerr %08x err %08x\n",
 			atomic_read(&lport->xmt_fcp_abort),
 			atomic_read(&lport->xmt_fcp_noxri),
 			atomic_read(&lport->xmt_fcp_bad_ndlp),
 			atomic_read(&lport->xmt_fcp_qdepth),
+			atomic_read(&lport->xmt_fcp_err),
 			atomic_read(&lport->xmt_fcp_wqerr));
 
 	len += snprintf(buf + len, PAGE_SIZE - len,
