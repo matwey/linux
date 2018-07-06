@@ -176,6 +176,7 @@ int cpu_up(unsigned int cpu);
 void notify_cpu_starting(unsigned int cpu);
 extern void cpu_maps_update_begin(void);
 extern void cpu_maps_update_done(void);
+extern void cpu_set_booted(unsigned int cpu);
 
 #define cpu_notifier_register_begin	cpu_maps_update_begin
 #define cpu_notifier_register_done	cpu_maps_update_done

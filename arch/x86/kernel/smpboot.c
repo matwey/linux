@@ -1023,6 +1023,8 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 
 	irq_unlock_sparse();
 
+	cpu_set_booted(cpu);
+
 	return 0;
 }
 
