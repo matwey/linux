@@ -4098,6 +4098,9 @@ int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 	void *data = val;
 	int r = X86EMUL_CONTINUE;
 
+	/* kvm_write_guest_virt_system can pull in tons of pages. */
+	vcpu->arch.vcpu_unconfined = true;
+
 	while (bytes) {
 		gpa_t gpa =  vcpu->arch.walk_mmu->gva_to_gpa(vcpu, addr,
 							     PFERR_WRITE_MASK,
