@@ -1182,11 +1182,11 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	else
 		sb->s_d_op = &ovl_dentry_operations;
 
+	err = -ENOMEM;
 	ufs->creator_cred = prepare_creds();
 	if (!ufs->creator_cred)
 		goto out_put_lower_mnt;
 
-	err = -ENOMEM;
 	oe = ovl_alloc_entry(numlower);
 	if (!oe)
 		goto out_put_cred;
