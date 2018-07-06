@@ -899,6 +899,8 @@ int __cpuinit native_cpu_up(unsigned int cpu)
 		touch_nmi_watchdog();
 	}
 
+	cpu_set_booted(cpu);
+
 	return 0;
 }
 

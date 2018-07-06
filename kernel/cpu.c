@@ -17,6 +17,18 @@
 #include <linux/gfp.h>
 #include <linux/suspend.h>
 
+/* hotplug state from future kernels */
+struct cpuhp_cpu_state {
+	bool		booted_once;
+};
+
+static DEFINE_PER_CPU(struct cpuhp_cpu_state, cpuhp_state) = { 0 };
+
+void cpu_set_booted(unsigned int cpu)
+{
+	per_cpu(cpuhp_state, cpu).booted_once = true;
+}
+
 #ifdef CONFIG_SMP
 /* Serializes the updates to cpu_online_mask, cpu_present_mask */
 static DEFINE_MUTEX(cpu_add_remove_lock);
@@ -319,11 +331,22 @@ static int __init smt_cmdline_disable(char *str)
 }
 early_param("nosmt", smt_cmdline_disable);
 
-static inline bool cpu_smt_allowed(unsigned int cpu)
+bool cpu_smt_allowed(unsigned int cpu)
 {
-	return cpu_smt_control == CPU_SMT_ENABLED ||
-		topology_is_primary_thread(cpu);
+	if (cpu_smt_control == CPU_SMT_ENABLED)
+		return true;
+
+	if (topology_is_primary_thread(cpu))
+		return true;
+
+	/*
+	 * X86 requires that the sibling threads are at least booted up
+	 * once to set the CR4.MCE bit so Machine Check Exceptions can be
+	 * handled and do not end up raising the CPU Internal Error line.
+	 */
+	return !per_cpu(cpuhp_state, cpu).booted_once;
 }
+
 #else
 static inline bool cpu_smt_allowed(unsigned int cpu) { return true; }
 #endif
@@ -351,6 +374,7 @@ static int __cpuinit _cpu_up(unsigned int cpu, int tasks_frozen)
 	ret = __cpu_up(cpu);
 	if (ret != 0)
 		goto out_notify;
+
 	BUG_ON(!cpu_online(cpu));
 
 	/* Now call notifier in preparation. */
@@ -411,12 +435,23 @@ int __cpuinit cpu_up(unsigned int cpu)
 		err = -EBUSY;
 		goto out;
 	}
+
 	if (!cpu_smt_allowed(cpu)) {
 		err = -EPERM;
 		goto out;
 	}
 
 	err = _cpu_up(cpu, 0);
+
+	/*
+	 * SMT soft disabling on x86 requires to bring the CPU out of the
+	 * BIOS 'wait for SIPI' state in order to set the CR4.MCE bit.  The
+	 * CPU marked itself as booted_once in native_cpu_up() so the
+	 * cpu_smt_allowed() check will now return false if this is not the
+	 * primary sibling.
+	 */
+	if (!cpu_smt_allowed(cpu))
+		cpu_down_maps_locked(cpu, 0);
 
 out:
 	cpu_maps_update_done();
