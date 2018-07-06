@@ -128,8 +128,6 @@ static inline void xen_set_pgd(pgd_t *pgdp, pgd_t pgd)
 	: (void)(*__user_pgd(__pgdp) = *__pgdp = xen_make_pgd(0)); \
 })
 
-#define __pte_mfn(_pte) (((_pte).pte & PTE_PFN_MASK) >> PAGE_SHIFT)
-
 extern unsigned long early_arbitrary_virt_to_mfn(void *va);
 
 extern void sync_global_pgds(unsigned long start, unsigned long end);
@@ -173,10 +171,14 @@ extern void sync_global_pgds(unsigned long start, unsigned long end);
 
 #define __swp_type(x)			(((x).val >> (_PAGE_BIT_PRESENT + 1)) \
 					 & ((1U << SWP_TYPE_BITS) - 1))
-#define __swp_offset(x)			((x).val >> SWP_OFFSET_SHIFT)
+#define __swp_offset(x)			(~(x).val >> SWP_OFFSET_SHIFT)
+/*
+ * The offset is inverted by a binary not operation to make the high
+ * physical bits set.
+ */
 #define __swp_entry(type, offset)	((swp_entry_t) { \
 					 ((type) << (_PAGE_BIT_PRESENT + 1)) \
-					 | ((offset) << SWP_OFFSET_SHIFT) })
+					 | (~(offset) << SWP_OFFSET_SHIFT) })
 #define __pte_to_swp_entry(pte)		((swp_entry_t) { __pte_val(pte) })
 #define __swp_entry_to_pte(x)		((pte_t) { .pte = (x).val })
 
@@ -196,6 +198,8 @@ extern int kern_addr_valid(unsigned long addr);
 #define	kc_offset_to_vaddr(o) ((o) | ~__VIRTUAL_MASK)
 
 #define __HAVE_ARCH_PTE_SAME
+
+#include <asm/pgtable-invert.h>
 
 #endif /* !__ASSEMBLY__ */
 
