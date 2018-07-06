@@ -134,6 +134,9 @@ DEFINE_PER_CPU(cpumask_var_t, cpu_llc_shared_map);
 DEFINE_PER_CPU_SHARED_ALIGNED(struct cpuinfo_x86, cpu_info);
 EXPORT_PER_CPU_SYMBOL(cpu_info);
 
+/* Maximum number of SMT threads on any online core */
+int __read_mostly __max_smt_threads = 1;
+
 atomic_t init_deasserted;
 
 /*
@@ -352,8 +355,8 @@ static void __cpuinit link_thread_siblings(int cpu1, int cpu2)
 
 void __cpuinit set_cpu_sibling_map(int cpu)
 {
-	int i;
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
+	int i, threads;
 
 	cpumask_set_cpu(cpu, cpu_sibling_setup_mask);
 
@@ -412,6 +415,10 @@ void __cpuinit set_cpu_sibling_map(int cpu)
 				c->booted_cores = cpu_data(i).booted_cores;
 		}
 	}
+
+	threads = cpumask_weight(topology_thread_cpumask(cpu));
+	if (threads > __max_smt_threads)
+		__max_smt_threads = threads;
 }
 
 /* maps the cpu to the sched domain representing multi-core */
@@ -896,6 +903,23 @@ int __cpuinit native_cpu_up(unsigned int cpu)
 }
 
 /**
+ * topology_is_primary_thread - Check whether CPU is the primary SMT thread
+ * @cpu:	CPU to check
+ */
+bool topology_is_primary_thread(unsigned int cpu)
+{
+	return apic_id_is_primary_thread(per_cpu(x86_cpu_to_apicid, cpu));
+}
+
+/**
+ * topology_smt_supported - Check whether SMT is supported by the CPUs
+ */
+bool topology_smt_supported(void)
+{
+	return smp_num_siblings > 1;
+}
+
+/**
  * arch_disable_smp_support() - disables SMP support for x86 at runtime
  */
 void arch_disable_smp_support(void)
@@ -1241,6 +1265,21 @@ __init void prefill_possible_map(void)
 
 #ifdef CONFIG_HOTPLUG_CPU
 
+/* Recompute SMT state for all CPUs on offline */
+static void recompute_smt_state(void)
+{
+	int max_threads, cpu;
+
+	max_threads = 0;
+	for_each_online_cpu (cpu) {
+		int threads = cpumask_weight(topology_thread_cpumask(cpu));
+
+		if (threads > max_threads)
+			max_threads = threads;
+	}
+	__max_smt_threads = max_threads;
+}
+
 static void remove_siblinginfo(int cpu)
 {
 	int sibling;
@@ -1265,6 +1304,7 @@ static void remove_siblinginfo(int cpu)
 	c->phys_proc_id = 0;
 	c->cpu_core_id = 0;
 	cpumask_clear_cpu(cpu, cpu_sibling_setup_mask);
+	recompute_smt_state();
 }
 
 static void __ref remove_cpu_from_maps(int cpu)
