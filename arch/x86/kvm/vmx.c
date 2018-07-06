@@ -56,9 +56,6 @@ module_param(bypass_guest_pf, bool, S_IRUGO);
 static int __read_mostly enable_vpid = 1;
 module_param_named(vpid, enable_vpid, bool, 0444);
 
-static int __read_mostly vmentry_l1d_flush = 1;
-module_param_named(vmentry_l1d_flush, vmentry_l1d_flush, int, 0644);
-
 static int __read_mostly flexpriority_enabled = 1;
 module_param_named(flexpriority, flexpriority_enabled, bool, S_IRUGO);
 
@@ -132,6 +129,51 @@ module_param(ple_gap, int, S_IRUGO);
 
 static int ple_window = KVM_VMX_DEFAULT_PLE_WINDOW;
 module_param(ple_window, int, S_IRUGO);
+
+/* These MUST be in sync with vmentry_l1d_param order. */
+enum vmx_l1d_flush_state {
+	VMENTER_L1D_FLUSH_NEVER,
+	VMENTER_L1D_FLUSH_COND,
+	VMENTER_L1D_FLUSH_ALWAYS,
+};
+
+static enum vmx_l1d_flush_state __read_mostly vmentry_l1d_flush = VMENTER_L1D_FLUSH_COND;
+
+static const struct {
+	const char *option;
+	enum vmx_l1d_flush_state cmd;
+} vmentry_l1d_param[] = {
+	{"never",       VMENTER_L1D_FLUSH_NEVER},
+	{"cond",        VMENTER_L1D_FLUSH_COND},
+	{"always",      VMENTER_L1D_FLUSH_ALWAYS},
+};
+
+static int vmentry_l1d_flush_set(const char *s, const struct kernel_param *kp)
+{
+	unsigned int i;
+
+	if (!s)
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(vmentry_l1d_param); i++) {
+		if (!strcmp(s, vmentry_l1d_param[i].option)) {
+			vmentry_l1d_flush = vmentry_l1d_param[i].cmd;
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+
+static int vmentry_l1d_flush_get(char *s, const struct kernel_param *kp)
+{
+	return sprintf(s, "%s\n", vmentry_l1d_param[vmentry_l1d_flush].option);
+}
+static const struct kernel_param_ops vmentry_l1d_flush_ops = {
+	.set = vmentry_l1d_flush_set,
+	.get = vmentry_l1d_flush_get,
+};
+module_param_cb(vmentry_l1d_flush, &vmentry_l1d_flush_ops, &vmentry_l1d_flush, S_IRUGO);
 
 #define NR_AUTOLOAD_MSRS 1
 #define VMCS02_POOL_SIZE 1
@@ -1569,14 +1611,14 @@ static void vmx_prepare_guest_switch(struct kvm_vcpu *vcpu, bool *need_l1d_flush
 	}
 
 	switch (vmentry_l1d_flush) {
-	case 0:
+	case VMENTER_L1D_FLUSH_NEVER:
 		*need_l1d_flush = false;
 		break;
-	case 1:
+	case VMENTER_L1D_FLUSH_COND:
 		/*
-		 * If vmentry_l1d_flush is 1, each vmexit handler is responsible for
-		 * setting vcpu->arch.vcpu_unconfined.  Currently this happens in the
-		 * following cases:
+		 * If vmentry_l1d_flush is VMENTER_L1D_FLUSH_COND, each vmexit handler is
+		 * responsible for setting vcpu->arch.vcpu_unconfined.Currently this happens
+		 * in the following cases:
 		 * - vmlaunch/vmresume: we do not want the cache to be cleared by a
 		 *   nested hypervisor *and* by KVM on bare metal, so we just do it
 		 *   on every nested entry.  Nested hypervisors do not bother clearing
@@ -1590,7 +1632,7 @@ static void vmx_prepare_guest_switch(struct kvm_vcpu *vcpu, bool *need_l1d_flush
 		 *   preempt notifier)
 		 */
 		break;
-	case 2:
+	case VMENTER_L1D_FLUSH_ALWAYS:
 	default:
 		*need_l1d_flush = true;
 		break;
