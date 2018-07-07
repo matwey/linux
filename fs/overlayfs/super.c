@@ -44,6 +44,8 @@ struct ovl_fs {
 	long lower_namelen;
 	/* pathnames of lower and upper dirs, for show_options */
 	struct ovl_config config;
+	/* creds of process who forced instantiation of super block */
+	const struct cred *creator_cred;
 	bool compat;
 };
 
@@ -277,6 +279,13 @@ bool ovl_is_whiteout(struct dentry *dentry, struct dentry *ovl_dir)
 		return ovl_compat_is_whiteout(ovl_dir, dentry);
 
 	return inode && IS_WHITEOUT(inode);
+}
+
+const struct cred *ovl_override_creds(struct super_block *sb)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	return override_creds(ofs->creator_cred);
 }
 
 static bool ovl_is_opaquedir(struct dentry *dentry)
@@ -620,6 +629,7 @@ static void ovl_put_super(struct super_block *sb)
 	kfree(ufs->config.lowerdir);
 	kfree(ufs->config.upperdir);
 	kfree(ufs->config.workdir);
+	put_cred(ufs->creator_cred);
 	kfree(ufs);
 }
 
@@ -1173,9 +1183,13 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_d_op = &ovl_dentry_operations;
 
 	err = -ENOMEM;
+	ufs->creator_cred = prepare_creds();
+	if (!ufs->creator_cred)
+		goto out_put_lower_mnt;
+
 	oe = ovl_alloc_entry(numlower);
 	if (!oe)
-		goto out_put_lower_mnt;
+		goto out_put_cred;
 
 	root_dentry = d_make_root(ovl_new_inode(sb, S_IFDIR, oe));
 	if (!root_dentry)
@@ -1211,6 +1225,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 out_free_oe:
 	kfree(oe);
+out_put_cred:
+	put_cred(ufs->creator_cred);
 out_put_lower_mnt:
 	for (i = 0; i < ufs->numlower; i++)
 		mntput(ufs->lower_mnt[i]);
