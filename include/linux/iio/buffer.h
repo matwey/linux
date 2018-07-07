@@ -49,8 +49,11 @@ struct iio_buffer_access_funcs {
 	int (*request_update)(struct iio_buffer *buffer);
 
 	int (*set_bytes_per_datum)(struct iio_buffer *buffer, size_t bpd);
+#ifdef __GENKSYMS__
+	int (*set_length)(struct iio_buffer *buffer, int length);
+#else
 	int (*set_length)(struct iio_buffer *buffer, unsigned int length);
-
+#endif
 	void (*release)(struct iio_buffer *buffer);
 
 	unsigned int modes;
@@ -78,8 +81,13 @@ struct iio_buffer_access_funcs {
  * @watermark:		[INTERN] number of datums to wait for poll/read.
  */
 struct iio_buffer {
+#ifdef __GENKSYMS__
+	int					length;
+	int					bytes_per_datum;
+#else
 	unsigned int				length;
-	size_t					bytes_per_datum;
+	unsigned int				bytes_per_datum;
+#endif
 	struct attribute_group			*scan_el_attrs;
 	long					*scan_mask;
 	bool					scan_timestamp;
