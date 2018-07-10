@@ -294,7 +294,7 @@ struct task_group {
 #endif
 #endif
 
-#ifdef CONFIG_RT_GROUP_SCHED
+#if 1 /* unconditionally enabled for kABI w/o CONFIG_RT_GROUP_SCHED */
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
 
@@ -516,7 +516,7 @@ struct rt_rq {
 	/* Nests inside the rq lock: */
 	raw_spinlock_t rt_runtime_lock;
 
-#ifdef CONFIG_RT_GROUP_SCHED
+#if 1  /* unconditionally enabled for kABI w/o CONFIG_RT_GROUP_SCHED */
 	unsigned long rt_nr_boosted;
 
 	struct rq *rq;
