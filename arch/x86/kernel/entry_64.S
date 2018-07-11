@@ -1676,6 +1676,7 @@ bstep_iret:
 
 error_bad_iret:
 	SWAPGS
+	SWITCH_KERNEL_CR3
 	mov %rsp,%rdi
 	call fixup_bad_iret
 	mov %rax,%rsp
