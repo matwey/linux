@@ -332,7 +332,6 @@ struct vmxnet3_adapter {
 	u8                              version;
 
 	bool				rxcsum;
-	bool				lro;
 
 #ifdef VMXNET3_RSS
 	struct UPT1_RSSConf		*rss_conf;
