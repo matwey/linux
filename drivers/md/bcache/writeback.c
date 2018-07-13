@@ -241,8 +241,10 @@ static void dirty_endio(struct bio *bio)
 	struct keybuf_key *w = bio->bi_private;
 	struct dirty_io *io = w->private;
 
-	if (bio->bi_error)
+	if (bio->bi_error) {
 		SET_KEY_DIRTY(&w->key, false);
+		bch_count_backing_io_errors(io->dc, bio);
+	}
 
 	closure_put(&io->cl);
 }
