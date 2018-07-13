@@ -78,6 +78,8 @@
  */
 #define X86_FEATURE_ZEN		( 2*32+ 4) /* "" CPU is AMD family 0x17 (Zen) */
 #define X86_FEATURE_L1TF_FIX		( 2*32+5) /* "" L1TF workaround used */
+#define X86_FEATURE_FLUSH_L1D		(2*32+6) /* Flush L1D cache */
+
 
 /* Other features, Linux-defined mapping, word 3 */
 /* This range is used for feature bits which conflict or are synthesized */
@@ -101,7 +103,7 @@
 #define X86_FEATURE_REP_GOOD	( 3*32+16) /* rep microcode works well */
 #define X86_FEATURE_MFENCE_RDTSC ( 3*32+17) /* "" Mfence synchronizes RDTSC */
 #define X86_FEATURE_LFENCE_RDTSC ( 3*32+18) /* "" Lfence synchronizes RDTSC */
-#define X86_FEATURE_FLUSH_L1D	(3*32+19) /* IA32_FLUSH_L1D MSR */
+/* free, was #define X86_FEATURE_11AP	( 3*32+19) * "" Bad local APIC aka 11AP */
 #define X86_FEATURE_NOPL	( 3*32+20) /* The NOPL (0F 1F) instructions */
 #define X86_FEATURE_ALWAYS	( 3*32+21) /* "" Always-present feature */
 #define X86_FEATURE_XTOPOLOGY	( 3*32+22) /* cpu topology enum extensions */

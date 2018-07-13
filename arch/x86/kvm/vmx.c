@@ -68,6 +68,9 @@ static const struct x86_cpu_id vmx_cpu_id[] = {
 };
 MODULE_DEVICE_TABLE(x86cpu, vmx_cpu_id);
 
+static bool __read_mostly nosmt;
+module_param(nosmt, bool, S_IRUGO);
+
 static bool __read_mostly enable_vpid = 1;
 module_param_named(vpid, enable_vpid, bool, 0444);
 
@@ -171,6 +174,10 @@ static int ple_window_actual_max = KVM_VMX_DEFAULT_PLE_WINDOW_MAX;
 static int ple_window_max        = KVM_VMX_DEFAULT_PLE_WINDOW_MAX;
 module_param(ple_window_max, int, S_IRUGO);
 
+extern const ulong vmx_return;
+
+static DEFINE_STATIC_KEY_FALSE(vmx_l1d_should_flush);
+
 /* These MUST be in sync with vmentry_l1d_param order. */
 enum vmx_l1d_flush_state {
 	VMENTER_L1D_FLUSH_NEVER,
@@ -184,9 +191,9 @@ static const struct {
 	const char *option;
 	enum vmx_l1d_flush_state cmd;
 } vmentry_l1d_param[] = {
-	{"never",       VMENTER_L1D_FLUSH_NEVER},
-	{"cond",        VMENTER_L1D_FLUSH_COND},
-	{"always",      VMENTER_L1D_FLUSH_ALWAYS},
+	{"never",	VMENTER_L1D_FLUSH_NEVER},
+	{"cond",	VMENTER_L1D_FLUSH_COND},
+	{"always",	VMENTER_L1D_FLUSH_ALWAYS},
 };
 
 static int vmentry_l1d_flush_set(const char *s, const struct kernel_param *kp)
@@ -210,13 +217,12 @@ static int vmentry_l1d_flush_get(char *s, const struct kernel_param *kp)
 {
 	return sprintf(s, "%s\n", vmentry_l1d_param[vmentry_l1d_flush].option);
 }
+
 static const struct kernel_param_ops vmentry_l1d_flush_ops = {
 	.set = vmentry_l1d_flush_set,
 	.get = vmentry_l1d_flush_get,
 };
 module_param_cb(vmentry_l1d_flush, &vmentry_l1d_flush_ops, &vmentry_l1d_flush, S_IRUGO);
-
-extern const ulong vmx_return;
 
 #define NR_AUTOLOAD_MSRS 8
 #define VMCS02_POOL_SIZE 1
@@ -574,6 +580,11 @@ static inline int pi_test_sn(struct pi_desc *pi_desc)
 			(unsigned long *)&pi_desc->control);
 }
 
+struct vmx_msrs {
+	unsigned int		nr;
+	struct vmx_msr_entry	val[NR_AUTOLOAD_MSRS];
+};
+
 struct vcpu_vmx {
 	struct kvm_vcpu       vcpu;
 	unsigned long         host_rsp;
@@ -601,9 +612,8 @@ struct vcpu_vmx {
 	struct loaded_vmcs   *loaded_vmcs;
 	bool                  __launched; /* temporary, used in vmx_vcpu_run */
 	struct msr_autoload {
-		unsigned nr;
-		struct vmx_msr_entry guest[NR_AUTOLOAD_MSRS];
-		struct vmx_msr_entry host[NR_AUTOLOAD_MSRS];
+		struct vmx_msrs guest;
+		struct vmx_msrs host;
 	} msr_autoload;
 	struct {
 		int           loaded;
@@ -1752,9 +1762,20 @@ static void clear_atomic_switch_msr_special(struct vcpu_vmx *vmx,
 	vm_exit_controls_clearbit(vmx, exit);
 }
 
+static int find_msr(struct vmx_msrs *m, unsigned int msr)
+{
+	unsigned int i;
+
+	for (i = 0; i < m->nr; ++i) {
+		if (m->val[i].index == msr)
+			return i;
+	}
+	return -ENOENT;
+}
+
 static void clear_atomic_switch_msr(struct vcpu_vmx *vmx, unsigned msr)
 {
-	unsigned i;
+	int i;
 	struct msr_autoload *m = &vmx->msr_autoload;
 
 	switch (msr) {
@@ -1775,18 +1796,21 @@ static void clear_atomic_switch_msr(struct vcpu_vmx *vmx, unsigned msr)
 		}
 		break;
 	}
+	i = find_msr(&m->guest, msr);
+	if (i < 0)
+		goto skip_guest;
+	--m->guest.nr;
+	m->guest.val[i] = m->guest.val[m->guest.nr];
+	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, m->guest.nr);
 
-	for (i = 0; i < m->nr; ++i)
-		if (m->guest[i].index == msr)
-			break;
-
-	if (i == m->nr)
+skip_guest:
+	i = find_msr(&m->host, msr);
+	if (i < 0)
 		return;
-	--m->nr;
-	m->guest[i] = m->guest[m->nr];
-	m->host[i] = m->host[m->nr];
-	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, m->nr);
-	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, m->nr);
+
+	--m->host.nr;
+	m->host.val[i] = m->host.val[m->host.nr];
+	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, m->host.nr);
 }
 
 static void add_atomic_switch_msr_special(struct vcpu_vmx *vmx,
@@ -1801,9 +1825,9 @@ static void add_atomic_switch_msr_special(struct vcpu_vmx *vmx,
 }
 
 static void add_atomic_switch_msr(struct vcpu_vmx *vmx, unsigned msr,
-				  u64 guest_val, u64 host_val)
+				  u64 guest_val, u64 host_val, bool entry_only)
 {
-	unsigned i;
+	int i, j = 0;
 	struct msr_autoload *m = &vmx->msr_autoload;
 
 	switch (msr) {
@@ -1838,24 +1862,31 @@ static void add_atomic_switch_msr(struct vcpu_vmx *vmx, unsigned msr,
 		wrmsrl(MSR_IA32_PEBS_ENABLE, 0);
 	}
 
-	for (i = 0; i < m->nr; ++i)
-		if (m->guest[i].index == msr)
-			break;
+	i = find_msr(&m->guest, msr);
+	if (!entry_only)
+		j = find_msr(&m->host, msr);
 
-	if (i == NR_AUTOLOAD_MSRS) {
+	if (i == NR_AUTOLOAD_MSRS || j == NR_AUTOLOAD_MSRS) {
 		printk_once(KERN_WARNING "Not enough msr switch entries. "
 				"Can't add msr %x\n", msr);
 		return;
-	} else if (i == m->nr) {
-		++m->nr;
-		vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, m->nr);
-		vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, m->nr);
 	}
+	if (i < 0) {
+		i = m->guest.nr++;
+		vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, m->guest.nr);
+	}
+	m->guest.val[i].index = msr;
+	m->guest.val[i].value = guest_val;
 
-	m->guest[i].index = msr;
-	m->guest[i].value = guest_val;
-	m->host[i].index = msr;
-	m->host[i].value = host_val;
+	if (entry_only)
+		return;
+
+	if (j < 0) {
+		j = m->host.nr++;
+		vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, m->host.nr);
+	}
+	m->host.val[j].index = msr;
+	m->host.val[j].value = host_val;
 }
 
 static void reload_tss(void)
@@ -1912,7 +1943,7 @@ static bool update_transition_efer(struct vcpu_vmx *vmx, int efer_offset)
 			guest_efer &= ~EFER_LME;
 		if (guest_efer != host_efer)
 			add_atomic_switch_msr(vmx, MSR_EFER,
-					      guest_efer, host_efer);
+					      guest_efer, host_efer, false);
 		return false;
 	} else {
 		guest_efer &= ~ignore_bits;
@@ -2016,43 +2047,6 @@ static void vmx_save_host_state(struct kvm_vcpu *vcpu)
 		kvm_set_shared_msr(vmx->guest_msrs[i].index,
 				   vmx->guest_msrs[i].data,
 				   vmx->guest_msrs[i].mask);
-}
-
-static void vmx_prepare_guest_switch(struct kvm_vcpu *vcpu, bool *need_l1d_flush)
-{
-	vmx_save_host_state(vcpu);
-	if (!enable_ept || static_cpu_has(X86_FEATURE_HYPERVISOR)) {
-		*need_l1d_flush = false;
-		return;
-	}
-
-	switch (vmentry_l1d_flush) {
-	case VMENTER_L1D_FLUSH_NEVER:
-		*need_l1d_flush = false;
-		break;
-	case VMENTER_L1D_FLUSH_COND:
-		/*
-		 * If vmentry_l1d_flush is VMENTER_L1D_FLUSH_COND, each vmexit handler is
-		 * responsible for setting vcpu->arch.vcpu_unconfined.Currently this happens
-		 * in the following cases:
-		 * - vmlaunch/vmresume: we do not want the cache to be cleared by a
-		 *   nested hypervisor *and* by KVM on bare metal, so we just do it
-		 *   on every nested entry.  Nested hypervisors do not bother clearing
-		 *   the cache.
-		 * - anything that runs the emulator (the slow paths for EPT misconfig
-		 *   or I/O instruction)
-		 * - anything that can cause get_user_pages (EPT violation, and again
-		 *   the slow paths for EPT misconfig or I/O instruction)
-		 * - anything that can run code outside KVM (external interrupt,
-		 *   which can run interrupt handlers or irqs; or the sched_in
-		 *   preempt notifier)
-		 */
-		break;
-	case VMENTER_L1D_FLUSH_ALWAYS:
-	default:
-		*need_l1d_flush = true;
-		break;
-	}
 }
 
 static void __vmx_load_host_state(struct vcpu_vmx *vmx)
@@ -3059,7 +3053,7 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		vcpu->arch.ia32_xss = data;
 		if (vcpu->arch.ia32_xss != host_xss)
 			add_atomic_switch_msr(vmx, MSR_IA32_XSS,
-				vcpu->arch.ia32_xss, host_xss);
+				vcpu->arch.ia32_xss, host_xss, false);
 		else
 			clear_atomic_switch_msr(vmx, MSR_IA32_XSS);
 		break;
@@ -4904,6 +4898,16 @@ static void ept_set_mmio_spte_mask(void)
 	kvm_mmu_set_mmio_spte_mask((0x3ull << 62) | 0x6ull);
 }
 
+static bool vmx_l1d_use_msr_save_list(void)
+{
+	if (!enable_ept || !boot_cpu_has_bug(X86_BUG_L1TF) ||
+	    static_cpu_has(X86_FEATURE_HYPERVISOR) ||
+	    !static_cpu_has(X86_FEATURE_FLUSH_L1D))
+		return false;
+
+	return vmentry_l1d_flush == VMENTER_L1D_FLUSH_ALWAYS;
+}
+
 #define VMX_XSS_EXIT_BITMAP 0
 /*
  * Sets up the vmcs for emulated real mode.
@@ -4974,9 +4978,9 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 
 	vmcs_write32(VM_EXIT_MSR_STORE_COUNT, 0);
 	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, 0);
-	vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vmx->msr_autoload.host));
+	vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vmx->msr_autoload.host.val));
 	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, 0);
-	vmcs_write64(VM_ENTRY_MSR_LOAD_ADDR, __pa(vmx->msr_autoload.guest));
+	vmcs_write64(VM_ENTRY_MSR_LOAD_ADDR, __pa(vmx->msr_autoload.guest.val));
 
 	if (vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_PAT)
 		vmcs_write64(GUEST_IA32_PAT, vmx->vcpu.arch.pat);
@@ -5249,6 +5253,12 @@ static void vmx_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
 			vmcs_clear_bits(GUEST_INTERRUPTIBILITY_INFO,
 					GUEST_INTR_STATE_NMI);
 	}
+	/*
+	 * If flushing the L1D cache on every VMENTER is enforced and the
+	 * MSR is available, use the MSR save list.
+	 */
+	if (vmx_l1d_use_msr_save_list())
+		add_atomic_switch_msr(vmx, MSR_IA32_FLUSH_CMD, L1D_FLUSH, 0, true);
 }
 
 static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
@@ -8291,6 +8301,77 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	}
 }
 
+/*
+ * Software based L1D cache flush which is used when microcode providing
+ * the cache control MSR is not loaded.
+ *
+ * The L1D cache is 32 KiB on Nehalem and later microarchitectures, but to
+ * flush it is required to read in 64 KiB because the replacement algorithm
+ * is not exactly LRU. This could be sized at runtime via topology
+ * information but as all relevant affected CPUs have 32KiB L1D cache size
+ * there is no point in doing so.
+ */
+#define L1D_CACHE_ORDER 4
+static void *vmx_l1d_flush_pages;
+
+static void vmx_l1d_flush(struct kvm_vcpu *vcpu)
+{
+	int size = PAGE_SIZE << L1D_CACHE_ORDER;
+	bool always;
+
+	/*
+	 * This code is only executed when:
+	 * - the flush mode is 'cond'
+	 * - the flush mode is 'always' and the flush MSR is not
+	 *   available
+	 *
+	 * If the CPU has the flush MSR then clear the flush bit because
+	 * 'always' mode is handled via the MSR save list.
+	 *
+	 * If the MSR is not avaibable then act depending on the mitigation
+	 * mode: If 'flush always', keep the flush bit set, otherwise clear
+	 * it.
+	 *
+	 * The flush bit gets set again either from vcpu_run() or from one
+	 * of the unsafe VMEXIT handlers.
+	 */
+	if (static_cpu_has(X86_FEATURE_FLUSH_L1D))
+		always = false;
+	else
+		always = vmentry_l1d_flush == VMENTER_L1D_FLUSH_ALWAYS;
+
+	vcpu->arch.l1tf_flush_l1d = always;
+
+	vcpu->stat.l1d_flush++;
+
+	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
+		wrmsrl(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
+		return;
+	}
+
+	asm volatile(
+		/* First ensure the pages are in the TLB */
+		"xorl	%%eax, %%eax\n"
+		".Lpopulate_tlb:\n\t"
+		"movzbl	(%[empty_zp], %%" _ASM_AX "), %%ecx\n\t"
+		"addl	$4096, %%eax\n\t"
+		"cmpl	%%eax, %[size]\n\t"
+		"jne	.Lpopulate_tlb\n\t"
+		"xorl	%%eax, %%eax\n\t"
+		"cpuid\n\t"
+		/* Now fill the cache */
+		"xorl	%%eax, %%eax\n"
+		".Lfill_cache:\n"
+		"movzbl	(%[empty_zp], %%" _ASM_AX "), %%ecx\n\t"
+		"addl	$64, %%eax\n\t"
+		"cmpl	%%eax, %[size]\n\t"
+		"jne	.Lfill_cache\n\t"
+		"lfence\n"
+		:: [empty_zp] "r" (vmx_l1d_flush_pages),
+		    [size] "r" (size)
+		: "eax", "ebx", "ecx", "edx");
+}
+
 static void update_cr8_intercept(struct kvm_vcpu *vcpu, int tpr, int irr)
 {
 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
@@ -8503,7 +8584,6 @@ static void vmx_handle_external_intr(struct kvm_vcpu *vcpu)
 			[ss]"i"(__KERNEL_DS),
 			[cs]"i"(__KERNEL_CS)
 			);
-		vcpu->arch.vcpu_unconfined = true;
 	} else
 		local_irq_enable();
 }
@@ -8665,7 +8745,7 @@ static void atomic_switch_perf_msrs(struct vcpu_vmx *vmx)
 			clear_atomic_switch_msr(vmx, msrs[i].msr);
 		else
 			add_atomic_switch_msr(vmx, msrs[i].msr, msrs[i].guest,
-					msrs[i].host);
+					msrs[i].host, false);
 }
 
 static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
@@ -8723,6 +8803,12 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	x86_spec_ctrl_set_guest(vmx->spec_ctrl, 0);
 
 	vmx->__launched = vmx->loaded_vmcs->launched;
+
+	if (static_branch_unlikely(&vmx_l1d_should_flush)) {
+		if (vcpu->arch.l1tf_flush_l1d)
+			vmx_l1d_flush(vcpu);
+	}
+
 	asm(
 		/* Store host registers */
 		"push %%" _ASM_DX "; push %%" _ASM_BP ";"
@@ -9047,6 +9133,20 @@ free_vcpu:
 	free_vpid(vmx->vpid);
 	kmem_cache_free(kvm_vcpu_cache, vmx);
 	return ERR_PTR(err);
+}
+
+#define L1TF_MSG "SMT enabled with L1TF CPU bug present. Refer to CVE-2018-3620 for details.\n"
+
+static int vmx_vm_init(struct kvm *kvm)
+{
+	if (boot_cpu_has(X86_BUG_L1TF) && cpu_smt_control == CPU_SMT_ENABLED) {
+		if (nosmt) {
+			pr_err(L1TF_MSG);
+			return -EOPNOTSUPP;
+		}
+		pr_warn(L1TF_MSG);
+	}
+	return 0;
 }
 
 static void __init vmx_check_processor_compat(void *rtn)
@@ -10123,6 +10223,9 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 		}
 	}
 
+	/* Hide L1D cache contents from the nested guest.  */
+	vmx->vcpu.arch.l1tf_flush_l1d = true;
+
 	/*
 	 * We're finally done with prerequisite checking, and can start with
 	 * the nested entry.
@@ -10162,9 +10265,6 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 	}
 
 	vmcs12->launch_state = 1;
-
-	/* Hide L1D cache contents from the nested guest.  */
-	vmx->vcpu.arch.vcpu_unconfined = true;
 
 	if (vmcs12->guest_activity_state == GUEST_ACTIVITY_HLT)
 		return kvm_vcpu_halt(vcpu);
@@ -10994,11 +11094,13 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.cpu_has_accelerated_tpr = report_flexpriority,
 	.has_emulated_msr = vmx_has_emulated_msr,
 
+	.vm_init = vmx_vm_init,
+
 	.vcpu_create = vmx_create_vcpu,
 	.vcpu_free = vmx_free_vcpu,
 	.vcpu_reset = vmx_vcpu_reset,
 
-	.prepare_guest_switch = vmx_prepare_guest_switch,
+	.prepare_guest_switch = vmx_save_host_state,
 	.vcpu_load = vmx_vcpu_load,
 	.vcpu_put = vmx_vcpu_put,
 
@@ -11109,12 +11211,48 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.setup_mce = vmx_setup_mce,
 };
 
+static int __init vmx_setup_l1d_flush(void)
+{
+	struct page *page;
+
+	if (vmentry_l1d_flush == VMENTER_L1D_FLUSH_NEVER ||
+	    !boot_cpu_has_bug(X86_BUG_L1TF) ||
+	    vmx_l1d_use_msr_save_list())
+		return 0;
+
+	if (!boot_cpu_has(X86_FEATURE_FLUSH_L1D)) {
+		page = alloc_pages(GFP_KERNEL, L1D_CACHE_ORDER);
+		if (!page)
+			return -ENOMEM;
+		vmx_l1d_flush_pages = page_address(page);
+	}
+
+	static_branch_enable(&vmx_l1d_should_flush);
+	return 0;
+}
+
+static void vmx_free_l1d_flush_pages(void)
+{
+	if (vmx_l1d_flush_pages) {
+		free_pages((unsigned long)vmx_l1d_flush_pages, L1D_CACHE_ORDER);
+		vmx_l1d_flush_pages = NULL;
+	}
+}
+
 static int __init vmx_init(void)
 {
-	int r = kvm_init(&vmx_x86_ops, sizeof(struct vcpu_vmx),
-                     __alignof__(struct vcpu_vmx), THIS_MODULE);
+	int r;
+
+	r = vmx_setup_l1d_flush();
 	if (r)
 		return r;
+
+	r = kvm_init(&vmx_x86_ops, sizeof(struct vcpu_vmx),
+		     __alignof__(struct vcpu_vmx), THIS_MODULE);
+	if (r) {
+		vmx_free_l1d_flush_pages();
+		return r;
+	}
 
 #ifdef CONFIG_KEXEC_CORE
 	rcu_assign_pointer(crash_vmclear_loaded_vmcss,
@@ -11132,6 +11270,8 @@ static void __exit vmx_exit(void)
 #endif
 
 	kvm_exit();
+
+	vmx_free_l1d_flush_pages();
 }
 
 module_init(vmx_init)
