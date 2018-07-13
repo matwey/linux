@@ -648,11 +648,8 @@ static void backing_request_endio(struct bio *bio)
 		 */
 		if (unlikely(s->iop.writeback &&
 			     bio->bi_opf & REQ_PREFLUSH)) {
-			char buf[BDEVNAME_SIZE];
-
-			bio_devname(bio, buf);
 			pr_err("Can't flush %s: returned bi_error %i",
-				buf, bio->bi_error);
+				dc->backing_dev_name, bio->bi_error);
 		} else {
 			/* set to orig_bio->bi_error in bio_complete() */
 			s->iop.error = bio->bi_error;
