@@ -30,6 +30,8 @@
 #include <asm/nospec-branch.h>
 #include <asm/spec-ctrl.h>
 
+static void ssb_init_cmd_line(void);
+
 #ifdef CONFIG_X86_32
 #ifndef CONFIG_XEN
 static int __init no_halt(char *s)
@@ -178,7 +180,7 @@ static void __init check_config(void)
 #endif /* CONFIG_X86_32 */
 
 static void __init spectre_v2_select_mitigation(void);
-static void __init ssb_select_mitigation(void);
+void ssb_select_mitigation(void);
 static void x86_amd_ssbd_disable(void);
 
 /*
@@ -232,6 +234,7 @@ void __init check_bugs(void)
 	 * Select proper mitigation for any exposure to the Speculative Store
 	 * Bypass vulnerability.
 	 */
+	ssb_init_cmd_line();
 	ssb_select_mitigation();
 
 #ifdef CONFIG_X86_32
@@ -538,6 +541,8 @@ enum ssb_mitigation_cmd {
 	SPEC_STORE_BYPASS_CMD_SECCOMP,
 };
 
+static enum ssb_mitigation_cmd ssb_cmd;
+
 static const char *ssb_strings[] = {
 	[SPEC_STORE_BYPASS_NONE]        = "Vulnerable",
 	[SPEC_STORE_BYPASS_DISABLE]     = "Mitigation: Speculative Store Bypass disabled",
@@ -587,7 +592,12 @@ static enum ssb_mitigation_cmd __init ssb_parse_cmdline(void)
 	return cmd;
 }
 
-static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
+static void ssb_init_cmd_line(void)
+{
+	ssb_cmd = ssb_parse_cmdline();
+}
+
+static enum ssb_mitigation_cmd __ssb_select_mitigation(void)
 {
 	enum ssb_mitigation mode = SPEC_STORE_BYPASS_NONE;
 	enum ssb_mitigation_cmd cmd;
@@ -595,7 +605,7 @@ static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
 	if (!boot_cpu_has(X86_FEATURE_SSBD))
 		return mode;
 
-	cmd = ssb_parse_cmdline();
+	cmd = ssb_cmd;
 	if (!x86_bug_spec_store_bypass &&
 			(cmd == SPEC_STORE_BYPASS_CMD_NONE ||
 			 cmd == SPEC_STORE_BYPASS_CMD_AUTO))
@@ -651,7 +661,7 @@ static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
 	return mode;
 }
 
-static void ssb_select_mitigation()
+void ssb_select_mitigation(void)
 {
 	ssb_mode = __ssb_select_mitigation();
 
