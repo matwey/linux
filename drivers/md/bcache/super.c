@@ -274,7 +274,9 @@ static void write_super_endio(struct bio *bio)
 {
 	struct cache *ca = bio->bi_private;
 
-	bch_count_io_errors(ca, bio->bi_error, "writing superblock");
+	/* is_read = 0 */
+	bch_count_io_errors(ca, bio->bi_error, 0,
+			    "writing superblock");
 	closure_put(&ca->set->sb_write);
 }
 

@@ -240,8 +240,10 @@ static void read_dirty_endio(struct bio *bio)
 	struct keybuf_key *w = bio->bi_private;
 	struct dirty_io *io = w->private;
 
+	/* is_read = 1 */
 	bch_count_io_errors(PTR_CACHE(io->dc->disk.c, &w->key, 0),
-			    bio->bi_error, "reading dirty data from cache");
+			    bio->bi_error, 1,
+			    "reading dirty data from cache");
 
 	dirty_endio(bio);
 }

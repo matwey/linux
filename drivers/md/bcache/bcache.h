@@ -857,7 +857,7 @@ static inline void wake_up_allocators(struct cache_set *c)
 
 /* Forward declarations */
 
-void bch_count_io_errors(struct cache *, int, const char *);
+void bch_count_io_errors(struct cache *, int, int, const char *);
 void bch_bbio_count_io_errors(struct cache_set *, struct bio *,
 			      int, const char *);
 void bch_bbio_endio(struct cache_set *, struct bio *, int, const char *);
