@@ -624,6 +624,9 @@ int machine_check_generic(struct pt_regs *regs)
 void machine_check_exception(struct pt_regs *regs)
 {
 	int recover = 0;
+	bool nested = in_nmi();
+	if (!nested)
+		nmi_enter();
 
 	__get_cpu_var(irq_stat).mce_exceptions++;
 
@@ -639,7 +642,7 @@ void machine_check_exception(struct pt_regs *regs)
 		recover = cur_cpu_spec->machine_check(regs);
 
 	if (recover > 0)
-		return;
+		goto bail;
 
 #if defined(CONFIG_8xx) && defined(CONFIG_PCI)
 	/* the qspan pci read routines can cause machine checks -- Cort
@@ -649,20 +652,24 @@ void machine_check_exception(struct pt_regs *regs)
 	 * -- BenH
 	 */
 	bad_page_fault(regs, regs->dar, SIGBUS);
-	return;
+	goto bail;
 #endif
 
 	if (debugger_fault_handler(regs))
-		return;
+		goto bail;
 
 	if (check_io_access(regs))
-		return;
+		goto bail;
 
 	die("Machine check", regs, SIGBUS);
 
 	/* Must die if the interrupt is not recoverable */
 	if (!(regs->msr & MSR_RI))
-		panic("Unrecoverable Machine check");
+		nmi_panic(regs, "Unrecoverable Machine check");
+
+bail:
+	if (!nested)
+		nmi_exit();
 }
 
 void SMIException(struct pt_regs *regs)
