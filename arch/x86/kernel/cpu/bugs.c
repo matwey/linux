@@ -11,6 +11,7 @@
 #include <linux/utsname.h>
 #include <linux/device.h>
 #include <linux/prctl.h>
+#include <linux/module.h>
 
 #include <asm/nospec-branch.h>
 #include <asm/spec_ctrl.h>
@@ -286,6 +287,27 @@ static const char *spectre_v2_strings[] = {
 #define pr_fmt(fmt)     "Spectre V2 mitigation: " fmt
 
 static enum spectre_v2_mitigation spectre_v2_enabled = SPECTRE_V2_NONE;
+
+#ifdef RETPOLINE
+static bool spectre_v2_bad_module;
+
+bool retpoline_module_ok(bool has_retpoline)
+{
+	if (spectre_v2_enabled == SPECTRE_V2_NONE || has_retpoline)
+		return true;
+
+	pr_err("System may be vunerable to spectre v2\n");
+	spectre_v2_bad_module = true;
+	return false;
+}
+
+static inline const char *spectre_v2_module_string(void)
+{
+	return spectre_v2_bad_module ? " - vulnerable module loaded" : "";
+}
+#else
+static inline const char *spectre_v2_module_string(void) { return ""; }
+#endif
 
 static const __initconst struct x86_cpu_id cpu_no_spec_store_bypass[] = {
         { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PINEVIEW	},
@@ -762,13 +784,16 @@ ssize_t cpu_show_spectre_v2(struct device *dev,
 		return sprintf(buf, "Not affected\n");
 
 	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL) && x86_ibrs_enabled()) {
-		return sprintf(buf, "Mitigation: IBRS+IBPB\n");
+		return sprintf(buf, "Mitigation: IBRS+IBPB%s\n",
+			spectre_v2_module_string());
 	}
 
 	if (x86_ibpb_enabled())
-		return sprintf(buf, "%s + IBPB\n", spectre_v2_strings[spectre_v2_enabled]);
+		return sprintf(buf, "%s + IBPB%s\n", spectre_v2_strings[spectre_v2_enabled],
+			spectre_v2_module_string());
 	else
-		return sprintf(buf, "%s\n", spectre_v2_strings[spectre_v2_enabled]);
+		return sprintf(buf, "%s%s\n", spectre_v2_strings[spectre_v2_enabled],
+			spectre_v2_module_string());
 }
 
 ssize_t __weak cpu_show_spec_store_bypass(struct device *dev,
