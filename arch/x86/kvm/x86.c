@@ -137,7 +137,6 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "insn_emulation_fail", VCPU_STAT(insn_emulation_fail) },
 	{ "irq_injections", VCPU_STAT(irq_injections) },
 	{ "nmi_injections", VCPU_STAT(nmi_injections) },
-	{ "l1d_flush", VCPU_STAT(l1d_flush) },
 	{ "mmu_shadow_zapped", VM_STAT(mmu_shadow_zapped) },
 	{ "mmu_pte_write", VM_STAT(mmu_pte_write) },
 	{ "mmu_pte_updated", VM_STAT(mmu_pte_updated) },
@@ -4099,7 +4098,7 @@ int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 	int r = X86EMUL_CONTINUE;
 
 	/* kvm_write_guest_virt_system can pull in tons of pages. */
-	vcpu->arch.vcpu_unconfined = true;
+	vcpu->arch.l1tf_flush_l1d = true;
 
 	while (bytes) {
 		gpa_t gpa =  vcpu->arch.walk_mmu->gva_to_gpa(vcpu, addr,
@@ -4870,8 +4869,6 @@ int x86_emulate_instruction(struct kvm_vcpu *vcpu,
 	struct decode_cache *c = &vcpu->arch.emulate_ctxt.decode;
 	bool writeback = true;
 
-	vcpu->arch.vcpu_unconfined = true;
-
 	kvm_clear_exception_queue(vcpu);
 
 	if (!(emulation_type & EMULTYPE_NO_DECODE)) {
@@ -5165,51 +5162,10 @@ void kvm_after_handle_nmi(struct kvm_vcpu *vcpu)
 }
 EXPORT_SYMBOL_GPL(kvm_after_handle_nmi);
 
-/*
- * The L1D cache is 32 KiB on Skylake, but to flush it we have to read in
- * 64 KiB because the replacement algorithm is not exactly LRU.
- */
-#define L1D_CACHE_ORDER 4
-static void *__read_mostly empty_zero_pages;
-
-void kvm_l1d_flush(void)
-{
-	int size;
-
-	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
-		wrmsrl(MSR_IA32_FLUSH_L1D, MSR_IA32_FLUSH_L1D_VALUE);
-		return;
-	}
-
-	/* FIXME: could this be boot_cpu_data.x86_cache_size * 2?  */
-	size = PAGE_SIZE << L1D_CACHE_ORDER;
-	asm volatile(
-		/* First ensure the pages are in the TLB */
-		"xorl %%eax, %%eax\n\t"
-		"11: \n\t"
-		"movzbl (%0, %%" _ASM_AX "), %%ecx\n\t"
-		"addl $4096, %%eax\n\t"
-		"cmpl %%eax, %1\n\t"
-		"jne 11b\n\t"
-		"xorl %%eax, %%eax\n\t"
-		"cpuid\n\t"
-		/* Now fill the cache */
-		"xorl %%eax, %%eax\n\t"
-		"12:\n\t"
-		"movzbl (%0, %%" _ASM_AX "), %%ecx\n\t"
-		"addl $64, %%eax\n\t"
-		"cmpl %%eax, %1\n\t"
-		"jne 12b\n\t"
-		"lfence\n\t"
-		: : "r" (empty_zero_pages), "r" (size)
-		: "eax", "ebx", "ecx", "edx");
-}
-
 int kvm_arch_init(void *opaque)
 {
 	int r;
 	struct kvm_x86_ops *ops = (struct kvm_x86_ops *)opaque;
-	struct page *page;
 
 	if (kvm_x86_ops) {
 		printk(KERN_ERR "kvm: already loaded the other module\n");
@@ -5228,15 +5184,9 @@ int kvm_arch_init(void *opaque)
 		goto out;
 	}
 
-	r = -ENOMEM;
-	page = alloc_pages(GFP_ATOMIC, L1D_CACHE_ORDER);
-	if (!page)
-		goto out;
-	empty_zero_pages = page_address(page);
-
 	r = kvm_mmu_module_init();
 	if (r)
-		goto out_free_zero_pages;
+		goto out;
 
 	kvm_init_msr_list();
 
@@ -5254,8 +5204,6 @@ int kvm_arch_init(void *opaque)
 
 	return 0;
 
-out_free_zero_pages:
-	free_pages((unsigned long)empty_zero_pages, L1D_CACHE_ORDER);
 out:
 	return r;
 }
@@ -5270,7 +5218,6 @@ void kvm_arch_exit(void)
 	unregister_hotcpu_notifier(&kvmclock_cpu_notifier_block);
 	kvm_x86_ops = NULL;
 	kvm_mmu_module_exit();
-	free_pages((unsigned long)empty_zero_pages, L1D_CACHE_ORDER);
 }
 
 int kvm_emulate_halt(struct kvm_vcpu *vcpu)
@@ -5301,6 +5248,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	uint16_t code, rep_idx, rep_cnt, res = HV_STATUS_SUCCESS, rep_done = 0;
 	bool fast, longmode;
 	int cs_db, cs_l;
+
+	vcpu->arch.l1tf_flush_l1d = true;
 
 	/*
 	 * hypercall generates UD from non zero cpl and real mode
@@ -5660,7 +5609,6 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	bool req_int_win = !irqchip_in_kernel(vcpu->kvm) &&
 		vcpu->run->request_interrupt_window;
 	bool req_immediate_exit = false;
-	bool need_l1d_flush;
 
 	if (vcpu->requests) {
 		if (kvm_check_request(KVM_REQ_MMU_RELOAD, vcpu))
@@ -5736,13 +5684,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 
 	preempt_disable();
 
-	need_l1d_flush = vcpu->arch.vcpu_unconfined;
-	vcpu->arch.vcpu_unconfined = false;
-	kvm_x86_ops->prepare_guest_switch(vcpu, &need_l1d_flush);
-	if (need_l1d_flush) {
-		vcpu->stat.l1d_flush++;
-		kvm_l1d_flush();
-	}
+	kvm_x86_ops->prepare_guest_switch(vcpu);
 	kvm_load_guest_fpu(vcpu);
 	kvm_load_guest_xcr0(vcpu);
 
@@ -5851,7 +5793,7 @@ static int __vcpu_run(struct kvm_vcpu *vcpu)
 	}
 
 	vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
-	vcpu->arch.vcpu_unconfined = true;
+	vcpu->arch.l1tf_flush_l1d = true;
 
 	r = 1;
 	while (r > 0) {
@@ -6601,7 +6543,7 @@ void kvm_arch_vcpu_uninit(struct kvm_vcpu *vcpu)
 
 void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu)
 {
-	vcpu->arch.vcpu_unconfined = true;
+	vcpu->arch.l1tf_flush_l1d = true;
 }
 
 int kvm_arch_init_vm(struct kvm *kvm)

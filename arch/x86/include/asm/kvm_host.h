@@ -446,9 +446,8 @@ struct kvm_vcpu_arch {
 		u64 length;
 		u64 status;
 	} osvw;
-
-	/* for L1 terminal fault vulnerability */
-	bool vcpu_unconfined;
+	/* Flush the L1 Data cache for L1TF mitigation on VMENTER */
+	bool l1tf_flush_l1d;
 };
 
 struct kvm_apic_map {
@@ -572,7 +571,7 @@ struct kvm_x86_ops {
 	void (*vcpu_free)(struct kvm_vcpu *vcpu);
 	int (*vcpu_reset)(struct kvm_vcpu *vcpu);
 
-	void (*prepare_guest_switch)(struct kvm_vcpu *vcpu, bool *need_l1d_flush);
+	void (*prepare_guest_switch)(struct kvm_vcpu *vcpu);
 	void (*vcpu_load)(struct kvm_vcpu *vcpu, int cpu);
 	void (*vcpu_put)(struct kvm_vcpu *vcpu);
 
@@ -932,5 +931,5 @@ bool kvm_arch_can_inject_async_page_present(struct kvm_vcpu *vcpu);
 extern bool kvm_find_async_pf_gfn(struct kvm_vcpu *vcpu, gfn_t gfn);
 
 void kvm_complete_insn_gp(struct kvm_vcpu *vcpu, int err);
-void kvm_l1d_flush(void);
+
 #endif /* _ASM_X86_KVM_HOST_H */

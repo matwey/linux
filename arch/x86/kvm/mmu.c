@@ -3405,7 +3405,6 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u32 error_code,
 	int r;
 	enum emulation_result er;
 
-	vcpu->arch.vcpu_unconfined = true;
 	r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code, false);
 	if (r < 0)
 		goto out;

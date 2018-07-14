@@ -102,6 +102,8 @@
 #define X86_FEATURE_APERFMPERF	(3*32+28) /* APERFMPERF */
 #define X86_FEATURE_EAGER_FPU	(3*32+29) /* "eagerfpu" Non lazy FPU restore */
 #define X86_FEATURE_L1TF_FIX		( 3*32+30) /* "" L1TF workaround used */
+#define X86_FEATURE_FLUSH_L1D		(2*32+31) /* Flush L1D cache */
+
 
 /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
 #define X86_FEATURE_XMM3	(4*32+ 0) /* "pni" SSE-3 */
@@ -188,7 +190,6 @@
 #define X86_FEATURE_IBRS	( 7*32+21) /* "" Indirect Branch Restricted Speculation */
 #define X86_FEATURE_SSBD         ( 7*32+22) /* Speculative Store Bypass Disable */
 #define X86_FEATURE_SPEC_CTRL_MSR	( 7*32+23) /* "" Speculation Control MSR */
-#define X86_FEATURE_FLUSH_L1D	(7*32+24) /* IA32_FLUSH_L1D MSR */
 
 #define X86_FEATURE_AMD_SSBD     ( 7*32+27)  /* "" AMD SSBD implementation */
 #define X86_FEATURE_SPEC_STORE_BYPASS_DISABLE  ( 7*32+28) /* "" Disable Speculative Store Bypass. */
