@@ -342,6 +342,7 @@ struct cached_dev {
 
 	struct keybuf		writeback_keys;
 
+	struct task_struct	*status_update_thread;
 	/* For tracking sequential IO */
 #define RECENT_IO_BITS	7
 #define RECENT_IO	(1 << RECENT_IO_BITS)
@@ -381,6 +382,7 @@ struct cached_dev {
 #define DEFAULT_CACHED_DEV_ERROR_LIMIT	64
 	atomic_t		io_errors;
 	unsigned		error_limit;
+	unsigned		offline_seconds;
 
 	char			backing_dev_name[BDEVNAME_SIZE];
 };
