@@ -950,8 +950,22 @@ restore_all:
 restore_all_notrace:
 	CHECK_AND_APPLY_ESPFIX
 restore_nocheck:
+
+#ifdef CONFIG_VM86
+	movl	PT_EFLAGS(%esp), %eax	# mix EFLAGS and CS
+	movb	PT_CS(%esp), %al
+	andl	$(X86_EFLAGS_VM | SEGMENT_RPL_MASK), %eax
+#else
+	movl	PT_CS(%esp), %eax
+	andl	$SEGMENT_RPL_MASK, %eax
+#endif
+	cmpl	$USER_RPL, %eax
+	jae	restore_all_cr3_switch
+
 	testl   $CS_FROM_USER_CR3, PT_CS(%esp)
 	jz	restore_all_no_switch
+
+restore_all_cr3_switch:
 	andl	$(~CS_FROM_USER_CR3), PT_CS(%esp)
 	SWITCH_TO_USER_CR3 scratch_reg=%eax
 restore_all_no_switch:
