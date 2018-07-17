@@ -298,6 +298,7 @@ static void microcode_check(void)
 {
 	perf_check_microcode();
 	x86_spec_check();
+	x86_spec_set_on_each_cpu();
 	cpu_caps_sync_late();
 }
 

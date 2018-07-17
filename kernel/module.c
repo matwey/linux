@@ -2461,6 +2461,15 @@ static int module_sig_check(struct load_info *info,
 }
 #endif /* !CONFIG_MODULE_SIG */
 
+static void check_modinfo_retpoline(struct module *mod, struct load_info *info)
+{
+	if (retpoline_module_ok(get_modinfo(info, "retpoline")))
+		return;
+
+	pr_warn("%s: loading module not compiled with retpoline compiler.\n",
+		mod->name);
+}
+
 /* Sets info->hdr, info->len and info->sig_ok. */
 static int copy_and_check(struct load_info *info,
 			  const void __user *umod, unsigned long len,
@@ -2623,6 +2632,8 @@ static int check_modinfo(struct module *mod, struct load_info *info)
 		       mod->name, modmagic, vermagic);
 		return -ENOEXEC;
 	}
+
+	check_modinfo_retpoline(mod, info);
 
 	if (get_modinfo(info, "staging")) {
 		add_taint_module(mod, TAINT_CRAP);

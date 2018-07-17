@@ -7,6 +7,7 @@
 #include <asm/msr.h>
 #include <asm/processor.h>
 #include <asm/spec_ctrl.h>
+#include <asm/cpu.h>
 
 /*
  * Keep it open for more flags in case needed.
@@ -63,13 +64,16 @@ EXPORT_SYMBOL_GPL(stuff_RSB);
  */
 void x86_spec_check(void)
 {
+	unsigned int edx;
 
 	if (ibpb_state == 0) {
 		printk_once(KERN_INFO "IBRS/IBPB: disabled\n");
 		return;
 	}
 
-	if (cpuid_edx(7) & BIT(26)) {
+	edx = cpuid_edx(7);
+
+	if (edx & BIT(26)) {
 		if (ibrs_state == -1) {
 			/* noone force-disabled IBRS */
 			ibrs_state = 1;
@@ -80,6 +84,13 @@ void x86_spec_check(void)
 
 		setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
 		setup_force_cpu_cap(X86_FEATURE_IBRS);
+
+		if (!boot_cpu_has(X86_FEATURE_SSBD) &&
+		    (edx & BIT(31))) {
+			/* We gained SSBD support - initialize the mitigation */
+			setup_force_cpu_cap(X86_FEATURE_SSBD);
+			ssb_select_mitigation();
+		}
 	}
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
@@ -92,6 +103,18 @@ void x86_spec_check(void)
 	}
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
+
+static void __x86_spec_set(void *data)
+{
+	x86_spec_ctrl_setup_ap();
+}
+
+void x86_spec_set_on_each_cpu(void)
+{
+	if (boot_cpu_has(X86_FEATURE_SSBD))
+		on_each_cpu(__x86_spec_set, NULL, 1);
+}
+EXPORT_SYMBOL_GPL(x86_spec_set_on_each_cpu);
 
 int __init nospec(char *str)
 {

@@ -11,6 +11,7 @@
 #include <linux/utsname.h>
 #include <linux/device.h>
 #include <linux/prctl.h>
+#include <linux/module.h>
 #include <linux/swap.h>
 #include <linux/cpu.h>
 
@@ -32,6 +33,8 @@
 #include <asm/nospec-branch.h>
 #include <asm/spec-ctrl.h>
 #include <asm/e820.h>
+
+static void ssb_init_cmd_line(void);
 
 #ifdef CONFIG_X86_32
 #ifndef CONFIG_XEN
@@ -181,7 +184,7 @@ static void __init check_config(void)
 #endif /* CONFIG_X86_32 */
 
 static void __init spectre_v2_select_mitigation(void);
-static void __init ssb_select_mitigation(void);
+void ssb_select_mitigation(void);
 static void x86_amd_ssbd_disable(void);
 static void __init l1tf_select_mitigation(void);
 
@@ -244,6 +247,7 @@ void __init check_bugs(void)
 	 * Select proper mitigation for any exposure to the Speculative Store
 	 * Bypass vulnerability.
 	 */
+	ssb_init_cmd_line();
 	ssb_select_mitigation();
 
 #ifdef CONFIG_X86_32
@@ -299,6 +303,27 @@ static const char *spectre_v2_strings[] = {
 #define pr_fmt(fmt)     "Spectre V2 mitigation: " fmt
 
 static enum spectre_v2_mitigation spectre_v2_enabled = SPECTRE_V2_NONE;
+
+#ifdef RETPOLINE
+static bool spectre_v2_bad_module;
+
+bool retpoline_module_ok(bool has_retpoline)
+{
+	if (spectre_v2_enabled == SPECTRE_V2_NONE || has_retpoline)
+		return true;
+
+	pr_err("System may be vunerable to spectre v2\n");
+	spectre_v2_bad_module = true;
+	return false;
+}
+
+static inline const char *spectre_v2_module_string(void)
+{
+	return spectre_v2_bad_module ? " - vulnerable module loaded" : "";
+}
+#else
+static inline const char *spectre_v2_module_string(void) { return ""; }
+#endif
 
 static const __initconst struct x86_cpu_id cpu_no_spec_store_bypass[] = {
         { X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PINEVIEW	},
@@ -626,6 +651,8 @@ enum ssb_mitigation_cmd {
 	SPEC_STORE_BYPASS_CMD_SECCOMP,
 };
 
+static enum ssb_mitigation_cmd ssb_cmd;
+
 static const char *ssb_strings[] = {
 	[SPEC_STORE_BYPASS_NONE]        = "Vulnerable",
 	[SPEC_STORE_BYPASS_DISABLE]     = "Mitigation: Speculative Store Bypass disabled",
@@ -675,7 +702,12 @@ static enum ssb_mitigation_cmd __init ssb_parse_cmdline(void)
 	return cmd;
 }
 
-static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
+static void ssb_init_cmd_line(void)
+{
+	ssb_cmd = ssb_parse_cmdline();
+}
+
+static enum ssb_mitigation_cmd __ssb_select_mitigation(void)
 {
 	enum ssb_mitigation mode = SPEC_STORE_BYPASS_NONE;
 	enum ssb_mitigation_cmd cmd;
@@ -683,7 +715,7 @@ static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
 	if (!boot_cpu_has(X86_FEATURE_SSBD))
 		return mode;
 
-	cmd = ssb_parse_cmdline();
+	cmd = ssb_cmd;
 	if (!x86_bug_spec_store_bypass &&
 			(cmd == SPEC_STORE_BYPASS_CMD_NONE ||
 			 cmd == SPEC_STORE_BYPASS_CMD_AUTO))
@@ -739,7 +771,7 @@ static enum ssb_mitigation_cmd __init __ssb_select_mitigation(void)
 	return mode;
 }
 
-static void ssb_select_mitigation()
+void ssb_select_mitigation(void)
 {
 	ssb_mode = __ssb_select_mitigation();
 
@@ -893,13 +925,16 @@ ssize_t cpu_show_spectre_v2(struct device *dev,
 		return sprintf(buf, "Not affected\n");
 
 	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL) && x86_ibrs_enabled()) {
-		return sprintf(buf, "Mitigation: IBRS+IBPB\n");
+		return sprintf(buf, "Mitigation: IBRS+IBPB%s\n",
+			spectre_v2_module_string());
 	}
 
 	if (x86_ibpb_enabled())
-		return sprintf(buf, "%s + IBPB\n", spectre_v2_strings[spectre_v2_enabled]);
+		return sprintf(buf, "%s + IBPB%s\n", spectre_v2_strings[spectre_v2_enabled],
+			spectre_v2_module_string());
 	else
-		return sprintf(buf, "%s\n", spectre_v2_strings[spectre_v2_enabled]);
+		return sprintf(buf, "%s%s\n", spectre_v2_strings[spectre_v2_enabled],
+			spectre_v2_module_string());
 }
 
 ssize_t __weak cpu_show_spec_store_bypass(struct device *dev,

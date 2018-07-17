@@ -951,7 +951,7 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 #else
 		iowrite32be(
 #endif
-		          ring->doorbell_qpn,
+			  (__force u32)ring->doorbell_qpn,
 			  ring->bf.uar->map + MLX4_SEND_DOORBELL);
 	}
 
