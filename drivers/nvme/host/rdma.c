@@ -591,22 +591,20 @@ out_destroy_cm_id:
 
 static void nvme_rdma_stop_queue(struct nvme_rdma_queue *queue)
 {
+	if (!test_and_clear_bit(NVME_RDMA_Q_LIVE, &queue->flags))
+		return;
+
 	rdma_disconnect(queue->cm_id);
 	ib_drain_qp(queue->qp);
 }
 
 static void nvme_rdma_free_queue(struct nvme_rdma_queue *queue)
 {
-	nvme_rdma_destroy_queue_ib(queue);
-	rdma_destroy_id(queue->cm_id);
-}
-
-static void nvme_rdma_stop_and_free_queue(struct nvme_rdma_queue *queue)
-{
 	if (test_and_set_bit(NVME_RDMA_Q_DELETING, &queue->flags))
 		return;
-	nvme_rdma_stop_queue(queue);
-	nvme_rdma_free_queue(queue);
+
+	nvme_rdma_destroy_queue_ib(queue);
+	rdma_destroy_id(queue->cm_id);
 }
 
 static void nvme_rdma_free_io_queues(struct nvme_rdma_ctrl *ctrl)
@@ -614,7 +612,15 @@ static void nvme_rdma_free_io_queues(struct nvme_rdma_ctrl *ctrl)
 	int i;
 
 	for (i = 1; i < ctrl->queue_count; i++)
-		nvme_rdma_stop_and_free_queue(&ctrl->queues[i]);
+		nvme_rdma_free_queue(&ctrl->queues[i]);
+}
+
+static void nvme_rdma_stop_io_queues(struct nvme_rdma_ctrl *ctrl)
+{
+	int i;
+
+	for (i = 1; i < ctrl->queue_count; i++)
+		nvme_rdma_stop_queue(&ctrl->queues[i]);
 }
 
 static int nvme_rdma_connect_io_queues(struct nvme_rdma_ctrl *ctrl)
@@ -626,17 +632,15 @@ static int nvme_rdma_connect_io_queues(struct nvme_rdma_ctrl *ctrl)
 		if (ret) {
 			dev_info(ctrl->ctrl.device,
 				"failed to connect i/o queue: %d\n", ret);
-			goto out_free_queues;
+			goto out_stop_queues;
 		}
 		set_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[i].flags);
 	}
 
 	return 0;
 
-out_free_queues:
-	for (i = 1; i < ctrl->queue_count; i++)
-		clear_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[i].flags);
-	nvme_rdma_free_io_queues(ctrl);
+out_stop_queues:
+	nvme_rdma_stop_io_queues(ctrl);
 	return ret;
 }
 
@@ -672,7 +676,7 @@ static int nvme_rdma_init_io_queues(struct nvme_rdma_ctrl *ctrl)
 
 out_free_queues:
 	for (i--; i >= 1; i--)
-		nvme_rdma_stop_and_free_queue(&ctrl->queues[i]);
+		nvme_rdma_free_queue(&ctrl->queues[i]);
 
 	return ret;
 }
@@ -681,9 +685,9 @@ static void nvme_rdma_destroy_admin_queue(struct nvme_rdma_ctrl *ctrl)
 {
 	nvme_rdma_free_qe(ctrl->queues[0].device->dev, &ctrl->async_event_sqe,
 			sizeof(struct nvme_command), DMA_TO_DEVICE);
-	nvme_rdma_stop_and_free_queue(&ctrl->queues[0]);
 	blk_cleanup_queue(ctrl->ctrl.admin_q);
 	blk_mq_free_tag_set(&ctrl->admin_tag_set);
+	nvme_rdma_free_queue(&ctrl->queues[0]);
 	nvme_rdma_dev_put(ctrl->device);
 }
 
@@ -733,21 +737,11 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 
 	++ctrl->ctrl.opts->nr_reconnects;
 
-	if (ctrl->queue_count > 1) {
-		nvme_rdma_free_io_queues(ctrl);
-
-		ret = blk_mq_reinit_tagset(&ctrl->tag_set);
-		if (ret)
-			goto requeue;
-	}
-
-	nvme_rdma_stop_and_free_queue(&ctrl->queues[0]);
-
-	ret = blk_mq_reinit_tagset(&ctrl->admin_tag_set);
+	ret = nvme_rdma_init_queue(ctrl, 0, NVMF_AQ_DEPTH);
 	if (ret)
 		goto requeue;
 
-	ret = nvme_rdma_init_queue(ctrl, 0, NVMF_AQ_DEPTH);
+	ret = blk_mq_reinit_tagset(&ctrl->admin_tag_set);
 	if (ret)
 		goto requeue;
 
@@ -768,12 +762,13 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 		if (ret)
 			goto requeue;
 
+		blk_mq_update_nr_hw_queues(&ctrl->tag_set,
+				ctrl->queue_count - 1);
+
 		ret = nvme_rdma_connect_io_queues(ctrl);
 		if (ret)
 			goto requeue;
 
-		blk_mq_update_nr_hw_queues(&ctrl->tag_set,
-				ctrl->queue_count - 1);
 	}
 
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
@@ -800,25 +795,21 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 {
 	struct nvme_rdma_ctrl *ctrl = container_of(work,
 			struct nvme_rdma_ctrl, err_work);
-	int i;
 
 	nvme_stop_keep_alive(&ctrl->ctrl);
 
-	for (i = 0; i < ctrl->queue_count; i++) {
-		clear_bit(NVME_RDMA_Q_CONNECTED, &ctrl->queues[i].flags);
-		clear_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[i].flags);
-	}
-
-	if (ctrl->queue_count > 1)
+	if (ctrl->queue_count > 1) {
 		nvme_stop_queues(&ctrl->ctrl);
-	blk_mq_stop_hw_queues(ctrl->ctrl.admin_q);
-
-	/* We must take care of fastfail/requeue all our inflight requests */
-	if (ctrl->queue_count > 1)
+		nvme_rdma_stop_io_queues(ctrl);
 		blk_mq_tagset_busy_iter(&ctrl->tag_set,
 					nvme_cancel_request, &ctrl->ctrl);
+		nvme_rdma_free_io_queues(ctrl);
+	}
+	blk_mq_stop_hw_queues(ctrl->ctrl.admin_q);
+	nvme_rdma_stop_queue(&ctrl->queues[0]);
 	blk_mq_tagset_busy_iter(&ctrl->admin_tag_set,
 				nvme_cancel_request, &ctrl->ctrl);
+	nvme_rdma_free_queue(&ctrl->queues[0]);
 
 	/*
 	 * queues are not a live anymore, so restart the queues to fail fast
@@ -1664,6 +1655,7 @@ static void nvme_rdma_shutdown_ctrl(struct nvme_rdma_ctrl *ctrl)
 		nvme_shutdown_ctrl(&ctrl->ctrl);
 
 	blk_mq_stop_hw_queues(ctrl->ctrl.admin_q);
+	nvme_rdma_stop_queue(&ctrl->queues[0]);
 	blk_mq_tagset_busy_iter(&ctrl->admin_tag_set,
 				nvme_cancel_request, &ctrl->ctrl);
 	nvme_rdma_destroy_admin_queue(ctrl);
@@ -2090,6 +2082,7 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 
 out_remove_admin_queue:
 	nvme_stop_keep_alive(&ctrl->ctrl);
+	nvme_rdma_stop_queue(&ctrl->queues[0]);
 	nvme_rdma_destroy_admin_queue(ctrl);
 out_kfree_queues:
 	kfree(ctrl->queues);
