@@ -870,7 +870,6 @@ ssetup_ntlmssp_authenticate:
 
 	kfree(security_blob);
 	rsp = (struct smb2_sess_setup_rsp *)iov[0].iov_base;
-	ses->Suid = rsp->hdr.sync_hdr.SessionId;
 	if (resp_buftype != CIFS_NO_BUFFER &&
 	    rsp->hdr.sync_hdr.Status == STATUS_MORE_PROCESSING_REQUIRED) {
 		if (phase != NtLmNegotiate) {
@@ -903,6 +902,7 @@ ssetup_ntlmssp_authenticate:
 	if (rc != 0)
 		goto ssetup_exit;
 
+	ses->Suid = rsp->hdr.sync_hdr.SessionId;
 	ses->session_flags = le16_to_cpu(rsp->SessionFlags);
 ssetup_exit:
 	free_rsp_buf(resp_buftype, rsp);
