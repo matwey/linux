@@ -125,6 +125,7 @@ struct efivar_entry {
 	struct efi_variable var;
 	struct list_head list;
 	struct kobject kobj;
+	struct dentry *dentry;
 };
 
 struct efivar_attribute {
@@ -610,9 +611,20 @@ static const struct sysfs_ops efivar_attr_ops = {
 	.store = efivar_attr_store,
 };
 
+static void efivarfs_drop_dentry(struct efivar_entry *var)
+{
+	if (var->dentry) {
+		if (var->dentry->d_inode)
+			drop_nlink(var->dentry->d_inode);
+		d_delete(var->dentry);
+		dput(var->dentry);
+	}
+}
+
 static void efivar_release(struct kobject *kobj)
 {
 	struct efivar_entry *var = container_of(kobj, struct efivar_entry, kobj);
+	efivarfs_drop_dentry(var);
 	kfree(var);
 }
 
@@ -788,6 +800,7 @@ static ssize_t efivarfs_file_write(struct file *file,
 
 	} else if (status == EFI_NOT_FOUND) {
 		list_del(&var->list);
+		var->dentry = NULL;
 		spin_unlock_irq(&efivars->lock);
 		efivar_unregister(var);
 		drop_nlink(inode);
@@ -1008,6 +1021,7 @@ static int efivarfs_create(struct inode *dir, struct dentry *dentry,
 	spin_unlock_irq(&efivars->lock);
 	d_instantiate(dentry, inode);
 	dget(dentry);
+	var->dentry = dentry;
 out:
 	if (err) {
 		kfree(var);
@@ -1030,6 +1044,7 @@ static int efivarfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	if (status == EFI_SUCCESS || status == EFI_NOT_FOUND) {
 		list_del(&var->list);
+		var->dentry = NULL;
 		spin_unlock_irq(&efivars->lock);
 		efivar_unregister(var);
 		drop_nlink(dentry->d_inode);
@@ -1126,6 +1141,97 @@ static struct dentry *efivarfs_alloc_dentry(struct dentry *parent, char *name)
 	return ERR_PTR(-ENOMEM);
 }
 
+static int efivarfs_create_dentry(struct efi_variable *new_var)
+{
+	struct dentry *dentry, *root = efivarfs_sb->s_root;
+	struct efivars *efivars = &__efivars;
+	unsigned long strsize1, strsize2;
+	struct efivar_entry *entry, *n;
+	int len, i, err, found = 0;
+	struct inode *inode = NULL;
+	unsigned long size = 0;
+	char *name;
+
+	/* the efivar_entry is must in list */
+	spin_lock_irq(&efivars->lock);
+	list_for_each_entry_safe(entry, n, &efivars->list, list) {
+		strsize1 = ucs2_strsize(entry->var.VariableName, 1024);
+		strsize2 = ucs2_strsize(new_var->VariableName, 1024);
+		if (strsize1 == strsize2 &&
+			!memcmp(&(entry->var.VariableName),
+				new_var->VariableName, strsize1) &&
+			!efi_guidcmp(entry->var.VendorGuid,
+				new_var->VendorGuid)) {
+			found = 1;
+			break;
+		}
+	}
+	spin_unlock_irq(&efivars->lock);
+	if (!found) {
+		pr_info("efivarfs: targe efivar entry not in list.\n");
+		return -EINVAL;
+	}
+
+	if (entry->dentry) {
+		pr_info("efivarfs: dentry created.\n");
+		return -EINVAL;
+	}
+
+	len = ucs2_strlen(entry->var.VariableName);
+
+	/* name, plus '-', plus GUID, plus NUL*/
+	name = kmalloc(len + 1 + GUID_LEN + 1, GFP_ATOMIC);
+	if (!name)
+		goto fail;
+
+	for (i = 0; i < len; i++)
+		name[i] = entry->var.VariableName[i] & 0xFF;
+
+	name[len] = '-';
+
+	efi_guid_unparse(&entry->var.VendorGuid, name + len + 1);
+
+	name[len+GUID_LEN+1] = '\0';
+
+	inode = efivarfs_get_inode(efivarfs_sb, root->d_inode,
+				  S_IFREG | 0644, 0);
+	if (!inode)
+		goto fail_name;
+
+	dentry = efivarfs_alloc_dentry(root, name);
+	if (IS_ERR(dentry)) {
+		err = PTR_ERR(dentry);
+		goto fail_inode;
+	}
+
+	/* copied by the above to local storage in the dentry. */
+	kfree(name);
+
+	spin_lock_irq(&efivars->lock);
+	efivars->ops->get_variable(entry->var.VariableName,
+				   &entry->var.VendorGuid,
+				   &entry->var.Attributes,
+				   &size,
+				   NULL);
+	spin_unlock_irq(&efivars->lock);
+
+	mutex_lock(&inode->i_mutex);
+	inode->i_private = entry;
+	entry->dentry = dentry;
+	i_size_write(inode, size+4);
+	mutex_unlock(&inode->i_mutex);
+	d_add(dentry, inode);
+
+	return 0;
+
+fail_inode:
+	iput(inode);
+fail_name:
+	kfree(name);
+fail:
+	return err;
+}
+
 static int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode = NULL;
@@ -1202,6 +1308,7 @@ static int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
 
 		mutex_lock(&inode->i_mutex);
 		inode->i_private = entry;
+		entry->dentry = dentry;
 		i_size_write(inode, size+4);
 		mutex_unlock(&inode->i_mutex);
 		d_add(dentry, inode);
@@ -1527,6 +1634,8 @@ static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
 					   &new_var->VendorGuid);
 	if (status) {
 		printk(KERN_WARNING "efivars: variable created, but sysfs entry wasn't.\n");
+	} else {
+		efivarfs_create_dentry(new_var);
 	}
 	return count;
 }
