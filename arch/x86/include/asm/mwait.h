@@ -3,6 +3,8 @@
 
 #include <linux/sched.h>
 
+#include <asm/cpufeature.h>
+
 #include <asm/spec_ctrl.h>
 
 #define MWAIT_SUBSTATE_MASK		0xf
