@@ -374,10 +374,6 @@ static bool pku_disabled;
 
 static __always_inline void setup_pku(struct cpuinfo_x86 *c)
 {
-	/* check the boot processor, plus compile options for PKU: */
-	if (!cpu_feature_enabled(X86_FEATURE_PKU))
-		return;
-	/* checks the actual processor's cpuid bits: */
 	if (!cpu_has(c, X86_FEATURE_PKU))
 		return;
 	if (pku_disabled)
@@ -779,6 +775,7 @@ void get_cpu_cap(struct cpuinfo_x86 *c)
 		cpuid_count(0x00000007, 0, &eax, &ebx, &ecx, &edx);
 
 		c->x86_capability[CPUID_7_0_EBX] = ebx;
+
 		c->x86_capability[CPUID_7_ECX] = ecx;
 	}
 
@@ -1774,14 +1771,6 @@ void cpu_init(void)
 
 	fpu__init_cpu();
 }
-#endif
-
-#ifdef CONFIG_X86_DEBUG_STATIC_CPU_HAS
-void warn_pre_alternatives(void)
-{
-	WARN(1, "You're using static_cpu_has before alternatives have run!\n");
-}
-EXPORT_SYMBOL_GPL(warn_pre_alternatives);
 #endif
 
 inline bool __static_cpu_has_safe(u16 bit)
