@@ -5,6 +5,7 @@
 #include <linux/sched.h>
 
 #include <asm/processor.h>
+#include <asm/cpufeature.h>
 #include <asm/special_insns.h>
 #ifndef __GENKSYMS__
 #include <asm/smp.h>

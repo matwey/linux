@@ -2,7 +2,7 @@
 
 #include <linux/linkage.h>
 #include <asm/errno.h>
-#include <asm/cpufeature.h>
+#include <asm/cpufeatures.h>
 #include <asm/alternative-asm.h>
 
 /*
