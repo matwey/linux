@@ -335,7 +335,7 @@ static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)
 {
 	phys_addr_t pfn = (phys_addr_t)page_nr << PAGE_SHIFT;
 	pfn ^= protnone_mask(pgprot_val(pgprot));
-	pfn &= PMD_PAGE_MASK;
+	pfn &= PHYSICAL_PMD_PAGE_MASK;
 	return __pmd(pfn | massage_pgprot(pgprot));
 }
 
@@ -361,7 +361,7 @@ static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
 
 	val &= _HPAGE_CHG_MASK;
 	val |= massage_pgprot(newprot) & ~_HPAGE_CHG_MASK;
-	val = flip_protnone_guard(oldval, val, PMD_PAGE_MASK);
+	val = flip_protnone_guard(oldval, val, PHYSICAL_PMD_PAGE_MASK);
 	return __pmd(val);
 }
 
