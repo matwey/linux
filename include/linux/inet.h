@@ -43,8 +43,10 @@
 #define _LINUX_INET_H
 
 #include <linux/types.h>
+#ifndef __GENKSYMS__
 #include <net/net_namespace.h>
 #include <linux/socket.h>
+#endif
 
 /*
  * These mimic similar macros defined in user-space for inet_ntop(3).
