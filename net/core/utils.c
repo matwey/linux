@@ -29,8 +29,10 @@
 #include <linux/socket.h>
 
 #include <net/sock.h>
+#ifndef __GENKSYMS__
 #include <net/net_ratelimit.h>
 #include <net/ipv6.h>
+#endif
 
 #include <asm/byteorder.h>
 #include <linux/uaccess.h>
