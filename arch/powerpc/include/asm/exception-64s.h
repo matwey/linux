@@ -174,25 +174,32 @@ BEGIN_FTR_SECTION_NESTED(942)						\
 END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,0,942)	/* non P7 */
 
 /*
- * Save PPR in paca whenever some register is available to use.
- * Then increase the priority.
+ * Get an SPR into a register if the CPU has the given feature
  */
-#define HMT_MEDIUM_PPR_SAVE(area, ra)					\
+#define OPT_GET_SPR(ra, spr, ftr)					\
 BEGIN_FTR_SECTION_NESTED(943)						\
-	mfspr	ra,SPRN_PPR;						\
-	std	ra,area+EX_PPR(r13);					\
-	HMT_MEDIUM;							\
-END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,CPU_FTR_HAS_PPR,943)
+	mfspr	ra,spr;							\
+END_FTR_SECTION_NESTED(ftr,ftr,943)
 
-#define __EXCEPTION_PROLOG_1(area, extra, vec)				\
+/*
+ * Save a register to the PACA if the CPU has the given feature
+ */
+#define OPT_SAVE_REG_TO_PACA(offset, ra, ftr)				\
+BEGIN_FTR_SECTION_NESTED(943)						\
+	std	ra,offset(r13);						\
+END_FTR_SECTION_NESTED(ftr,ftr,943)
+
+#define EXCEPTION_PROLOG_0(area)					\
 	GET_PACA(r13);							\
 	std	r9,area+EX_R9(r13);	/* save r9 */			\
-	HMT_MEDIUM_PPR_SAVE(area, r9);					\
+	OPT_GET_SPR(r9, SPRN_PPR, CPU_FTR_HAS_PPR);			\
+	HMT_MEDIUM;							\
 	std	r10,area+EX_R10(r13);	/* save r10 - r12 */		\
-	BEGIN_FTR_SECTION_NESTED(66);					\
-	mfspr	r10,SPRN_CFAR;						\
-	std	r10,area+EX_CFAR(r13);					\
-	END_FTR_SECTION_NESTED(CPU_FTR_CFAR, CPU_FTR_CFAR, 66);		\
+	OPT_GET_SPR(r10, SPRN_CFAR, CPU_FTR_CFAR)
+
+#define __EXCEPTION_PROLOG_1(area, extra, vec)				\
+	OPT_SAVE_REG_TO_PACA(area+EX_PPR, r9, CPU_FTR_HAS_PPR);		\
+	OPT_SAVE_REG_TO_PACA(area+EX_CFAR, r10, CPU_FTR_CFAR);		\
 	INTERRUPT_TO_KERNEL;						\
 	mfcr	r9;							\
 	extra(vec);							\
@@ -217,6 +224,7 @@ END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,CPU_FTR_HAS_PPR,943)
 	__EXCEPTION_PROLOG_PSERIES_1(label, h)
 
 #define EXCEPTION_PROLOG_PSERIES(area, label, h, extra, vec)		\
+	EXCEPTION_PROLOG_0(area);					\
 	EXCEPTION_PROLOG_1(area, extra, vec);				\
 	EXCEPTION_PROLOG_PSERIES_1(label, h);
 
@@ -339,6 +347,13 @@ label##_pSeries:					\
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, label##_common,	\
 				 EXC_STD, KVMTEST, vec)
 
+/* Version of above for when we have to branch out-of-line */
+#define STD_EXCEPTION_PSERIES_OOL(vec, label)			\
+	.globl label##_pSeries;					\
+label##_pSeries:						\
+	EXCEPTION_PROLOG_1(PACA_EXGEN, KVMTEST, vec);	\
+	EXCEPTION_PROLOG_PSERIES_1(label##_common, EXC_STD)
+
 #define STD_EXCEPTION_HV(loc, vec, label)		\
 	. = loc;					\
 	.globl label##_hv;				\
@@ -347,6 +362,13 @@ label##_hv:						\
 	SET_SCRATCH0(r13);	/* save r13 */			\
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, label##_common,	\
 				 EXC_HV, KVMTEST, vec)
+
+/* Version of above for when we have to branch out-of-line */
+#define STD_EXCEPTION_HV_OOL(vec, label)		\
+	.globl label##_hv;				\
+label##_hv:						\
+	EXCEPTION_PROLOG_1(PACA_EXGEN, KVMTEST, vec);	\
+	EXCEPTION_PROLOG_PSERIES_1(label##_common, EXC_HV)
 
 #define __SOFTEN_TEST(h)						\
 	lbz	r10,PACASOFTIRQEN(r13);					\
@@ -365,8 +387,10 @@ label##_hv:						\
 #define __MASKABLE_EXCEPTION_PSERIES(vec, label, h, extra)		\
 	HMT_MEDIUM_PPR_DISCARD;						\
 	SET_SCRATCH0(r13);    /* save r13 */				\
-	__EXCEPTION_PROLOG_1(PACA_EXGEN, extra, vec);		\
+	EXCEPTION_PROLOG_0(PACA_EXGEN);					\
+	__EXCEPTION_PROLOG_1(PACA_EXGEN, extra, vec);			\
 	EXCEPTION_PROLOG_PSERIES_1(label##_common, h);
+
 #define _MASKABLE_EXCEPTION_PSERIES(vec, label, h, extra)		\
 	__MASKABLE_EXCEPTION_PSERIES(vec, label, h, extra)
 
@@ -383,6 +407,12 @@ label##_pSeries:							\
 label##_hv:								\
 	_MASKABLE_EXCEPTION_PSERIES(vec, label,				\
 				    EXC_HV, SOFTEN_TEST_HV)
+
+#define MASKABLE_EXCEPTION_HV_OOL(vec, label)				\
+	.globl label##_hv;						\
+label##_hv:								\
+	EXCEPTION_PROLOG_1(PACA_EXGEN, SOFTEN_TEST_HV, vec);		\
+	EXCEPTION_PROLOG_PSERIES_1(label##_common, EXC_HV);
 
 #ifdef CONFIG_PPC_ISERIES
 #define DISABLE_INTS				\
