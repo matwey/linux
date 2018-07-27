@@ -562,6 +562,7 @@ void __weak smp_announce(void)
 	printk(KERN_INFO "Brought up %d CPUs\n", num_online_cpus());
 }
 
+extern int cpu_down_maps_locked(unsigned int cpu, enum cpuhp_state target);
 /* Called by boot processor to activate the rest. */
 void __init smp_init(void)
 {
@@ -580,6 +581,28 @@ void __init smp_init(void)
 	/* Any cleanup work */
 	smp_announce();
 	smp_cpus_done(setup_max_cpus);
+}
+
+void __init smp_smt_post_init(void)
+{
+	int cpu, disabled = 0;
+	/*
+	 * SMT soft disabling on x86 requires to bring the CPU out of the
+	 * BIOS 'wait for SIPI' state in order to set the CR4.MCE bit.  The
+	 * CPU marked itself as booted_once in native_cpu_up() so the
+	 * cpu_smt_allowed() check will now return false if this is not the
+	 * primary sibling.
+	 */
+	cpu_maps_update_begin();
+	for_each_online_cpu(cpu) {
+		if (!cpu_smt_allowed(cpu)) {
+			disabled++;
+			cpu_down_maps_locked(cpu, 0);
+		}
+	}
+	if (disabled)
+		pr_info("SMT: disabling %d threads\n", disabled);
+	cpu_maps_update_done();
 }
 
 /*

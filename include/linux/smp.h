@@ -119,6 +119,8 @@ void smp_prepare_boot_cpu(void);
 extern unsigned int setup_max_cpus;
 extern void __init setup_nr_cpu_ids(void);
 extern void __init smp_init(void);
+extern void __init smp_smt_post_init(void);
+extern bool cpu_smt_allowed(unsigned int cpu);
 
 #else /* !SMP */
 

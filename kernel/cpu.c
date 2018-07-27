@@ -446,7 +446,7 @@ out_release:
 /*
  * @target unused.
  */
-static int cpu_down_maps_locked(unsigned int cpu, enum cpuhp_state target)
+int cpu_down_maps_locked(unsigned int cpu, enum cpuhp_state target)
 {
 	if (cpu_hotplug_disabled)
 		return -EBUSY;
@@ -519,7 +519,7 @@ bool cpu_smt_allowed(unsigned int cpu)
 }
 
 #else
-static inline bool cpu_smt_allowed(unsigned int cpu) { return true; }
+bool cpu_smt_allowed(unsigned int cpu) { return true; }
 #endif
 
 /*
@@ -637,17 +637,6 @@ int cpu_up(unsigned int cpu)
 	}
 
 	err = _cpu_up(cpu, 0);
-
-	/*
-	 * SMT soft disabling on x86 requires to bring the CPU out of the
-	 * BIOS 'wait for SIPI' state in order to set the CR4.MCE bit.  The
-	 * CPU marked itself as booted_once in native_cpu_up() so the
-	 * cpu_smt_allowed() check will now return false if this is not the
-	 * primary sibling.
-	 */
-	if (!cpu_smt_allowed(cpu))
-		cpu_down_maps_locked(cpu, 0);
-
 out:
 	cpu_maps_update_done();
 	return err;
