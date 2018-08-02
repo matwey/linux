@@ -26,7 +26,8 @@ sctp_conn_schedule(struct netns_ipvs *ipvs, int af, struct sk_buff *skb,
 				skb, iph->len + sizeof(sctp_sctphdr_t),
 				sizeof(_schunkh), &_schunkh);
 			if (sch) {
-				if (!(sysctl_sloppy_sctp(ipvs) ||
+				if (sch->type == SCTP_CID_ABORT ||
+				    !(sysctl_sloppy_sctp(ipvs) ||
 				      sch->type == SCTP_CID_INIT))
 					return 1;
 				ports = &sh->source;
