@@ -409,7 +409,7 @@ void __init fpu__init_parse_early_param(void)
 {
 	enum { ENABLE, DISABLE } eagerfpu = ENABLE;
 
-	if (strnstr(boot_command_line, "eagerfpu=off", COMMAND_LINE_SIZE))
+	if (strnstr(boot_command_line, "eagerfpu=off",  strnlen(boot_command_line, COMMAND_LINE_SIZE)))
 		eagerfpu = DISABLE;
 
 	if (eagerfpu == ENABLE)
