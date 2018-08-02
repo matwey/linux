@@ -586,8 +586,7 @@ struct bad_iret_stack *fixup_bad_iret(struct bad_iret_stack *s)
 	 * iret target.
 	 */
 	struct bad_iret_stack *new_stack =
-		container_of(task_pt_regs(current),
-			     struct bad_iret_stack, regs);
+		(struct bad_iret_stack *)this_cpu_read(init_tss.x86_tss.sp0) - 1;
 
 	/* Copy the IRET target to the new stack. */
 	memmove(&new_stack->regs.ip, (void *)s->regs.sp, 5*8);

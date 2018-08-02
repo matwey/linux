@@ -1627,10 +1627,6 @@ ENTRY(error_entry)
 error_swapgs:
 	SWAPGS
 	SWITCH_KERNEL_CR3
-	movq %rsp, %rsi
-	movq PER_CPU_VAR(kernel_stack), %rsp
-	ENABLE_IBRS
-	movq %rsi, %rsp
 error_sti:
 	movq PER_CPU_VAR(init_tss + TSS_sp0), %rcx
 	cmpq %rcx, %rsp
@@ -1646,6 +1642,8 @@ error_sti:
 	movq %rsp, %rsi
 	rep movsb
 	movq %rax, %rsp
+
+	ENABLE_IBRS
 1:
 	TRACE_IRQS_OFF
 	ret
@@ -1676,6 +1674,7 @@ bstep_iret:
 
 error_bad_iret:
 	SWAPGS
+	SWITCH_KERNEL_CR3
 	mov %rsp,%rdi
 	call fixup_bad_iret
 	mov %rax,%rsp
