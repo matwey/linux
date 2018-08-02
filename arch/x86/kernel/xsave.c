@@ -175,7 +175,12 @@ int save_i387_xstate(void __user *buf)
 
 		if (err)
 			return err;
-		user_fpu_end();
+		/*
+		 * With eager FPU, we want switch_fpu_prepare() keep saving
+		 * the state
+		 */
+		if (!use_eager_fpu())
+			user_fpu_end();
 	} else {
 		sanitize_i387_state(tsk);
 		if (__copy_to_user(buf, &tsk->thread.fpu.state->fxsave,

@@ -593,7 +593,18 @@ int save_i387_xstate_ia32(void __user *buf)
 				       NULL, fp) ? -1 : 1;
 	}
 
-	unlazy_fpu(tsk);
+	/*
+	 * We can't unlazy_fpu() here directly, as __thread_fpu_end() must not
+	 * be called in eager FPU mode, as we want switch_fpu_prepare() keep
+	 * saving the state
+	 */
+        if (__thread_has_fpu(tsk)) {
+                __save_init_fpu(tsk);
+		if (!use_eager_fpu())
+	                __thread_fpu_end(tsk);
+        } else
+                tsk->fpu_counter = 0;
+
 
 	if (cpu_has_xsave)
 		return save_i387_xsave(fp);
