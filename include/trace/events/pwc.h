@@ -13,6 +13,28 @@ TRACE_EVENT(pwc_handler_enter,
 	TP_ARGS(urb, pdev),
 	TP_STRUCT__entry(
 		__field(struct urb*, urb)
+		__field(const char*, name)
+		__field(struct pwc_frame_buf*, fbuf)
+		__field(int, fbuf__filled)
+	),
+	TP_fast_assign(
+		__entry->urb = urb;
+		__entry->name = pdev->v4l2_dev.name;
+		__entry->fbuf = pdev->fill_buf;
+		__entry->fbuf__filled = (pdev->fill_buf ? pdev->fill_buf->filled : 0);
+	),
+	TP_printk("dev=%s (fbuf=%p filled=%d) urb=%p",
+		__entry->name,
+		__entry->fbuf,
+		__entry->fbuf__filled,
+		__entry->urb)
+);
+
+TRACE_EVENT(pwc_handler_proc_begin,
+	TP_PROTO(struct urb *urb, struct pwc_device *pdev),
+	TP_ARGS(urb, pdev),
+	TP_STRUCT__entry(
+		__field(struct urb*, urb)
 		__field(int, urb__status)
 		__field(u32, urb__actual_length)
 		__field(const char*, name)
@@ -34,6 +56,28 @@ TRACE_EVENT(pwc_handler_enter,
 		__entry->urb,
 		__entry->urb__status,
 		__entry->urb__actual_length)
+);
+
+TRACE_EVENT(pwc_handler_proc_end,
+	TP_PROTO(struct urb *urb, struct pwc_device *pdev),
+	TP_ARGS(urb, pdev),
+	TP_STRUCT__entry(
+		__field(struct urb*, urb)
+		__field(const char*, name)
+		__field(struct pwc_frame_buf*, fbuf)
+		__field(int, fbuf__filled)
+	),
+	TP_fast_assign(
+		__entry->urb = urb;
+		__entry->name = pdev->v4l2_dev.name;
+		__entry->fbuf = pdev->fill_buf;
+		__entry->fbuf__filled = (pdev->fill_buf ? pdev->fill_buf->filled : 0);
+	),
+	TP_printk("dev=%s (fbuf=%p filled=%d) urb=%p",
+		__entry->name,
+		__entry->fbuf,
+		__entry->fbuf__filled,
+		__entry->urb)
 );
 
 TRACE_EVENT(pwc_handler_exit,

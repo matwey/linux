@@ -279,6 +279,9 @@ static void pwc_frame_complete(struct pwc_device *pdev)
 	pdev->vframe_count++;
 }
 
+// FIXME:
+#define SYNC 1
+
 /* This gets called for the Isochronous pipe (video). This is done in
  * interrupt time, so it has to be fast, not crash, and not stall. Neat.
  */
@@ -331,7 +334,13 @@ static void pwc_isoc_handler(struct urb *urb)
 	/* Reset ISOC error counter. We did get here, after all. */
 	pdev->visoc_errors = 0;
 
+#if SYNC
 	dma_sync_single_for_cpu(&urb->dev->dev, urb->transfer_dma, urb->transfer_buffer_length, DMA_FROM_DEVICE);
+#else
+	dma_unmap_single(&urb->dev->dev, urb->transfer_dma, urb->transfer_buffer_length, DMA_FROM_DEVICE);
+#endif
+
+	trace_pwc_handler_proc_begin(urb, pdev);
 
 	/* vsync: 0 = don't copy data
 		  1 = sync-hunt
@@ -379,7 +388,13 @@ static void pwc_isoc_handler(struct urb *urb)
 		pdev->vlast_packet_size = flen;
 	}
 
-	dma_sync_single_for_device(&urb->dev->dev, urb->transfer_dma, urb->transfer_buffer_length, DMA_FROM_DEVICE);
+	trace_pwc_handler_proc_end(urb, pdev);
+
+#if SYNC
+//	dma_sync_single_for_device(&urb->dev->dev, urb->transfer_dma, urb->transfer_buffer_length, DMA_FROM_DEVICE);
+#else
+	urb->transfer_dma = dma_map_single(&urb->dev->dev, urb->transfer_buffer, urb->transfer_buffer_length, DMA_FROM_DEVICE);
+#endif
 
 handler_end:
 	trace_pwc_handler_exit(urb, pdev);
