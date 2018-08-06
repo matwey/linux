@@ -116,7 +116,6 @@ data_access_slb_pSeries:
 	 * the kernel ends up being put.
 	 */
 	mfctr	r11
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, .slb_miss_realmode)
 	mtctr	r10
 	bctr
@@ -143,7 +142,6 @@ instruction_access_slb_pSeries:
 	b	.slb_miss_realmode
 #else
 	mfctr	r11
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, .slb_miss_realmode)
 	mtctr	r10
 	bctr
@@ -207,7 +205,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	INTERRUPT_TO_KERNEL
 	mfspr	r11,SPRN_SRR0
 	mfspr	r12,SPRN_SRR1
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, system_call_entry)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
@@ -860,7 +857,6 @@ BEGIN_FW_FTR_SECTION
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 #endif /* CONFIG_PPC_ISERIES */
 	mfspr	r11,SPRN_SRR0
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10,unrecov_slb)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
