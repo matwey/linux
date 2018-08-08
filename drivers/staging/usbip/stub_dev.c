@@ -479,6 +479,8 @@ static int stub_probe(struct usb_interface *interface,
 
 call_put_busid_priv:
 	put_busid_priv(busid_priv);
+
+	return rc;
 }
 
 static void shutdown_busid(struct bus_id_priv *busid_priv)
