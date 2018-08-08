@@ -49,7 +49,7 @@
 #include <asm/kexec.h>
 #include <asm/apic.h>
 #include <asm/irq_remapping.h>
-#include <asm/nospec-branch.h>
+#include <asm/spec-ctrl.h>
 #include <asm/spec_ctrl.h>
 
 #include "trace.h"
@@ -2094,7 +2094,7 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		per_cpu(current_vmcs, cpu) = vmx->loaded_vmcs->vmcs;
 		vmcs_load(vmx->loaded_vmcs->vmcs);
 
-		x86_ibp_barrier();
+		indirect_branch_prediction_barrier();
 	}
 
 	if (vmx->loaded_vmcs->cpu != cpu) {

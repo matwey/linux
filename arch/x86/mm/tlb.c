@@ -15,7 +15,7 @@
 #include <asm/apic.h>
 #include <asm/uv/uv.h>
 #include <asm/kaiser.h>
-#include <asm/spec_ctrl.h>
+#include <asm/nospec-branch.h>
 
 /*
  *	TLB flushing, formerly SMP-only
@@ -109,7 +109,7 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 
 		/* Null tsk means switching to kernel, so that's safe */
 		if (tsk && ___ptrace_may_access(tsk, current, PTRACE_MODE_IBPB))
-			x86_ibp_barrier();
+			indirect_branch_prediction_barrier();
 
 		this_cpu_write(cpu_tlbstate.state, TLBSTATE_OK);
 		this_cpu_write(cpu_tlbstate.active_mm, next);

@@ -41,6 +41,7 @@
 #include <asm/realmode.h>
 #include <asm/time.h>
 #include <asm/pgalloc.h>
+#include <asm/nospec-branch.h>
 
 /*
  * We allocate runtime services regions bottom-up, starting from -4G, i.e.
@@ -516,6 +517,7 @@ extern efi_status_t efi64_thunk(u32, ...);
 									\
 	efi_sync_low_kernel_mappings();					\
 	local_irq_save(flags);						\
+	firmware_restrict_branch_speculation_start();			\
 									\
 	efi_scratch.prev_cr3 = read_cr3();				\
 	write_cr3((unsigned long)efi_scratch.efi_pgt);			\
@@ -526,6 +528,7 @@ extern efi_status_t efi64_thunk(u32, ...);
 									\
 	write_cr3(efi_scratch.prev_cr3);				\
 	__flush_tlb_all();						\
+	firmware_restrict_branch_speculation_end();			\
 	local_irq_restore(flags);					\
 									\
 	__s;								\

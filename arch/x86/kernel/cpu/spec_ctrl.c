@@ -3,10 +3,10 @@
  *
  */
 
+#include <asm/cpufeature.h>
 #include <asm/msr.h>
 #include <asm/processor.h>
 #include <asm/spec_ctrl.h>
-#include <asm/nospec-branch.h>
 
 /*
  * Keep it open for more flags in case needed.
@@ -17,7 +17,7 @@
  * on IBRS state (SKL).
  */
 int ibrs_state = -1;
-static int ibpb_state = -1;
+int ibpb_state = -1;
 
 unsigned int notrace x86_ibrs_enabled(void)
 {
@@ -34,14 +34,14 @@ EXPORT_SYMBOL_GPL(x86_ibpb_enabled);
 void x86_disable_ibrs(void)
 {
 	if (x86_ibrs_enabled())
-		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+		native_wrmsrl(MSR_IA32_SPEC_CTRL, 0);
 }
 EXPORT_SYMBOL_GPL(x86_disable_ibrs);
 
 void x86_enable_ibrs(void)
 {
 	if (x86_ibrs_enabled())
-		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base | SPEC_CTRL_IBRS);
+		native_wrmsrl(MSR_IA32_SPEC_CTRL, SPEC_CTRL_IBRS);
 }
 EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 
@@ -50,6 +50,7 @@ EXPORT_SYMBOL_GPL(x86_enable_ibrs);
  */
 void x86_spec_check(void)
 {
+
 	if (ibpb_state == 0) {
 		printk_once(KERN_INFO "IBRS/IBPB: disabled\n");
 		return;

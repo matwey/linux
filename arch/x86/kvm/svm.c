@@ -43,7 +43,7 @@
 #include <asm/desc.h>
 #include <asm/debugreg.h>
 #include <asm/kvm_para.h>
-#include <asm/nospec-branch.h>
+#include <asm/spec-ctrl.h>
 #include <asm/irq_remapping.h>
 #include <asm/spec_ctrl.h>
 
@@ -1676,7 +1676,7 @@ static void svm_free_vcpu(struct kvm_vcpu *vcpu)
 	 * The VMCB could be recycled, causing a false negative in svm_vcpu_load;
 	 * block speculative execution.
 	 */
-	x86_ibp_barrier();
+	indirect_branch_prediction_barrier();
 }
 
 static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
@@ -1713,7 +1713,7 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 
 	if (sd->current_vmcb != svm->vmcb) {
 		sd->current_vmcb = svm->vmcb;
-		x86_ibp_barrier();
+		indirect_branch_prediction_barrier();
 	}
 
 	avic_vcpu_load(vcpu, cpu);
