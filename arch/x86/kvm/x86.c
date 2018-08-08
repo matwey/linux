@@ -4097,6 +4097,9 @@ int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 	void *data = val;
 	int r = X86EMUL_CONTINUE;
 
+	/* kvm_write_guest_virt_system can pull in tons of pages. */
+	vcpu->arch.l1tf_flush_l1d = true;
+
 	while (bytes) {
 		gpa_t gpa =  vcpu->arch.walk_mmu->gva_to_gpa(vcpu, addr,
 							     PFERR_WRITE_MASK,
@@ -5246,6 +5249,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	bool fast, longmode;
 	int cs_db, cs_l;
 
+	vcpu->arch.l1tf_flush_l1d = true;
+
 	/*
 	 * hypercall generates UD from non zero cpl and real mode
 	 * per HYPER-V spec
@@ -5788,6 +5793,7 @@ static int __vcpu_run(struct kvm_vcpu *vcpu)
 	}
 
 	vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
+	vcpu->arch.l1tf_flush_l1d = true;
 
 	r = 1;
 	while (r > 0) {
@@ -6533,6 +6539,11 @@ void kvm_arch_vcpu_uninit(struct kvm_vcpu *vcpu)
 	kvm_mmu_destroy(vcpu);
 	srcu_read_unlock(&vcpu->kvm->srcu, idx);
 	free_page((unsigned long)vcpu->arch.pio_data);
+}
+
+void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu)
+{
+	vcpu->arch.l1tf_flush_l1d = true;
 }
 
 int kvm_arch_init_vm(struct kvm *kvm)

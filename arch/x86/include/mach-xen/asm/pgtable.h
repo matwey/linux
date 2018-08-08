@@ -16,6 +16,7 @@
 
 #ifndef __ASSEMBLY__
 
+#include <linux/pfn.h>
 #include <asm/x86_init.h>
 #ifdef CONFIG_KAISER
 extern int kaiser_enabled;
@@ -129,6 +130,14 @@ static inline int pte_special(pte_t pte)
 	return pte_flags(pte) & _PAGE_SPECIAL;
 }
 
+/* Entries that were set to PROT_NONE are inverted */
+
+static inline u64 protnone_mask(u64 val);
+
+#define __pte_mfn(_pte) ({ \
+	pteval_t val_ = (_pte).pte; \
+	((val_ ^ protnone_mask(val_)) & PTE_PFN_MASK) >> PAGE_SHIFT; \
+})
 #define pte_mfn(_pte) ((_pte).pte_low & _PAGE_PRESENT ? \
 	__pte_mfn(_pte) : pfn_to_mfn(__pte_mfn(_pte)))
 #define pte_pfn(_pte) ((_pte).pte_low & _PAGE_IOMAP ? max_mapnr : \
@@ -140,12 +149,16 @@ static inline int pte_special(pte_t pte)
 
 static inline unsigned long pmd_pfn(pmd_t pmd)
 {
-	return (pmd_val(pmd) & PTE_PFN_MASK) >> PAGE_SHIFT;
+	pmdval_t val = pmd_val(pmd);
+	val ^= protnone_mask(val);
+	return (val & PTE_PFN_MASK) >> PAGE_SHIFT;
 }
 
 static inline unsigned long pud_pfn(pud_t pud)
 {
-	return (pud_val(pud) & PTE_PFN_MASK) >> PAGE_SHIFT;
+	pudval_t val = pud_val(pud);
+	val ^= protnone_mask(val);
+	return (val & PTE_PFN_MASK) >> PAGE_SHIFT;
 }
 
 static inline int pmd_large(pmd_t pte)
@@ -311,38 +324,47 @@ static inline pgprotval_t massage_pgprot(pgprot_t pgprot)
 
 static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
 {
-	return __pte(((phys_addr_t)page_nr << PAGE_SHIFT) |
-		     massage_pgprot(pgprot));
+	phys_addr_t paddr = PFN_PHYS(page_nr);
+	paddr ^= protnone_mask(pgprot_val(pgprot));
+	paddr &= PTE_PFN_MASK;
+	return __pte(paddr | massage_pgprot(pgprot));
 }
 
 static inline pte_t pfn_pte_ma(phys_addr_t page_nr, pgprot_t pgprot)
 {
-	return __pte_ma((page_nr << PAGE_SHIFT) | massage_pgprot(pgprot));
+	phys_addr_t maddr = page_nr << PAGE_SHIFT;
+	maddr ^= protnone_mask(pgprot_val(pgprot));
+	maddr &= PTE_PFN_MASK;
+	return __pte_ma(maddr | massage_pgprot(pgprot));
 }
 
 static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)
 {
-	return __pmd(((phys_addr_t)page_nr << PAGE_SHIFT) |
-		     massage_pgprot(pgprot));
+	phys_addr_t paddr = PFN_PHYS(page_nr);
+	paddr ^= protnone_mask(pgprot_val(pgprot));
+	paddr &= PMD_PAGE_MASK;
+	return __pmd(paddr | massage_pgprot(pgprot));
 }
+
+static inline u64 flip_protnone_guard(u64 oldval, u64 val, u64 mask);
 
 static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 {
-	pteval_t val = pte_val(pte) & _PAGE_CHG_MASK;
+	pteval_t val = pte_val(pte) & _PAGE_CHG_MASK, oldval = val;
 
 	val |= massage_pgprot(newprot) & ~_PAGE_CHG_MASK;
-
+	val = flip_protnone_guard(oldval, val, PTE_PFN_MASK);
 	return __pte(val);
 }
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
 {
-	pmdval_t val = pmd_val(pmd);
+	pmdval_t val = pmd_val(pmd), oldval = val;
 
 	val &= _HPAGE_CHG_MASK;
 	val |= massage_pgprot(newprot) & ~_HPAGE_CHG_MASK;
-
+	val = flip_protnone_guard(oldval, val, PMD_PAGE_MASK);
 	return __pmd(val);
 }
 #endif
@@ -927,6 +949,11 @@ static inline void ptep_modify_prot_commit(struct mm_struct *mm, unsigned long a
 	if (HYPERVISOR_mmu_update(&u, 1, NULL, DOMID_SELF))
 		BUG();
 }
+
+#define __HAVE_ARCH_PFN_MODIFY_ALLOWED 1
+extern bool pfn_modify_allowed(unsigned long pfn, pgprot_t prot);
+
+extern bool arch_has_pfn_modify_check(void);
 
 #include <asm-generic/pgtable.h>
 
