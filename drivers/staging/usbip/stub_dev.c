@@ -374,6 +374,7 @@ static int stub_probe(struct usb_interface *interface,
 	const char *udev_busid = dev_name(interface->dev.parent);
 	int err = 0;
 	struct bus_id_priv *busid_priv;
+	int rc = 0;
 
 	dev_dbg(&interface->dev, "Enter\n");
 
@@ -389,25 +390,30 @@ static int stub_probe(struct usb_interface *interface,
 		 * other matched drivers by the driver core.
 		 * See driver_probe_device() in driver/base/dd.c
 		 */
-		return -ENODEV;
+		rc = -ENODEV;
+		goto call_put_busid_priv;
 	}
 
 	if (udev->descriptor.bDeviceClass == USB_CLASS_HUB) {
 		dev_dbg(&udev->dev, "%s is a usb hub device... skip!\n",
 			 udev_busid);
-		return -ENODEV;
+		rc = -ENODEV;
+		goto call_put_busid_priv;
 	}
 
 	if (!strcmp(udev->bus->bus_name, "vhci_hcd")) {
 		dev_dbg(&udev->dev, "%s is attached on vhci_hcd... skip!\n",
 			 udev_busid);
-		return -ENODEV;
+		rc = -ENODEV;
+		goto call_put_busid_priv;
 	}
 
 	if (busid_priv->status == STUB_BUSID_ALLOC) {
 		sdev = busid_priv->sdev;
-		if (!sdev)
-			return -ENODEV;
+		if (!sdev) {
+			rc = -ENODEV;
+			goto call_put_busid_priv;
+		}
 
 		busid_priv->interf_count++;
 		dev_info(&interface->dev, "usbip-host: register new interface "
@@ -425,17 +431,21 @@ static int stub_probe(struct usb_interface *interface,
 			usb_set_intfdata(interface, NULL);
 			busid_priv->interf_count--;
 
-			return err;
+			rc = err;
+			goto call_put_busid_priv;
 		}
 
 		usb_get_intf(interface);
-		return 0;
+		rc = 0;
+		goto call_put_busid_priv;
 	}
 
 	/* ok. this is my device. */
 	sdev = stub_device_alloc(udev, interface);
-	if (!sdev)
-		return -ENOMEM;
+	if (!sdev) {
+		rc = -ENOMEM;
+		goto call_put_busid_priv;
+	}
 
 	dev_info(&interface->dev, "usbip-host: register new device "
 		 "(bus %u dev %u ifn %u)\n", udev->bus->busnum, udev->devnum,
@@ -460,11 +470,15 @@ static int stub_probe(struct usb_interface *interface,
 
 		busid_priv->sdev = NULL;
 		stub_device_free(sdev);
-		return err;
+		rc =  err;
+		goto call_put_busid_priv;
 	}
 	busid_priv->status = STUB_BUSID_ALLOC;
 
-	return 0;
+	rc = 0;
+
+call_put_busid_priv:
+	put_busid_priv(busid_priv);
 }
 
 static void shutdown_busid(struct bus_id_priv *busid_priv)
