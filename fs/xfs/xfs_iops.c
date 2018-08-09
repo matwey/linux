@@ -1085,12 +1085,10 @@ xfs_vn_update_time(
  */
 STATIC int
 xfs_fiemap_format(
-	void			**arg,
-	struct getbmapx		*bmv,
-	int			*full)
+	struct kgetbmap		*bmv,
+	struct fiemap_extent_info *fieinfo)
 {
 	int			error;
-	struct fiemap_extent_info *fieinfo = *arg;
 	u32			fiemap_flags = 0;
 	u64			logical, physical, length;
 
@@ -1114,10 +1112,8 @@ xfs_fiemap_format(
 
 	error = fiemap_fill_next_extent(fieinfo, logical, physical,
 					length, fiemap_flags);
-	if (error > 0) {
+	if (error > 0)
 		error = 0;
-		*full = 1;	/* user array now full */
-	}
 
 	return error;
 }
@@ -1132,6 +1128,8 @@ xfs_vn_fiemap(
 	xfs_inode_t		*ip = XFS_I(inode);
 	struct getbmapx		bm;
 	int			error;
+	struct kgetbmap		*buf;
+	int i;
 
 	error = fiemap_check_flags(fieinfo, XFS_FIEMAP_FLAGS);
 	if (error)
@@ -1156,11 +1154,27 @@ xfs_vn_fiemap(
 	if (!(fieinfo->fi_flags & FIEMAP_FLAG_SYNC))
 		bm.bmv_iflags |= BMV_IF_DELALLOC;
 
-	error = xfs_getbmap(ip, &bm, xfs_fiemap_format, fieinfo);
-	if (error)
-		return error;
+	buf = kmem_zalloc_large(bm.bmv_count * sizeof(*buf), 0);
+	if (!buf)
+		return -ENOMEM;
 
-	return 0;
+	error = xfs_getbmap(ip, &bm, buf);
+	if (error)
+		goto out_free;
+
+	for (i = 0; i < bm.bmv_entries; i++) {
+		/*
+		 * If the fiemap buffer is full we just skip the rest of the
+		 * mapped extents
+		 */
+		error = xfs_fiemap_format(buf + i, fieinfo);
+		if (error)
+			break;
+	}
+
+out_free:
+	kmem_free(buf);
+	return error;
 }
 
 STATIC int
