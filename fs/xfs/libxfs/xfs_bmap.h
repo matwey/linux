@@ -43,7 +43,7 @@ struct xfs_bmalloca {
 	xfs_fsblock_t		blkno;	/* starting block of new extent */
 
 	struct xfs_btree_cur	*cur;	/* btree cursor */
-	xfs_extnum_t		idx;	/* current extent index */
+	struct xfs_iext_cursor	icur;	/* incore extent cursor */
 	int			nallocs;/* number of extents alloc'd */
 	int			logflags;/* flags for transaction logging */
 
@@ -211,10 +211,8 @@ int	xfs_bunmapi(struct xfs_trans *tp, struct xfs_inode *ip,
 		xfs_extnum_t nexts, xfs_fsblock_t *firstblock,
 		struct xfs_bmap_free *flist, int *done);
 int	xfs_bmap_del_extent_delay(struct xfs_inode *ip, int whichfork,
-		xfs_extnum_t *idx, struct xfs_bmbt_irec *got,
+		struct xfs_iext_cursor *cur, struct xfs_bmbt_irec *got,
 		struct xfs_bmbt_irec *del);
-void	xfs_bmap_del_extent_cow(struct xfs_inode *ip, xfs_extnum_t *idx,
-		struct xfs_bmbt_irec *got, struct xfs_bmbt_irec *del);
 uint	xfs_default_attroffset(struct xfs_inode *ip);
 int	xfs_bmap_collapse_extents(struct xfs_trans *tp, struct xfs_inode *ip,
 		xfs_fileoff_t *next_fsb, xfs_fileoff_t offset_shift_fsb,
