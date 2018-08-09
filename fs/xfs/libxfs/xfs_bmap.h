@@ -178,11 +178,6 @@ static inline bool xfs_bmap_is_real_extent(struct xfs_bmbt_irec *irec)
 		!isnullstartblock(irec->br_startblock);
 }
 
-enum shift_direction {
-	SHIFT_LEFT = 0,
-	SHIFT_RIGHT,
-};
-
 void	xfs_trim_extent(struct xfs_bmbt_irec *irec, xfs_fileoff_t bno,
 		xfs_filblks_t len);
 int	xfs_bmap_add_attrfork(struct xfs_inode *ip, int size, int rsvd);
