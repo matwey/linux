@@ -297,19 +297,21 @@ xfs_bmap_eof(
 /*
  * Count leaf blocks given a range of extent records.
  */
-STATIC void
+xfs_extnum_t
 xfs_bmap_count_leaves(
-	xfs_ifork_t		*ifp,
-	xfs_extnum_t		idx,
-	int			numrecs,
-	int			*count)
+	struct xfs_ifork	*ifp,
+	xfs_filblks_t		*count)
 {
-	int		b;
+	struct xfs_bmbt_irec	got;
+	xfs_extnum_t		numrecs = 0, i = 0;
 
-	for (b = 0; b < numrecs; b++) {
-		xfs_bmbt_rec_host_t *frp = xfs_iext_get_ext(ifp, idx + b);
-		*count += xfs_bmbt_get_blockcount(frp);
+	while (xfs_iext_get_extent(ifp, i++, &got)) {
+		if (!isnullstartblock(got.br_startblock)) {
+			*count += got.br_blockcount;
+			numrecs++;
+		}
 	}
+	return numrecs;
 }
 
 /*
@@ -321,7 +323,7 @@ xfs_bmap_disk_count_leaves(
 	struct xfs_mount	*mp,
 	struct xfs_btree_block	*block,
 	int			numrecs,
-	int			*count)
+	xfs_filblks_t		*count)
 {
 	int		b;
 	xfs_bmbt_rec_t	*frp;
@@ -343,7 +345,7 @@ xfs_bmap_count_tree(
 	xfs_ifork_t	*ifp,		/* inode fork pointer */
 	xfs_fsblock_t   blockno,	/* file system block number */
 	int             levelin,	/* level in btree */
-	int		*count)		/* Count of blocks */
+	xfs_filblks_t	*count)		/* Count of blocks */
 {
 	int			error;
 	xfs_buf_t		*bp, *nbp;
@@ -417,7 +419,7 @@ xfs_bmap_count_blocks(
 	xfs_trans_t		*tp,		/* transaction pointer */
 	xfs_inode_t		*ip,		/* incore inode */
 	int			whichfork,	/* data or attr fork */
-	int			*count)		/* out: count of blocks */
+	xfs_filblks_t		*count)		/* out: count of blocks */
 {
 	struct xfs_btree_block	*block;	/* current btree block */
 	xfs_fsblock_t		bno;	/* block # of "block" */
@@ -430,7 +432,7 @@ xfs_bmap_count_blocks(
 	mp = ip->i_mount;
 	ifp = XFS_IFORK_PTR(ip, whichfork);
 	if ( XFS_IFORK_FORMAT(ip, whichfork) == XFS_DINODE_FMT_EXTENTS ) {
-		xfs_bmap_count_leaves(ifp, 0, xfs_iext_count(ifp), count);
+		xfs_bmap_count_leaves(ifp, count);
 		return 0;
 	}
 
@@ -1792,8 +1794,8 @@ xfs_swap_extents(
 	xfs_extnum_t	nextents;
 	int		src_log_flags, target_log_flags;
 	int		error = 0;
-	int		aforkblks = 0;
-	int		taforkblks = 0;
+	xfs_filblks_t	aforkblks = 0;
+	xfs_filblks_t	taforkblks = 0;
 	__uint64_t	tmp;
 	int		lock_flags;
 
