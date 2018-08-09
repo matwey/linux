@@ -1737,7 +1737,6 @@ xfs_swap_extents(
 	xfs_trans_t	*tp;
 	xfs_bstat_t	*sbp = &sxp->sx_stat;
 	xfs_ifork_t	*tempifp, *ifp, *tifp;
-	xfs_extnum_t	nextents;
 	int		src_log_flags, target_log_flags;
 	int		error = 0;
 	xfs_filblks_t	aforkblks = 0;
@@ -1920,15 +1919,6 @@ xfs_swap_extents(
 
 	switch (ip->i_d.di_format) {
 	case XFS_DINODE_FMT_EXTENTS:
-		/*
-		 * If the extents fit in the inode, fix the pointer.  Otherwise
-		 * it's already NULL or pointing to the extent.
-		 */
-		nextents = xfs_iext_count(&ip->i_df);
-		if (nextents <= XFS_INLINE_EXTS) {
-			ifp->if_u1.if_extents =
-				ifp->if_u2.if_inline_ext;
-		}
 		src_log_flags |= XFS_ILOG_DEXT;
 		break;
 	case XFS_DINODE_FMT_BTREE:
@@ -1940,15 +1930,6 @@ xfs_swap_extents(
 
 	switch (tip->i_d.di_format) {
 	case XFS_DINODE_FMT_EXTENTS:
-		/*
-		 * If the extents fit in the inode, fix the pointer.  Otherwise
-		 * it's already NULL or pointing to the extent.
-		 */
-		nextents = xfs_iext_count(&tip->i_df);
-		if (nextents <= XFS_INLINE_EXTS) {
-			tifp->if_u1.if_extents =
-				tifp->if_u2.if_inline_ext;
-		}
 		target_log_flags |= XFS_ILOG_DEXT;
 		break;
 	case XFS_DINODE_FMT_BTREE:
