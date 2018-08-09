@@ -743,7 +743,6 @@ again:
 
 		node = xfs_iext_rebalance_node(parent, &pos, node, nr_entries);
 		if (node) {
-			offset = node->keys[0];
 			victim = node;
 			node = parent;
 			goto again;
