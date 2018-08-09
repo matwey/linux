@@ -4112,7 +4112,6 @@ xfs_bmapi_reserve_delalloc(
 	xfs_fileoff_t		aoff,
 	xfs_filblks_t		len,
 	struct xfs_bmbt_irec	*got,
-	struct xfs_bmbt_irec	*prev,
 	xfs_extnum_t		*lastx,
 	int			eof)
 {
@@ -4131,7 +4130,12 @@ xfs_bmapi_reserve_delalloc(
 	/* Figure out the extent size, adjust alen */
 	extsz = xfs_get_extsz_hint(ip);
 	if (extsz) {
-		error = xfs_bmap_extsize_align(mp, got, prev, extsz, rt, eof,
+		struct xfs_bmbt_irec	prev;
+
+		if (!xfs_iext_get_extent(ifp, *lastx - 1, &prev))
+			prev.br_startoff = NULLFILEOFF;
+
+		error = xfs_bmap_extsize_align(mp, got, &prev, extsz, rt, eof,
 					       1, 0, &aoff, &alen);
 		ASSERT(!error);
 	}
@@ -4217,7 +4221,7 @@ xfs_bmapi_delay(
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_ifork	*ifp = XFS_IFORK_PTR(ip, XFS_DATA_FORK);
 	struct xfs_bmbt_irec	got;	/* current file extent record */
-	struct xfs_bmbt_irec	prev;	/* previous file extent record */
+	struct xfs_bmbt_irec	prev;	/* previous file extent record, unused */
 	xfs_fileoff_t		obno;	/* old block number (offset) */
 	xfs_fileoff_t		end;	/* end of mapped file region */
 	xfs_extnum_t		lastx;	/* last useful extent number */
@@ -4256,7 +4260,7 @@ xfs_bmapi_delay(
 	while (bno < end && n < *nmap) {
 		if (eof || got.br_startoff > bno) {
 			error = xfs_bmapi_reserve_delalloc(ip, bno, len, &got,
-							   &prev, &lastx, eof);
+							   &lastx, eof);
 			if (error) {
 				if (n == 0) {
 					*nmap = 0;
@@ -4275,7 +4279,6 @@ xfs_bmapi_delay(
 			break;
 
 		/* Else go on to the next record. */
-		prev = got;
 		if (++lastx < ifp->if_bytes / sizeof(xfs_bmbt_rec_t))
 			xfs_bmbt_get_all(xfs_iext_get_ext(ifp, lastx), &got);
 		else
