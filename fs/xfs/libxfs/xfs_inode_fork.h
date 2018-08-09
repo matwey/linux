@@ -137,6 +137,7 @@ int		xfs_iextents_copy(struct xfs_inode *, struct xfs_bmbt_rec *,
 
 struct xfs_bmbt_rec_host *
 		xfs_iext_get_ext(struct xfs_ifork *, xfs_extnum_t);
+xfs_extnum_t	xfs_iext_count(struct xfs_ifork *);
 void		xfs_iext_insert(struct xfs_inode *, xfs_extnum_t, xfs_extnum_t,
 				struct xfs_bmbt_irec *, int);
 void		xfs_iext_add(struct xfs_ifork *, xfs_extnum_t, int);
