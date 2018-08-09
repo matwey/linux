@@ -1337,10 +1337,6 @@ typedef struct xfs_bmbt_rec {
 typedef __uint64_t	xfs_bmbt_rec_base_t;	/* use this for casts */
 typedef xfs_bmbt_rec_t xfs_bmdr_rec_t;
 
-typedef struct xfs_bmbt_rec_host {
-	__uint64_t		l0, l1;
-} xfs_bmbt_rec_host_t;
-
 /*
  * Values and macros for delayed-allocation startblock fields.
  */
