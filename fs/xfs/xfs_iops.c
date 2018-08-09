@@ -146,7 +146,6 @@ xfs_generic_create(
 	if (S_ISCHR(mode) || S_ISBLK(mode)) {
 		if (unlikely(!sysv_valid_dev(rdev) || MAJOR(rdev) & ~0x1ff))
 			return -EINVAL;
-		rdev = sysv_encode_dev(rdev);
 	} else {
 		rdev = 0;
 	}
@@ -472,8 +471,7 @@ xfs_vn_getattr(
 	case S_IFBLK:
 	case S_IFCHR:
 		stat->blksize = BLKDEV_IOSIZE;
-		stat->rdev = MKDEV(sysv_major(ip->i_df.if_u2.if_rdev) & 0x1ff,
-				   sysv_minor(ip->i_df.if_u2.if_rdev));
+		stat->rdev = inode->i_rdev;
 		break;
 	default:
 		if (XFS_IS_REALTIME_INODE(ip)) {
@@ -1317,18 +1315,6 @@ xfs_setup_inode(
 	set_nlink(inode, ip->i_d.di_nlink);
 	inode->i_uid    = xfs_uid_to_kuid(ip->i_d.di_uid);
 	inode->i_gid    = xfs_gid_to_kgid(ip->i_d.di_gid);
-
-	switch (inode->i_mode & S_IFMT) {
-	case S_IFBLK:
-	case S_IFCHR:
-		inode->i_rdev =
-			MKDEV(sysv_major(ip->i_df.if_u2.if_rdev) & 0x1ff,
-			      sysv_minor(ip->i_df.if_u2.if_rdev));
-		break;
-	default:
-		inode->i_rdev = 0;
-		break;
-	}
 
 	inode->i_generation = ip->i_d.di_gen;
 	i_size_write(inode, ip->i_d.di_size);
