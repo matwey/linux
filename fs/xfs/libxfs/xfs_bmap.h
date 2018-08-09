@@ -167,13 +167,16 @@ static inline void xfs_bmap_init(xfs_bmap_free_t *flp, xfs_fsblock_t *fbp)
 
 
 /*
- * This macro is used to determine how many extents will be shifted
- * in one write transaction. We could require two splits,
- * an extent move on the first and an extent merge on the second,
- * So it is proper that one extent is shifted inside write transaction
- * at a time.
+ * Return true if the extent is a real, allocated extent, or false if it is  a
+ * delayed allocation, and unwritten extent or a hole.
  */
-#define XFS_BMAP_MAX_SHIFT_EXTENTS	1
+static inline bool xfs_bmap_is_real_extent(struct xfs_bmbt_irec *irec)
+{
+	return irec->br_state != XFS_EXT_UNWRITTEN &&
+		irec->br_startblock != HOLESTARTBLOCK &&
+		irec->br_startblock != DELAYSTARTBLOCK &&
+		!isnullstartblock(irec->br_startblock);
+}
 
 enum shift_direction {
 	SHIFT_LEFT = 0,
@@ -223,8 +226,7 @@ uint	xfs_default_attroffset(struct xfs_inode *ip);
 int	xfs_bmap_shift_extents(struct xfs_trans *tp, struct xfs_inode *ip,
 		xfs_fileoff_t *next_fsb, xfs_fileoff_t offset_shift_fsb,
 		int *done, xfs_fileoff_t stop_fsb, xfs_fsblock_t *firstblock,
-		struct xfs_bmap_free *flist, enum shift_direction direction,
-		int num_exts);
+		struct xfs_bmap_free *flist, enum shift_direction direction);
 int	xfs_bmap_split_extent(struct xfs_inode *ip, xfs_fileoff_t split_offset);
 
 static inline int xfs_bmap_fork_to_state(int whichfork)

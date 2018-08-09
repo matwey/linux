@@ -1518,13 +1518,9 @@ xfs_collapse_file_space(
 
 		xfs_bmap_init(&free_list, &first_block);
 
-		/*
-		 * We are using the write transaction in which max 2 bmbt
-		 * updates are allowed
-		 */
 		error = xfs_bmap_shift_extents(tp, ip, &next_fsb, shift_fsb,
 				&done, stop_fsb, &first_block, &free_list,
-				SHIFT_LEFT, XFS_BMAP_MAX_SHIFT_EXTENTS);
+				SHIFT_LEFT);
 		if (error)
 			goto out_bmap_cancel;
 
@@ -1600,13 +1596,9 @@ xfs_insert_file_space(
 		xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
 		xfs_bmap_init(&free_list, &first_block);
 
-		/*
-		 * We are using the write transaction in which max 2 bmbt
-		 * updates are allowed
-		 */
 		error = xfs_bmap_shift_extents(tp, ip, &next_fsb, shift_fsb,
 				&done, stop_fsb, &first_block, &free_list,
-				SHIFT_RIGHT, XFS_BMAP_MAX_SHIFT_EXTENTS);
+				SHIFT_RIGHT);
 		if (error)
 			goto out_bmap_cancel;
 
