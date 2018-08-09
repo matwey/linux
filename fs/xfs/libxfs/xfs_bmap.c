@@ -2856,11 +2856,12 @@ xfs_bmap_add_extent_hole_real(
 		 * left and on the right.
 		 * Merge all three into a single extent record.
 		 */
-		--bma->idx;
 		left.br_blockcount += new->br_blockcount + right.br_blockcount;
+
+		xfs_iext_remove(bma->ip, bma->idx, 1, state);
+		--bma->idx;
 		xfs_iext_update_extent(bma->ip, state, bma->idx, &left);
 
-		xfs_iext_remove(bma->ip, bma->idx + 1, 1, state);
 
 		XFS_IFORK_NEXT_SET(bma->ip, whichfork,
 			XFS_IFORK_NEXTENTS(bma->ip, whichfork) - 1);
@@ -2892,9 +2893,11 @@ xfs_bmap_add_extent_hole_real(
 		 * on the left.
 		 * Merge the new allocation with the left neighbor.
 		 */
-		--bma->idx;
 		old = left;
+
 		left.br_blockcount += new->br_blockcount;
+
+		--bma->idx;
 		xfs_iext_update_extent(bma->ip, state, bma->idx, &left);
 
 		if (bma->cur == NULL) {
