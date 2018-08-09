@@ -223,10 +223,14 @@ int	xfs_bmap_del_extent_delay(struct xfs_inode *ip, int whichfork,
 int	xfs_check_nostate_extents(struct xfs_ifork *ifp, xfs_extnum_t idx,
 		xfs_extnum_t num);
 uint	xfs_default_attroffset(struct xfs_inode *ip);
-int	xfs_bmap_shift_extents(struct xfs_trans *tp, struct xfs_inode *ip,
+int	xfs_bmap_collapse_extents(struct xfs_trans *tp, struct xfs_inode *ip,
 		xfs_fileoff_t *next_fsb, xfs_fileoff_t offset_shift_fsb,
-		int *done, xfs_fileoff_t stop_fsb, xfs_fsblock_t *firstblock,
-		struct xfs_bmap_free *flist, enum shift_direction direction);
+		bool *done, xfs_fileoff_t stop_fsb, xfs_fsblock_t *firstblock,
+		struct xfs_bmap_free *flist);
+int	xfs_bmap_insert_extents(struct xfs_trans *tp, struct xfs_inode *ip,
+		xfs_fileoff_t *next_fsb, xfs_fileoff_t offset_shift_fsb,
+		bool *done, xfs_fileoff_t stop_fsb, xfs_fsblock_t *firstblock,
+		struct xfs_bmap_free *flist);
 int	xfs_bmap_split_extent(struct xfs_inode *ip, xfs_fileoff_t split_offset);
 
 static inline int xfs_bmap_fork_to_state(int whichfork)
