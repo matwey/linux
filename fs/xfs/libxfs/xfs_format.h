@@ -1361,28 +1361,8 @@ static inline xfs_filblks_t startblockval(xfs_fsblock_t x)
 	return (xfs_filblks_t)((x) & ~STARTBLOCKMASK);
 }
 
-/*
- * Possible extent states.
- */
-typedef enum {
-	XFS_EXT_NORM, XFS_EXT_UNWRITTEN,
-	XFS_EXT_DMAPI_OFFLINE, XFS_EXT_INVALID
-} xfs_exntst_t;
 
-/*
- * Incore version of above.
- */
-typedef struct xfs_bmbt_irec
-{
-	xfs_fileoff_t	br_startoff;	/* starting file offset */
-	xfs_fsblock_t	br_startblock;	/* starting block number */
-	xfs_filblks_t	br_blockcount;	/* number of blocks */
-	xfs_exntst_t	br_state;	/* extent state */
-} xfs_bmbt_irec_t;
-
-/*
- * Key structure for non-leaf levels of the tree.
- */
+/* Key structure for non-leaf levels of the tree. */
 typedef struct xfs_bmbt_key {
 	__be64		br_startoff;	/* starting file offset */
 } xfs_bmbt_key_t, xfs_bmdr_key_t;
