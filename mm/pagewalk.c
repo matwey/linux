@@ -181,7 +181,6 @@ static int walk_page_test(unsigned long start, unsigned long end,
 int walk_page_range(unsigned long addr, unsigned long end,
 		    struct mm_walk *walk)
 {
-	pgd_t *pgd;
 	unsigned long next;
 	int err = 0;
 
@@ -193,9 +192,9 @@ int walk_page_range(unsigned long addr, unsigned long end,
 
 	VM_BUG_ON(!rwsem_is_locked(&walk->mm->mmap_sem));
 
-	pgd = pgd_offset(walk->mm, addr);
 	do {
 		struct vm_area_struct *vma;
+		pgd_t *pgd;
 
 		/*
 		 * This function was not intended to be vma based.
@@ -215,7 +214,6 @@ int walk_page_range(unsigned long addr, unsigned long end,
 				 * be passed to the callers.
 				 */
 				err = 0;
-				pgd = pgd_offset(walk->mm, next);
 				continue;
 			}
 			if (err < 0)
@@ -238,24 +236,22 @@ int walk_page_range(unsigned long addr, unsigned long end,
 				err = walk_hugetlb_range(vma, addr, next, walk);
 				if (err)
 					break;
-				pgd = pgd_offset(walk->mm, next);
 				continue;
 			}
 #endif
 		} else if (vma) {
 			/* vma starts after addr, still consume the hole though */
-			next = min(vma->vm_start, end);
-			pgd = pgd_offset(walk->mm, next) - 1;
+			next = min(vma->vm_start, pgd_addr_end(addr, end));
 		} else {
 			/* no vma, so just eat the hole */
 			next = pgd_addr_end(addr, end);
 		}
+		pgd = pgd_offset(walk->mm, addr);
 		if (pgd_none_or_clear_bad(pgd)) {
 			if (walk->pte_hole)
 				err = walk->pte_hole(addr, next, walk);
 			if (err)
 				break;
-			pgd++;
 			continue;
 		}
 		if (walk->pgd_entry)
@@ -265,7 +261,6 @@ int walk_page_range(unsigned long addr, unsigned long end,
 			err = walk_pud_range(pgd, addr, next, walk);
 		if (err)
 			break;
-		pgd++;
 	} while (addr = next, addr < end);
 
 	return err;
