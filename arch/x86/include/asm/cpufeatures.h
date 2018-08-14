@@ -77,6 +77,8 @@
  * word 7 and we not even attempting to do a nasty kABI breakage.
  */
 #define X86_FEATURE_ZEN		( 2*32+ 4) /* "" CPU is AMD family 0x17 (Zen) */
+#define X86_FEATURE_L1TF_FIX		( 2*32+5) /* "" L1TF workaround used */
+#define X86_FEATURE_FLUSH_L1D		( 2*32+6) /* Flush L1D cache */
 
 #define X86_FEATURE_USE_IBPB	( 2*32+ 5) /* "" Indirect Branch Prediction Barrier enabled*/
 #define X86_FEATURE_USE_IBRS_FW	( 2*32+ 6) /* "" Use IBRS during runtime firmware calls */
@@ -335,5 +337,6 @@
 #define X86_BUG_SPECTRE_V1	X86_BUG(15) /* CPU is affected by Spectre variant 1 attack with conditional branches */
 #define X86_BUG_SPECTRE_V2	X86_BUG(16) /* CPU is affected by Spectre variant 2 attack with indirect branches */
 #define X86_BUG_SPEC_STORE_BYPASS X86_BUG(17) /* CPU is affected by speculative store bypass attack */
+#define X86_BUG_L1TF		X86_BUG(18) /* CPU is affected by L1 Terminal Fault */
 
 #endif /* _ASM_X86_CPUFEATURES_H */
