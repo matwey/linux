@@ -76,6 +76,7 @@
 #include <asm/realmode.h>
 #include <asm/misc.h>
 #include <asm/qspinlock.h>
+#include <asm/spec-ctrl.h>
 #include <asm/spec_ctrl.h>
 
 /* Number of siblings per CPU package */

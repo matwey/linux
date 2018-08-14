@@ -9,7 +9,7 @@
 #include <asm/processor.h>
 #include <asm/apic.h>
 #include <asm/cpu.h>
-#include <asm/nospec-branch.h>
+#include <asm/spec-ctrl.h>
 #include <asm/smp.h>
 #include <asm/pci-direct.h>
 #include <asm/delay.h>
@@ -746,6 +746,12 @@ static void init_amd_bd(struct cpuinfo_x86 *c)
 static void init_amd_zn(struct cpuinfo_x86 *c)
 {
 	set_cpu_cap(c, X86_FEATURE_ZEN);
+	/*
+	 * Fix erratum 1076: CPB feature bit not being set in CPUID. It affects
+	 * all up to and including B1.
+	 */
+	if (c->x86_model <= 1 && c->x86_mask <= 1)
+		set_cpu_cap(c, X86_FEATURE_CPB);
 }
 
 static void init_amd(struct cpuinfo_x86 *c)
@@ -841,11 +847,11 @@ static void init_amd(struct cpuinfo_x86 *c)
 		if (cpu_has(c, X86_FEATURE_3DNOW) || cpu_has(c, X86_FEATURE_LM))
 			set_cpu_cap(c, X86_FEATURE_3DNOWPREFETCH);
 
-	/* AMD CPUs don't reset SS attributes on SYSRET */
-	set_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
+	/* AMD CPUs don't reset SS attributes on SYSRET, Xen does. */
+	if (!cpu_has(c, X86_FEATURE_XENPV))
+		set_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
 
 	x86_spec_check();
-
 }
 
 #ifdef CONFIG_X86_32
