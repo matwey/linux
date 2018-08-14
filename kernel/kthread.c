@@ -191,10 +191,15 @@ struct task_struct *kthread_create_on_node(int (*threadfn)(void *data),
 
 	if (!IS_ERR(create.result)) {
 		va_list args;
+		char name[TASK_COMM_LEN];
 
 		va_start(args, namefmt);
-		vsnprintf(create.result->comm, sizeof(create.result->comm),
-			  namefmt, args);
+		/*
+		 * task is already visible to other tasks, so updating
+		 * COMM must be protected.
+		 */
+		vsnprintf(name, sizeof(name), namefmt, args);
+		set_task_comm(create.result, name);
 		va_end(args);
 		/*
 		 * root may have changed our (kthreadd's) priority or CPU mask.
