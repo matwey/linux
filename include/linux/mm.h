@@ -1014,6 +1014,9 @@ struct mm_walk {
 			     unsigned long, unsigned long, struct mm_walk *);
 	struct mm_struct *mm;
 	void *private;
+
+	int (*test_walk)(unsigned long addr, unsigned long next,
+			struct mm_walk *walk);
 };
 
 int walk_page_range(unsigned long addr, unsigned long end,

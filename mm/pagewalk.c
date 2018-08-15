@@ -128,6 +128,34 @@ static int walk_hugetlb_range(struct vm_area_struct *vma,
 }
 #endif
 
+/*
+ * Decide whether we really walk over the current vma on [@start, @end)
+ * or skip it via the returned value. Return 0 if we do walk over the
+ * current vma, and return 1 if we skip the vma. Negative values means
+ * error, where we abort the current walk.
+ */
+static int walk_page_test(unsigned long start, unsigned long end,
+			struct mm_walk *walk, struct vm_area_struct *vma)
+{
+	if (walk->test_walk)
+		return walk->test_walk(start, end, walk);
+
+	/*
+	 * vma(VM_PFNMAP) doesn't have any valid struct pages behind VM_PFNMAP
+	 * range, so we don't walk over it as we do for normal vmas. However,
+	 * Some callers are interested in handling hole range and they don't
+	 * want to just ignore any single address range. Such users certainly
+	 * define their ->pte_hole() callbacks, so let's delegate them to handle
+	 * vma(VM_PFNMAP).
+	 */
+	if (vma->vm_flags & VM_PFNMAP) {
+		int err = 1;
+		if (walk->pte_hole)
+			err = walk->pte_hole(start, end, walk);
+		return err ? err : 1;
+	}
+	return 0;
+}
 /**
  * walk_page_range - walk a memory map's page tables with a callback
  * @mm: memory map to walk
@@ -153,7 +181,6 @@ static int walk_hugetlb_range(struct vm_area_struct *vma,
 int walk_page_range(unsigned long addr, unsigned long end,
 		    struct mm_walk *walk)
 {
-	pgd_t *pgd;
 	unsigned long next;
 	int err = 0;
 
@@ -165,13 +192,10 @@ int walk_page_range(unsigned long addr, unsigned long end,
 
 	VM_BUG_ON(!rwsem_is_locked(&walk->mm->mmap_sem));
 
-	pgd = pgd_offset(walk->mm, addr);
 	do {
-		struct vm_area_struct *vma = NULL;
+		struct vm_area_struct *vma;
+		pgd_t *pgd;
 
-		next = pgd_addr_end(addr, end);
-
-#ifdef CONFIG_HUGETLB_PAGE
 		/*
 		 * This function was not intended to be vma based.
 		 * But there are vma special cases to be handled:
@@ -179,25 +203,29 @@ int walk_page_range(unsigned long addr, unsigned long end,
 		 * - VM_PFNMAP vma's
 		 */
 		vma = find_vma(walk->mm, addr);
-		if (vma) {
-			/*
-			 * There are no page structures backing a VM_PFNMAP
-			 * range, so do not allow split_huge_page_pmd().
-			 */
-			if ((vma->vm_start <= addr) &&
-			    (vma->vm_flags & VM_PFNMAP)) {
-				next = vma->vm_end;
-				pgd = pgd_offset(walk->mm, next);
+		if (vma && vma->vm_start <= addr) {
+			/* inside vma */
+			next = min(pgd_addr_end(addr, end), vma->vm_end);
+			err = walk_page_test(addr, next, walk, vma);
+			if (err > 0) {
+				/*
+				 * positive return values are purely for
+				 * controlling the pagewalk, so should never
+				 * be passed to the callers.
+				 */
+				err = 0;
 				continue;
 			}
+			if (err < 0)
+				break;
+#ifdef CONFIG_HUGETLB_PAGE
 			/*
 			 * Handle hugetlb vma individually because pagetable
 			 * walk for the hugetlb page is dependent on the
 			 * architecture and we can't handled it in the same
 			 * manner as non-huge pages.
 			 */
-			if (walk->hugetlb_entry && (vma->vm_start <= addr) &&
-			    is_vm_hugetlb_page(vma)) {
+			if (walk->hugetlb_entry && is_vm_hugetlb_page(vma)) {
 				if (vma->vm_end < next)
 					next = vma->vm_end;
 				/*
@@ -208,17 +236,22 @@ int walk_page_range(unsigned long addr, unsigned long end,
 				err = walk_hugetlb_range(vma, addr, next, walk);
 				if (err)
 					break;
-				pgd = pgd_offset(walk->mm, next);
 				continue;
 			}
-		}
 #endif
+		} else if (vma) {
+			/* vma starts after addr, still consume the hole though */
+			next = min(vma->vm_start, pgd_addr_end(addr, end));
+		} else {
+			/* no vma, so just eat the hole */
+			next = pgd_addr_end(addr, end);
+		}
+		pgd = pgd_offset(walk->mm, addr);
 		if (pgd_none_or_clear_bad(pgd)) {
 			if (walk->pte_hole)
 				err = walk->pte_hole(addr, next, walk);
 			if (err)
 				break;
-			pgd++;
 			continue;
 		}
 		if (walk->pgd_entry)
@@ -228,8 +261,7 @@ int walk_page_range(unsigned long addr, unsigned long end,
 			err = walk_pud_range(pgd, addr, next, walk);
 		if (err)
 			break;
-		pgd++;
-	} while (addr = next, addr != end);
+	} while (addr = next, addr < end);
 
 	return err;
 }
