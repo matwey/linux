@@ -152,7 +152,7 @@ struct cirrus_device {
 
 struct cirrus_fbdev {
 	struct drm_fb_helper helper;
-	struct cirrus_framebuffer gfb;
+	struct cirrus_framebuffer *gfb;
 	struct list_head fbdev_list;
 	void *sysram;
 	int size;
