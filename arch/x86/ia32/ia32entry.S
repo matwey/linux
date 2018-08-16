@@ -18,6 +18,7 @@
 #include <asm/irqflags.h>
 #include <linux/linkage.h>
 #include <asm/spec_ctrl.h>
+#include <asm/nospec-branch.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
@@ -341,7 +342,12 @@ cstar_do_call:
 	andq  %r10,%rax
 	IA32_ARG_FIXUP 1
 cstar_dispatch:
+#ifdef CONFIG_RETPOLINE
+	mov ia32_sys_call_table(,%rax,8), %rax
+	call __x86_indirect_thunk_rax
+#else
 	call *ia32_sys_call_table(,%rax,8)
+#endif
 	movq %rax,RAX-ARGOFFSET(%rsp)
 	GET_THREAD_INFO(%r10)
 	DISABLE_INTERRUPTS(CLBR_NONE)
@@ -489,7 +495,12 @@ ia32_do_call:
 	sbbq %r10,%r10			/* array_index_mask_nospec() */
 	andq %r10,%rax
 	IA32_ARG_FIXUP
+#ifdef CONFIG_RETPOLINE
+	mov ia32_sys_call_table(,%rax,8), %rax
+	call __x86_indirect_thunk_rax
+#else
 	call *ia32_sys_call_table(,%rax,8) # xxx: rip relative
+#endif
 ia32_sysret:
 	movq %rax,RAX-ARGOFFSET(%rsp)
 ia32_ret_from_sys_call:
@@ -555,7 +566,7 @@ ENTRY(ia32_ptregs_common)
 	CFI_REL_OFFSET	rsp,RSP-ARGOFFSET
 /*	CFI_REL_OFFSET	ss,SS-ARGOFFSET*/
 	SAVE_REST
-	call *%rax
+	CALL_NOSPEC %rax
 	RESTORE_REST
 	jmp  ia32_sysret	/* misbalances the return cache */
 	CFI_ENDPROC
