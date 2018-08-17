@@ -1039,6 +1039,8 @@ static noinline void __init kernel_init_freeable(void)
 		prepare_namespace();
 	}
 
+	smp_smt_post_init();
+
 	/*
 	 * Ok, we have completed the initial bootup, and
 	 * we're essentially up and running. Get rid of the

@@ -16,7 +16,7 @@
 
 /* Valid flags for SECCOMP_SET_MODE_FILTER */
 #define SECCOMP_FILTER_FLAG_TSYNC	(1UL << 0)
-#define SECCOMP_FILTER_FLAG_LOG		(1UL << 1)
+/* In v4.14+ SECCOMP_FILTER_FLAG_LOG is (1UL << 1) */
 #define SECCOMP_FILTER_FLAG_SPEC_ALLOW	(1UL << 2)
 
 /*

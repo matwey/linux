@@ -68,15 +68,22 @@
 #define X86_FEATURE_3DNOW	( 1*32+31) /* 3DNow! */
 
 /* Transmeta-defined CPU features, CPUID level 0x80860001, word 2 */
+#define X86_FEATURE_RECOVERY	( 2*32+ 0) /* CPU in recovery mode */
 #define X86_FEATURE_LONGRUN	( 2*32+ 1) /* Longrun power control */
-
 #define X86_FEATURE_LRTI	( 2*32+ 3) /* LongRun table interface */
 
 /*
  * bp: Reuse that leaf for synthetic CPU feature bits due to the exhaustion of
- * word 7 und we not even attempting to do a nasty kABI breakage.
+ * word 7 and we not even attempting to do a nasty kABI breakage.
  */
 #define X86_FEATURE_ZEN		( 2*32+ 4) /* "" CPU is AMD family 0x17 (Zen) */
+#define X86_FEATURE_L1TF_FIX		( 2*32+5) /* "" L1TF workaround used */
+#define X86_FEATURE_FLUSH_L1D		( 2*32+6) /* Flush L1D cache */
+
+#define X86_FEATURE_USE_IBPB	( 2*32+ 5) /* "" Indirect Branch Prediction Barrier enabled*/
+#define X86_FEATURE_USE_IBRS_FW	( 2*32+ 6) /* "" Use IBRS during runtime firmware calls */
+
+#define X86_FEATURE_IBRS	( 2*32+ 7) /* Indirect Branch Restricted Speculation */
 
 /* Other features, Linux-defined mapping, word 3 */
 /* This range is used for feature bits which conflict or are synthesized */
@@ -210,25 +217,28 @@
 #define X86_FEATURE_AVX512_4VNNIW (7*32+16) /* AVX-512 Neural Network Instructions */
 #define X86_FEATURE_AVX512_4FMAPS (7*32+17) /* AVX-512 Multiply Accumulation Single precision */
 #define X86_FEATURE_MSR_SPEC_CTRL ( 7*32+18) /* "" MSR SPEC_CTRL is implemented */
-#define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* Fill RSB on context switches */
-#define X86_FEATURE_SPEC_CTRL	( 7*32+20) /* Control Speculation Control */
-#define X86_FEATURE_INTEL_STIBP		(7*32+21) /* "" Intel Single Thread Indirect Branch Predictors */
-#define X86_FEATURE_ARCH_CAPABILITIES	(7*32+22) /* IA32_ARCH_CAPABILITIES MSR (Intel) */
-#define X86_FEATURE_SSBD		(7*32+23) /* Speculative Store Bypass Disable */
+#define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* "" Fill RSB on context switches */
+#define X86_FEATURE_SPEC_CTRL	( 7*32+20) /* "" Speculation Control (IBRS + IBPB) */
+#define X86_FEATURE_INTEL_STIBP		( 7*32+21) /* "" Single Thread Indirect Branch Predictors */
+#define X86_FEATURE_ARCH_CAPABILITIES	( 7*32+22) /* IA32_ARCH_CAPABILITIES MSR (Intel) */
+#define X86_FEATURE_SSBD	( 7*32+23) /* Speculative Store Bypass Disable */
 #define X86_FEATURE_SPEC_STORE_BYPASS_DISABLE	( 7*32+24) /* "" Disable Speculative Store Bypass. */
-#define X86_FEATURE_LS_CFG_SSBD		( 7*32+25)  /* "" AMD SSBD implementation via LS_CFG MSR */
-#define X86_FEATURE_IBPB		( 7*32+26) /* Indirect Branch Prediction Barrier */
+#define X86_FEATURE_LS_CFG_SSBD	( 7*32+25) /* "" AMD SSBD implementation */
+#define X86_FEATURE_IBPB	( 7*32+26) /* Indirect Branch Prediction Barrier */
 
 /*
  * bp: that's the generic one, above is the Intel-specific one. We do it all
  * here due to kABI :-\
  */
-#define X86_FEATURE_STIBP		( 7*32+27) /* Single Thread Indirect Branch Predictors */
+#define X86_FEATURE_STIBP	( 7*32+27) /* Single Thread Indirect Branch Predictors */
 #define X86_FEATURE_SPEC_CTRL_SSBD	( 7*32+28) /* "" Speculative Store Bypass Disable */
-#define X86_FEATURE_RETPOLINE	( 7*32+29) /* Generic Retpoline mitigation for Spectre variant 2 */
-#define X86_FEATURE_RETPOLINE_AMD ( 7*32+30) /* AMD Retpoline mitigation for Spectre variant 2 */
+#define X86_FEATURE_RETPOLINE	( 7*32+29) /* "" Generic Retpoline mitigation for Spectre variant 2 */
+#define X86_FEATURE_RETPOLINE_AMD ( 7*32+30) /* "" AMD Retpoline mitigation for Spectre variant 2 */
+
+
 /* Because the ALTERNATIVE scheme is for members of the X86_FEATURE club... */
 #define X86_FEATURE_KAISER	( 7*32+31) /* CONFIG_PAGE_TABLE_ISOLATION w/o nokaiser */
+
 
 /* Virtualization flags: Linux defined, word 8 */
 #define X86_FEATURE_TPR_SHADOW  ( 8*32+ 0) /* Intel TPR Shadow */
@@ -294,10 +304,10 @@
 /* AMD-defined CPU features, CPUID level 0x80000008 (ebx), word 13 */
 #define X86_FEATURE_CLZERO	(13*32+0) /* CLZERO instruction */
 #define X86_FEATURE_IRPERF	(13*32+1) /* Instructions Retired Count */
-#define X86_FEATURE_AMD_IBPB	(13*32+12) /* "" Indirect Branch Prediction Barrier */
-#define X86_FEATURE_AMD_IBRS	(13*32+14) /* "" Indirect Branch Restricted Speculation */
-#define X86_FEATURE_AMD_STIBP	(13*32+15) /* "" Single Thread Indirect Branch Predictors */
-#define X86_FEATURE_VIRT_SSBD		(13*32+25) /* Virtualized Speculative Store Bypass Disable */
+#define X86_FEATURE_AMD_IBPB	(13*32+12) /* Indirect Branch Prediction Barrier */
+#define X86_FEATURE_AMD_IBRS	(13*32+14) /* Indirect Branch Restricted Speculation */
+#define X86_FEATURE_AMD_STIBP	(13*32+15) /* Single Thread Indirect Branch Predictors */
+#define X86_FEATURE_VIRT_SSBD	(13*32+25) /* Virtualized Speculative Store Bypass Disable */
 
 /* Intel-defined CPU features, CPUID level 0x00000007:0 (ecx), word 16 */
 #define X86_FEATURE_PKU		(16*32+ 3) /* Protection Keys for Userspace */
@@ -326,6 +336,7 @@
 #define X86_BUG_CPU_MELTDOWN	X86_BUG(14) /* CPU is affected by meltdown attack and needs kernel page table isolation */
 #define X86_BUG_SPECTRE_V1	X86_BUG(15) /* CPU is affected by Spectre variant 1 attack with conditional branches */
 #define X86_BUG_SPECTRE_V2	X86_BUG(16) /* CPU is affected by Spectre variant 2 attack with indirect branches */
-#define X86_BUG_SPEC_STORE_BYPASS	X86_BUG(17) /* CPU is affected by speculative store bypass attack */
+#define X86_BUG_SPEC_STORE_BYPASS X86_BUG(17) /* CPU is affected by speculative store bypass attack */
+#define X86_BUG_L1TF		X86_BUG(18) /* CPU is affected by L1 Terminal Fault */
 
 #endif /* _ASM_X86_CPUFEATURES_H */

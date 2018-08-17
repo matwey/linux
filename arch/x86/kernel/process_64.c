@@ -415,7 +415,9 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	if (unlikely(task_thread_info(next_p)->flags & _TIF_WORK_CTXSW_NEXT ||
 		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV)) {
 		__switch_to_xtra(prev_p, next_p, tss);
-		__switch_to_xtra_io(prev_p, next_p, tss_orig);
+		switch_to_bitmap(tss_orig, &prev_p->thread, &next_p->thread,
+				task_thread_info(prev_p)->flags,
+				task_thread_info(next_p)->flags);
 	}
 
 #ifdef CONFIG_XEN

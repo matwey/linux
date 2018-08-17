@@ -52,6 +52,7 @@ static const struct cpuid_bit cpuid_bits[] = {
 	{ X86_FEATURE_PAUSEFILTER,	CPUID_EDX,10, 0x8000000a, 0 },
 	{ X86_FEATURE_PFTHRESHOLD,	CPUID_EDX,12, 0x8000000a, 0 },
 	{ X86_FEATURE_AVIC,		CPUID_EDX,13, 0x8000000a, 0 },
+	{ X86_FEATURE_FLUSH_L1D,        CPUID_EDX,28, 0x00000007, 0 },
 	{ 0, 0, 0, 0, 0 }
 };
 

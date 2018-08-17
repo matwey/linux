@@ -7,7 +7,7 @@
 #include <xen/grant_table.h>
 #include <xen/events.h>
 
-#include <asm/cpufeature.h>
+#include <asm/cpufeatures.h>
 #include <asm/msr-index.h>
 #include <asm/xen/hypercall.h>
 #include <asm/xen/page.h>
