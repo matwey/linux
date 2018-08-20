@@ -20,11 +20,16 @@
 #include <linux/kref.h>
 #include <linux/blk-mq.h>
 
+extern unsigned int nvme_io_timeout_ec2;
+extern unsigned int admin_timeout_ec2;
+
 extern unsigned char nvme_io_timeout;
-#define NVME_IO_TIMEOUT	(nvme_io_timeout * HZ)
+#define NVME_IO_TIMEOUT	((nvme_io_timeout_ec2 > nvme_io_timeout) \
+			 ? (nvme_io_timeout_ec2 * HZ) : (nvme_io_timeout * HZ))
 
 extern unsigned char admin_timeout;
-#define ADMIN_TIMEOUT	(admin_timeout * HZ)
+#define ADMIN_TIMEOUT	((admin_timeout_ec2 > admin_timeout) \
+			 ? (admin_timeout_ec2 * HZ) : (admin_timeout * HZ))
 
 extern unsigned char shutdown_timeout;
 #define SHUTDOWN_TIMEOUT	(shutdown_timeout * HZ)

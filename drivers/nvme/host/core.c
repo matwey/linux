@@ -44,6 +44,16 @@ module_param_named(io_timeout, nvme_io_timeout, byte, 0644);
 MODULE_PARM_DESC(io_timeout, "timeout in seconds for I/O");
 EXPORT_SYMBOL_GPL(nvme_io_timeout);
 
+unsigned int admin_timeout_ec2 = 60;
+module_param(admin_timeout_ec2, int, 0644);
+MODULE_PARM_DESC(admin_timeout_ec2, "timeout in seconds for admin commands on EC2");
+EXPORT_SYMBOL_GPL(admin_timeout_ec2);
+
+unsigned int nvme_io_timeout_ec2 = 30;
+module_param_named(io_timeout_ec2, nvme_io_timeout_ec2, int, 0644);
+MODULE_PARM_DESC(io_timeout_ec2, "timeout in seconds for I/O");
+EXPORT_SYMBOL_GPL(nvme_io_timeout_ec2);
+
 unsigned char shutdown_timeout = 5;
 module_param(shutdown_timeout, byte, 0644);
 MODULE_PARM_DESC(shutdown_timeout, "timeout in seconds for controller shutdown");
