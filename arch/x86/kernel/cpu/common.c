@@ -1595,7 +1595,7 @@ void cpu_init(void)
 {
 	struct orig_ist *oist;
 	struct task_struct *me;
-	struct tss_struct *t, *t_orig;
+	struct tss_struct *t;
 	unsigned long v;
 	int cpu = stack_smp_processor_id();
 	int i;
@@ -1622,8 +1622,7 @@ void cpu_init(void)
 	 */
 	load_ucode_ap();
 
-	t = &per_cpu(cpu_tss_tramp, cpu);
-	t_orig = &per_cpu(cpu_tss, cpu);
+	t = &per_cpu(cpu_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 
 #ifdef CONFIG_NUMA
@@ -1674,46 +1673,23 @@ void cpu_init(void)
 	}
 
 	t->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
-	t_orig->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
 
 	/*
 	 * <= is required because the CPU will access up to
 	 * 8 bits beyond the end of the IO permission bitmap.
 	 */
-	for (i = 0; i <= IO_BITMAP_LONGS; i++) {
+	for (i = 0; i <= IO_BITMAP_LONGS; i++)
 		t->io_bitmap[i] = ~0UL;
-		t_orig->io_bitmap[i] = ~0UL;
-	}
 
 	atomic_inc(&init_mm.mm_count);
 	me->active_mm = &init_mm;
 	BUG_ON(me->mm);
 	enter_lazy_tlb(&init_mm, me);
 
-	load_sp0(t_orig, &current->thread);
-	/*
-	 * Initialize the TSS.  sp0 points to the entry trampoline stack
-	 * regardless of what task is running.
-	 *
-	 * load_sp0() is required for paravirt establishment of the vCPU sp0.
-	 */
-	v = current->thread.sp0;
-	current->thread.sp0 = (unsigned long)t + offsetofend(struct tss_struct,
-		SYSENTER_stack);
 	load_sp0(t, &current->thread);
-	WRITE_ONCE(t->x86_tss.sp0, current->thread.sp0);
-	/* Restore original value */
-	current->thread.sp0 = v;
-
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 	load_mm_ldt(&init_mm);
-
-	/*
-	 * Entry stack has to be 16-bytes aligned so that it can serve as stack
-	 * for IRQ handlers (INT instruction implicitly aligns %rsp to 16-bytes)
-	 */
-	BUILD_BUG_ON(offsetofend(struct tss_struct, SYSENTER_stack) % 16 != 0);
 
 	clear_all_debug_regs();
 	dbg_restore_debug_regs();
