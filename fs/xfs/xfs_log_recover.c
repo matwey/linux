@@ -3067,13 +3067,6 @@ xlog_recover_inode_pass2(
 	/* The core is in in-core format */
 	xfs_dinode_to_disk(dip, dicp);
 
-	/* the rest is in on-disk format */
-	if (item->ri_buf[1].i_len > isize) {
-		memcpy((char *)dip + isize,
-			item->ri_buf[1].i_addr + isize,
-			item->ri_buf[1].i_len - isize);
-	}
-
 	fields = in_f->ilf_fields;
 	switch (fields & (XFS_ILOG_DEV | XFS_ILOG_UUID)) {
 	case XFS_ILOG_DEV:
