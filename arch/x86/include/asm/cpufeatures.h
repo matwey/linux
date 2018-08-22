@@ -77,13 +77,14 @@
  * word 7 and we not even attempting to do a nasty kABI breakage.
  */
 #define X86_FEATURE_ZEN		( 2*32+ 4) /* "" CPU is AMD family 0x17 (Zen) */
-#define X86_FEATURE_L1TF_FIX		( 2*32+5) /* "" L1TF workaround used */
-#define X86_FEATURE_FLUSH_L1D		( 2*32+6) /* Flush L1D cache */
 
 #define X86_FEATURE_USE_IBPB	( 2*32+ 5) /* "" Indirect Branch Prediction Barrier enabled*/
 #define X86_FEATURE_USE_IBRS_FW	( 2*32+ 6) /* "" Use IBRS during runtime firmware calls */
 
 #define X86_FEATURE_IBRS	( 2*32+ 7) /* Indirect Branch Restricted Speculation */
+
+#define X86_FEATURE_L1TF_FIX	( 2*32+ 8) /* "" L1TF workaround used */
+#define X86_FEATURE_FLUSH_L1D	( 2*32+ 9) /* Flush L1D cache */
 
 /* Other features, Linux-defined mapping, word 3 */
 /* This range is used for feature bits which conflict or are synthesized */
