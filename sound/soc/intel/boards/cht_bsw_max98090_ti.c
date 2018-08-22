@@ -148,10 +148,6 @@ static int cht_codec_init(struct snd_soc_pcm_runtime *runtime)
 		dev_err(runtime->dev, "Headset Jack creation failed %d\n", ret);
 		return ret;
 	}
-
-	if (ctx->ts3a227e_present)
-		snd_soc_jack_notifier_register(jack, &cht_jack_nb);
-
 	return ret;
 }
 
@@ -221,7 +217,7 @@ static int cht_max98090_headset_init(struct snd_soc_component *component)
 		return ret;
 	}
 
-	return ts3a227e_enable_jack_detect(component, &ctx->jack);
+	return ts3a227e_enable_jack_detect(component, jack);
 }
 
 static struct snd_soc_ops cht_aif1_ops = {
