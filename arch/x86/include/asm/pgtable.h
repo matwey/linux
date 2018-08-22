@@ -168,21 +168,21 @@ static inline u64 protnone_mask(u64 val);
 
 static inline unsigned long pte_pfn(pte_t pte)
 {
-	unsigned long pfn = pte_val(pte);
+	phys_addr_t pfn = pte_val(pte);
 	pfn ^= protnone_mask(pfn);
 	return (pfn & PTE_PFN_MASK) >> PAGE_SHIFT;
 }
 
 static inline unsigned long pmd_pfn(pmd_t pmd)
 {
-	unsigned long pfn = pmd_val(pmd);
+	phys_addr_t pfn = pmd_val(pmd);
 	pfn ^= protnone_mask(pfn);
 	return (pfn & pmd_pfn_mask(pmd)) >> PAGE_SHIFT;
 }
 
 static inline unsigned long pud_pfn(pud_t pud)
 {
-	unsigned long pfn = pud_val(pud);
+	phys_addr_t pfn = pud_val(pud);
 	pfn ^= protnone_mask(pfn);
 	return (pfn & pud_pfn_mask(pud)) >> PAGE_SHIFT;
 }
@@ -346,11 +346,6 @@ static inline pmd_t pmd_mkwrite(pmd_t pmd)
 	return pmd_set_flags(pmd, _PAGE_RW);
 }
 
-static inline pmd_t pmd_mknotpresent(pmd_t pmd)
-{
-	return pmd_clear_flags(pmd, _PAGE_PRESENT | _PAGE_PROTNONE);
-}
-
 #ifdef CONFIG_HAVE_ARCH_SOFT_DIRTY
 static inline int pte_soft_dirty(pte_t pte)
 {
@@ -400,7 +395,7 @@ static inline pgprotval_t massage_pgprot(pgprot_t pgprot)
 
 static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
 {
-	phys_addr_t pfn = page_nr << PAGE_SHIFT;
+	phys_addr_t pfn = (phys_addr_t)page_nr << PAGE_SHIFT;
 	pfn ^= protnone_mask(pgprot_val(pgprot));
 	pfn &= PTE_PFN_MASK;
 	return __pte(pfn | massage_pgprot(pgprot));
@@ -408,10 +403,43 @@ static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
 
 static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)
 {
-	phys_addr_t pfn = page_nr << PAGE_SHIFT;
+	phys_addr_t pfn = (phys_addr_t)page_nr << PAGE_SHIFT;
 	pfn ^= protnone_mask(pgprot_val(pgprot));
 	pfn &= PHYSICAL_PMD_PAGE_MASK;
 	return __pmd(pfn | massage_pgprot(pgprot));
+}
+
+static inline pud_t pfn_pud(unsigned long page_nr, pgprot_t pgprot)
+{
+	phys_addr_t pfn = page_nr << PAGE_SHIFT;
+	pfn ^= protnone_mask(pgprot_val(pgprot));
+	pfn &= PHYSICAL_PUD_PAGE_MASK;
+	return __pud(pfn | massage_pgprot(pgprot));
+}
+
+static inline pmd_t pmd_mknotpresent(pmd_t pmd)
+{
+	return pfn_pmd(pmd_pfn(pmd),
+		       __pgprot(pmd_flags(pmd) & ~(_PAGE_PRESENT|_PAGE_PROTNONE)));
+}
+
+static inline pud_t pud_set_flags(pud_t pud, pudval_t set)
+{
+	pudval_t v = native_pud_val(pud);
+
+	return __pud(v | set);
+}
+
+static inline pud_t pud_clear_flags(pud_t pud, pudval_t clear)
+{
+	pudval_t v = native_pud_val(pud);
+
+	return __pud(v & ~clear);
+}
+
+static inline pud_t pud_mkhuge(pud_t pud)
+{
+	return pud_set_flags(pud, _PAGE_PSE);
 }
 
 static inline u64 flip_protnone_guard(u64 oldval, u64 val, u64 mask);
@@ -990,6 +1018,14 @@ static inline pte_t pte_swp_clear_soft_dirty(pte_t pte)
 }
 #endif
 
+#define __HAVE_ARCH_PFN_MODIFY_ALLOWED 1
+extern bool pfn_modify_allowed(unsigned long pfn, pgprot_t prot);
+
+static inline bool arch_has_pfn_modify_check(void)
+{
+	return boot_cpu_has_bug(X86_BUG_L1TF);
+}
+
 #define PKRU_AD_BIT 0x1
 #define PKRU_WD_BIT 0x2
 #define PKRU_BITS_PER_PKEY 2
@@ -1018,14 +1054,6 @@ static inline u16 pte_flags_pkey(unsigned long pte_flags)
 #else
 	return 0;
 #endif
-}
-
-#define __HAVE_ARCH_PFN_MODIFY_ALLOWED 1
-extern bool pfn_modify_allowed(unsigned long pfn, pgprot_t prot);
-
-static inline bool arch_has_pfn_modify_check(void)
-{
-	return boot_cpu_has_bug(X86_BUG_L1TF);
 }
 
 #include <asm-generic/pgtable.h>
