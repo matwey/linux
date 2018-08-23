@@ -27,8 +27,8 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/intel-family.h>
-#include <asm/spec_ctrl.h>
 #include <asm/e820.h>
+#include <asm/spec_ctrl.h>
 
 static void __init spectre_v2_select_mitigation(void);
 static void __init ssb_select_mitigation(void);
@@ -229,73 +229,6 @@ enum vmx_l1d_flush_state l1tf_vmx_mitigation = VMENTER_L1D_FLUSH_AUTO;
 EXPORT_SYMBOL_GPL(l1tf_vmx_mitigation);
 #endif
 
-static void __init l1tf_select_mitigation(void)
-{
-	u64 half_pa;
-
-	if (!boot_cpu_has_bug(X86_BUG_L1TF))
-		return;
-
-	switch (l1tf_mitigation) {
-	case L1TF_MITIGATION_OFF:
-	case L1TF_MITIGATION_FLUSH_NOWARN:
-	case L1TF_MITIGATION_FLUSH:
-		break;
-	case L1TF_MITIGATION_FLUSH_NOSMT:
-	case L1TF_MITIGATION_FULL:
-		cpu_smt_disable(false);
-		break;
-	case L1TF_MITIGATION_FULL_FORCE:
-		cpu_smt_disable(true);
-		break;
-	}
-
-#if CONFIG_PGTABLE_LEVELS == 2
-	pr_warn("Kernel not compiled for PAE. No mitigation for L1TF\n");
-	return;
-#endif
-
-	/*
-	 * This is extremely unlikely to happen because almost all
-	 * systems have far more MAX_PA/2 than RAM can be fit into
-	 * DIMM slots.
-	 */
-	half_pa = (u64)l1tf_pfn_limit() << PAGE_SHIFT;
-	if (e820_any_mapped(half_pa, ULLONG_MAX - half_pa, E820_RAM)) {
-		pr_warn("System has more than MAX_PA/2 memory. L1TF mitigation not effective.\n");
-		return;
-	}
-
-	setup_force_cpu_cap(X86_FEATURE_L1TF_FIX);
-}
-
-
-static int __init l1tf_cmdline(char *str)
-{
-	if (!boot_cpu_has_bug(X86_BUG_L1TF))
-		return 0;
-
-	if (!str)
-		return -EINVAL;
-
-	if (!strcmp(str, "off"))
-		l1tf_mitigation = L1TF_MITIGATION_OFF;
-	else if (!strcmp(str, "flush,nowarn"))
-		l1tf_mitigation = L1TF_MITIGATION_FLUSH_NOWARN;
-	else if (!strcmp(str, "flush"))
-		l1tf_mitigation = L1TF_MITIGATION_FLUSH;
-	else if (!strcmp(str, "flush,nosmt"))
-		l1tf_mitigation = L1TF_MITIGATION_FLUSH_NOSMT;
-	else if (!strcmp(str, "full"))
-		l1tf_mitigation = L1TF_MITIGATION_FULL;
-	else if (!strcmp(str, "full,force"))
-		l1tf_mitigation = L1TF_MITIGATION_FULL_FORCE;
-
-	return 0;
-}
-early_param("l1tf", l1tf_cmdline);
-
-
 #ifdef RETPOLINE
 static bool spectre_v2_bad_module;
 
@@ -412,11 +345,11 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 	return cmd;
 }
 
-/* Check for Skylake-like CPUs (for RSB handling) */
+/* Check for Skylake-like CPUs (for IBRS handling) */
 static bool __init is_skylake_era(void)
 {
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
-	    boot_cpu_data.x86 == 6) {
+			boot_cpu_data.x86 == 6) {
 		switch (boot_cpu_data.x86_model) {
 		case INTEL_FAM6_SKYLAKE_MOBILE:
 		case INTEL_FAM6_SKYLAKE_DESKTOP:
@@ -753,6 +686,76 @@ void x86_spec_ctrl_setup_ap(void)
 		x86_amd_ssb_disable();
 }
 
+#undef pr_fmt
+#define pr_fmt(fmt)	"L1TF: " fmt
+static void __init l1tf_select_mitigation(void)
+{
+	u64 half_pa;
+
+	if (!boot_cpu_has_bug(X86_BUG_L1TF))
+		return;
+
+	switch (l1tf_mitigation) {
+	case L1TF_MITIGATION_OFF:
+	case L1TF_MITIGATION_FLUSH_NOWARN:
+	case L1TF_MITIGATION_FLUSH:
+		break;
+	case L1TF_MITIGATION_FLUSH_NOSMT:
+	case L1TF_MITIGATION_FULL:
+		cpu_smt_disable(false);
+		break;
+	case L1TF_MITIGATION_FULL_FORCE:
+		cpu_smt_disable(true);
+		break;
+	}
+
+#if CONFIG_PGTABLE_LEVELS == 2
+	pr_warn("Kernel not compiled for PAE. No mitigation for L1TF\n");
+	return;
+#endif
+
+	/*
+	 * This is extremely unlikely to happen because almost all
+	 * systems have far more MAX_PA/2 than RAM can be fit into
+	 * DIMM slots.
+	 */
+	half_pa = (u64)l1tf_pfn_limit() << PAGE_SHIFT;
+	if (e820_any_mapped(half_pa, ULLONG_MAX - half_pa, E820_RAM)) {
+		pr_warn("System has more than MAX_PA/2 memory. L1TF mitigation not effective.\n");
+		return;
+	}
+
+	setup_force_cpu_cap(X86_FEATURE_L1TF_PTEINV);
+}
+#undef pr_fmt
+
+
+static int __init l1tf_cmdline(char *str)
+{
+	if (!boot_cpu_has_bug(X86_BUG_L1TF))
+		return 0;
+
+	if (!str)
+		return -EINVAL;
+
+	if (!strcmp(str, "off"))
+		l1tf_mitigation = L1TF_MITIGATION_OFF;
+	else if (!strcmp(str, "flush,nowarn"))
+		l1tf_mitigation = L1TF_MITIGATION_FLUSH_NOWARN;
+	else if (!strcmp(str, "flush"))
+		l1tf_mitigation = L1TF_MITIGATION_FLUSH;
+	else if (!strcmp(str, "flush,nosmt"))
+		l1tf_mitigation = L1TF_MITIGATION_FLUSH_NOSMT;
+	else if (!strcmp(str, "full"))
+		l1tf_mitigation = L1TF_MITIGATION_FULL;
+	else if (!strcmp(str, "full,force"))
+		l1tf_mitigation = L1TF_MITIGATION_FULL_FORCE;
+
+	return 0;
+}
+early_param("l1tf", l1tf_cmdline);
+
+
 #ifdef CONFIG_SYSFS
 
 #define L1TF_DEFAULT_MSG "Mitigation: PTE Inversion"
@@ -814,7 +817,7 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
 		return sprintf(buf, "%s\n", ssb_strings[ssb_mode]);
 
 	case X86_BUG_L1TF:
-		if (boot_cpu_has(X86_FEATURE_L1TF_FIX))
+		if (boot_cpu_has(X86_FEATURE_L1TF_PTEINV))
 			return l1tf_show_state(buf);
 		break;
 
