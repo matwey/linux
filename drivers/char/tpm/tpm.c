@@ -342,7 +342,7 @@ static void timeout_work(struct work_struct *work)
 	struct tpm_chip *chip = container_of(work, struct tpm_chip, work);
 
 	mutex_lock(&chip->buffer_mutex);
-	atomic_set(&chip->data_pending, 0);
+	chip->data_pending.counter = 0;
 	memset(chip->data_buffer, 0, TPM_BUFSIZE);
 	mutex_unlock(&chip->buffer_mutex);
 }
@@ -991,8 +991,6 @@ int tpm_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 	}
 
-	atomic_set(&chip->data_pending, 0);
-
 	file->private_data = chip;
 	return 0;
 }
@@ -1008,7 +1006,7 @@ int tpm_release(struct inode *inode, struct file *file)
 	del_singleshot_timer_sync(&chip->user_read_timer);
 	flush_work_sync(&chip->work);
 	file->private_data = NULL;
-	atomic_set(&chip->data_pending, 0);
+	chip->data_pending.counter = 0;
 	kfree(chip->data_buffer);
 	clear_bit(0, &chip->is_open);
 	put_device(chip->dev);
@@ -1023,17 +1021,19 @@ ssize_t tpm_write(struct file *file, const char __user *buf,
 	size_t in_size = size;
 	ssize_t out_size;
 
-	/* cannot perform a write until the read has cleared
-	   either via tpm_read or a user_read_timer timeout.
-	   This also prevents splitted buffered writes from blocking here.
-	*/
-	if (atomic_read(&chip->data_pending) != 0)
-		return -EBUSY;
-
 	if (in_size > TPM_BUFSIZE)
 		return -E2BIG;
 
 	mutex_lock(&chip->buffer_mutex);
+
+	/* cannot perform a write until the read has cleared
+	   either via tpm_read or a user_read_timer timeout.
+	   This also prevents splitted buffered writes from blocking here.
+	*/
+	if (chip->data_pending.counter != 0) {
+		mutex_unlock(&chip->buffer_mutex);
+		return -EBUSY;
+	}
 
 	if (copy_from_user
 	    (chip->data_buffer, (void __user *) buf, in_size)) {
@@ -1048,7 +1048,7 @@ ssize_t tpm_write(struct file *file, const char __user *buf,
 		return out_size;
 	}
 
-	atomic_set(&chip->data_pending, out_size);
+	chip->data_pending.counter = out_size;
 	mutex_unlock(&chip->buffer_mutex);
 
 	/* Set a timeout by which the reader must come claim the result */
@@ -1062,28 +1062,24 @@ ssize_t tpm_read(struct file *file, char __user *buf,
 		 size_t size, loff_t *off)
 {
 	struct tpm_chip *chip = file->private_data;
-	ssize_t ret_size;
-	ssize_t orig_ret_size;
+	ssize_t ret_size = 0;
 	int rc;
 
 	del_singleshot_timer_sync(&chip->user_read_timer);
 	flush_work_sync(&chip->work);
-	ret_size = atomic_read(&chip->data_pending);
-	atomic_set(&chip->data_pending, 0);
-	if (ret_size > 0) {	/* relay data */
-		orig_ret_size = ret_size;
-		if (size < ret_size)
-			ret_size = size;
+	mutex_lock(&chip->buffer_mutex);
 
-		mutex_lock(&chip->buffer_mutex);
+	if (chip->data_pending.counter) {
+		ret_size = min_t(ssize_t, size, chip->data_pending.counter);
 		rc = copy_to_user(buf, chip->data_buffer, ret_size);
-		memset(chip->data_buffer, 0, orig_ret_size);
+		memset(chip->data_buffer, 0, chip->data_pending.counter);
 		if (rc)
 			ret_size = -EFAULT;
 
-		mutex_unlock(&chip->buffer_mutex);
+		chip->data_pending.counter = 0;
 	}
 
+	mutex_unlock(&chip->buffer_mutex);
 	return ret_size;
 }
 EXPORT_SYMBOL_GPL(tpm_read);
