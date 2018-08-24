@@ -2376,24 +2376,19 @@ static int qlge_update_hw_vlan_features(struct net_device *ndev,
 	return status;
 }
 
-static u32 qlge_fix_features(struct net_device *ndev, u32 features)
-{
-	int err;
-
-	/* Update the behavior of vlan accel in the adapter */
-	err = qlge_update_hw_vlan_features(ndev, features);
-	if (err)
-		return err;
-
-	return features;
-}
-
 static int qlge_set_features(struct net_device *ndev, u32 features)
 {
 	u32 changed = ndev->features ^ features;
+	int err;
 
-	if (changed & NETIF_F_HW_VLAN_RX)
+	if (changed & NETIF_F_HW_VLAN_RX) {
+		/* Update the behavior of vlan accel in the adapter */
+		err = qlge_update_hw_vlan_features(ndev, features);
+		if (err)
+			return err;
+
 		qlge_vlan_mode(ndev, features);
+	}
 
 	return 0;
 }
@@ -4697,7 +4692,6 @@ static const struct net_device_ops qlge_netdev_ops = {
 	.ndo_set_mac_address	= qlge_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_tx_timeout		= qlge_tx_timeout,
-	.ndo_fix_features	= qlge_fix_features,
 	.ndo_set_features	= qlge_set_features,
 	.ndo_vlan_rx_add_vid	= qlge_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= qlge_vlan_rx_kill_vid,
