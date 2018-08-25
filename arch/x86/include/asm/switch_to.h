@@ -9,9 +9,6 @@ __visible struct task_struct *__switch_to(struct task_struct *prev,
 struct tss_struct;
 void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 		      struct tss_struct *tss);
-void switch_to_bitmap(struct tss_struct *tss, struct thread_struct *prev,
- 			struct thread_struct *next, unsigned long tifp,
-			unsigned long tifn);
 
 #ifdef CONFIG_X86_32
 
