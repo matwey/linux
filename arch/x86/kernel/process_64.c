@@ -282,8 +282,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	struct fpu *prev_fpu = &prev->fpu;
 	struct fpu *next_fpu = &next->fpu;
 	int cpu = smp_processor_id();
-	struct tss_struct *tss = &per_cpu(cpu_tss_tramp, cpu);
-	struct tss_struct *tss_orig = &per_cpu(cpu_tss, cpu);
+	struct tss_struct *tss = &per_cpu(cpu_tss, cpu);
 	unsigned fsindex, gsindex;
 	fpu_switch_t fpu_switch;
 
@@ -407,18 +406,14 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	this_cpu_write(current_task, next_p);
 
 	/* Reload esp0 and ss1.  This changes current_thread_info(). */
-	load_sp0(tss_orig, next);
+	load_sp0(tss, next);
 
 	/*
 	 * Now maybe reload the debug registers and handle I/O bitmaps
 	 */
 	if (unlikely(task_thread_info(next_p)->flags & _TIF_WORK_CTXSW_NEXT ||
-		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV)) {
+		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV))
 		__switch_to_xtra(prev_p, next_p, tss);
-		switch_to_bitmap(tss_orig, &prev_p->thread, &next_p->thread,
-				task_thread_info(prev_p)->flags,
-				task_thread_info(next_p)->flags);
-	}
 
 #ifdef CONFIG_XEN
 	/*
