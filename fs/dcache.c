@@ -1615,9 +1615,6 @@ void d_invalidate(struct dentry *dentry)
 			detach_mounts(data.mountpoint);
 			dput(data.mountpoint);
 		}
-
-		if (!data.mountpoint && !data.select.found)
-			break;
 	}
 }
 EXPORT_SYMBOL(d_invalidate);
