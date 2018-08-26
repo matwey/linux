@@ -33,6 +33,7 @@ extern int init_fpu(struct task_struct *child);
 extern void math_state_restore(void);
 extern int dump_fpu(struct pt_regs *, struct user_i387_struct *);
 void fpu__init_parse_early_param(void);
+void __kernel_fpu_end(void);
 
 extern user_regset_active_fn fpregs_active, xfpregs_active;
 extern user_regset_get_fn fpregs_get, xfpregs_get, fpregs_soft_get,
@@ -517,14 +518,6 @@ static inline void __kernel_fpu_begin(void)
 		/* We do 'stts()' in kernel_fpu_end() */
 	} else if (!use_eager_fpu())
 		clts();
-}
-
-static inline void __kernel_fpu_end(void)
-{
-	if (use_eager_fpu())
-		math_state_restore();
-	else
-		stts();
 }
 
 static inline void kernel_fpu_begin(void)

@@ -293,6 +293,15 @@ int xstateregs_set(struct task_struct *target, const struct user_regset *regset,
 	return ret;
 }
 
+void __kernel_fpu_end(void)
+{
+	if (use_eager_fpu())
+		math_state_restore();
+	else
+		stts();
+}
+EXPORT_SYMBOL(__kernel_fpu_end);
+
 #if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
 
 /*
