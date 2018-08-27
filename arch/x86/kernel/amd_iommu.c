@@ -1897,7 +1897,14 @@ static void update_device_table(struct protection_domain *domain)
 	list_for_each_entry(dev_data, &domain->dev_list, list) {
 		struct pci_dev *pdev = to_pci_dev(dev_data->dev);
 		u16 devid = get_device_id(dev_data->dev);
+		u16 alias = get_device_id(dev_data->alias);
 		set_dte_entry(devid, domain, pci_ats_enabled(pdev));
+
+		if (devid == alias)
+			continue;
+
+		/* There is an alias, update device table entry for it */
+		set_dte_entry(alias, domain, pci_ats_enabled(pdev));
 	}
 }
 
