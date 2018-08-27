@@ -3612,11 +3612,19 @@ static int decode_attr_owner(struct xdr_stream *xdr, uint32_t *bitmap,
 		if (!may_sleep) {
 			/* do nothing */
 		} else if (len < XDR_MAX_NETOBJ) {
-			if (nfs_map_name_to_uid(server, (char *)p, len, uid) == 0)
+			switch (nfs_map_name_to_uid(server, (char *)p, len, uid)) {
+			case 0:
 				ret = NFS_ATTR_FATTR_OWNER;
-			else
+				break;
+			case -EINVAL:
+				pr_warn_ratelimited("NFSv4 username in invalid\n");
+				/* Assume rest of reply is bad */
+				return -EIO;
+				break;
+			default:
 				dprintk("%s: nfs_map_name_to_uid failed!\n",
 						__func__);
+			}
 		} else
 			dprintk("%s: name too long (%u)!\n",
 					__func__, len);
@@ -3650,11 +3658,19 @@ static int decode_attr_group(struct xdr_stream *xdr, uint32_t *bitmap,
 		if (!may_sleep) {
 			/* do nothing */
 		} else if (len < XDR_MAX_NETOBJ) {
-			if (nfs_map_group_to_gid(server, (char *)p, len, gid) == 0)
+			switch (nfs_map_group_to_gid(server, (char *)p, len, gid)) {
+			case 0:
 				ret = NFS_ATTR_FATTR_GROUP;
-			else
+				break;
+			case -EINVAL:
+				pr_warn_ratelimited("NFSv4 group name in invalid\n");
+				/* Assume rest of reply is bad */
+				return -EIO;
+				break;
+			default:
 				dprintk("%s: nfs_map_group_to_gid failed!\n",
 						__func__);
+			}
 		} else
 			dprintk("%s: name too long (%u)!\n",
 					__func__, len);
