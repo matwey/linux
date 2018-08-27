@@ -196,13 +196,13 @@ static struct key *request_asymmetric_key(const char *signer, size_t signer_len,
 /*
  * Verify the signature on a module.
  */
-int mod_verify_sig(const void *mod, unsigned long *_modlen, bool truncate_only)
+int mod_verify_sig(const void *mod, struct load_info *info, bool truncate_only)
 {
 	struct public_key_signature *pks;
 	struct module_signature ms;
 	struct key *key;
 	const void *sig;
-	size_t modlen = *_modlen, sig_len;
+	size_t modlen = info->len, sig_len;
 	int ret;
 
 	pr_devel("==>%s(,%zu)\n", __func__, modlen);
@@ -221,7 +221,7 @@ int mod_verify_sig(const void *mod, unsigned long *_modlen, bool truncate_only)
 		return -EBADMSG;
 	modlen -= (size_t)ms.signer_len + ms.key_id_len;
 
-	*_modlen = modlen;
+	info->len = modlen;
 	if (truncate_only)
 		return 0;
 
@@ -229,8 +229,11 @@ int mod_verify_sig(const void *mod, unsigned long *_modlen, bool truncate_only)
 
 	/* For the moment, only support RSA and X.509 identifiers */
 	if (ms.algo != PKEY_ALGO_RSA ||
-	    ms.id_type != PKEY_ID_X509)
+	    ms.id_type != PKEY_ID_X509) {
+		printk(KERN_ERR "%s: Module signed with unsupported crypto\n",
+		       info->mod->name);
 		return -ENOPKG;
+	}
 
 	if (ms.hash >= PKEY_HASH__LAST ||
 	    !pkey_hash_algo[ms.hash])

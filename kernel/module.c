@@ -197,21 +197,6 @@ int unregister_module_notifier(struct notifier_block * nb)
 }
 EXPORT_SYMBOL(unregister_module_notifier);
 
-struct load_info {
-	Elf_Ehdr *hdr;
-	unsigned long len;
-	Elf_Shdr *sechdrs;
-	char *secstrings, *strtab;
-	unsigned long *strmap;
-	unsigned long symoffs, stroffs;
-	struct _ddebug *debug;
-	unsigned int num_debug;
-	bool sig_ok;
-	struct {
-		unsigned int sym, str, mod, vers, info, pcpu, unwind;
-	} index;
-};
-
 /* We require a truly strong try_module_get(): 0 means failure due to
    ongoing or failed initialization etc. */
 static inline int strong_try_module_get(struct module *mod)
@@ -2168,7 +2153,11 @@ static char *get_modinfo(struct load_info *info, const char *tag)
 	Elf_Shdr *infosec = &info->sechdrs[info->index.info];
 	unsigned long size = infosec->sh_size;
 
-	for (p = (char *)infosec->sh_addr; p; p = next_string(p, &size)) {
+	/*
+	 * get_modinfo() calls made before rewrite_section_headers()
+	 * must use sh_offset, as sh_addr isn't set!
+	 */
+	for (p = (char *)info->hdr + infosec->sh_offset; p; p = next_string(p, &size)) {
 		if (strncmp(p, tag, taglen) == 0 && p[taglen] == '=')
 			return p + taglen + 1;
 	}
@@ -2428,34 +2417,57 @@ static inline void kmemleak_load_module(const struct module *mod,
 #endif
 
 #ifdef CONFIG_MODULE_SIG
-static int module_sig_check(struct load_info *info,
-			    const void *mod, unsigned long *_len)
+static int module_sig_check(struct load_info *info)
 {
-	int err = -ENOKEY;
+	int err = -ENODATA;
 	unsigned long markerlen = sizeof(MODULE_SIG_STRING) - 1;
-	unsigned long len = *_len;
+	unsigned long len = info->len;
+	const char *reason;
+	const void *mod = info->hdr;
 
 	if (len > markerlen &&
 	    memcmp(mod + len - markerlen, MODULE_SIG_STRING, markerlen) == 0) {
 		/* We truncate the module to discard the signature */
-		*_len -= markerlen;
-		err = mod_verify_sig(mod, _len, !sig_check && !sig_enforce);
+		info->len -= markerlen;
+		err = mod_verify_sig(mod, info, !sig_check && !sig_enforce);
 	}
 
-	if (!err) {
+	switch (err) {
+	case 0:
 		info->sig_ok = true;
 		return 0;
+
+		/* We don't permit modules to be loaded into trusted kernels
+		 * without a valid signature on them, but if we're not
+		 * enforcing, certain errors are non-fatal.
+		 */
+	case -ENODATA:
+		reason = "Loading of unsigned module";
+		goto decide;
+	case -ENOPKG:
+		reason = "Loading of module with unsupported crypto";
+		goto decide;
+	case -ENOKEY:
+		reason = "Loading of module with unavailable key";
+	decide:
+		if (secure_modules()) {
+			pr_notice("%s: %s is rejected\n",
+				  info->mod->name, reason);
+			return -EKEYREJECTED;
+		}
+		return 0;
+
+		/* All other errors are fatal, including nomem, unparseable
+		 * signatures and signature check failures - even if signatures
+		 * aren't required.
+		 */
+	default:
+		return err;
 	}
 
-	/* Not having a signature is only an error if we're strict. */
-	if (err == -ENOKEY && !sig_enforce)
-		err = 0;
-
-	return err;
 }
 #else /* !CONFIG_MODULE_SIG */
-static int module_sig_check(struct load_info *info,
-			    void *mod, unsigned long *len)
+static int module_sig_check(struct load_info *info)
 {
 	return 0;
 }
@@ -2470,7 +2482,7 @@ static void check_modinfo_retpoline(struct module *mod, struct load_info *info)
 		mod->name);
 }
 
-/* Sets info->hdr, info->len and info->sig_ok. */
+/* Sets info->hdr and info->len */
 static int copy_and_check(struct load_info *info,
 			  const void __user *umod, unsigned long len,
 			  const char __user *uargs)
@@ -2489,10 +2501,6 @@ static int copy_and_check(struct load_info *info,
 		err = -EFAULT;
 		goto free_hdr;
 	}
-
-	err = module_sig_check(info, hdr, &len);
-	if (err)
-		goto free_hdr;
 
 	/* Sanity checks against insmoding binaries or wrong arch,
 	   weird elf version */
@@ -2551,8 +2559,6 @@ static int rewrite_section_headers(struct load_info *info)
 	}
 
 	/* Track but don't keep modinfo and version sections. */
-	info->index.vers = find_sec(info, "__versions");
-	info->index.info = find_sec(info, ".modinfo");
 	info->sechdrs[info->index.info].sh_flags &= ~(unsigned long)SHF_ALLOC;
 	info->sechdrs[info->index.vers].sh_flags &= ~(unsigned long)SHF_ALLOC;
 	return 0;
@@ -2563,23 +2569,25 @@ static int rewrite_section_headers(struct load_info *info)
  * search for module section index etc), and do some basic section
  * verification.
  *
- * Return the temporary module pointer (we'll replace it with the final
- * one when we move the module sections around).
+ * Set info->mod to the temporary copy of the module in info->hdr. The final one
+ * will be allocated in move_module().
  */
-static struct module *setup_load_info(struct load_info *info)
+static int setup_load_info(struct load_info *info)
 {
 	unsigned int i;
-	int err;
-	struct module *mod;
 
 	/* Set up the convenience variables */
 	info->sechdrs = (void *)info->hdr + info->hdr->e_shoff;
 	info->secstrings = (void *)info->hdr
 		+ info->sechdrs[info->hdr->e_shstrndx].sh_offset;
 
-	err = rewrite_section_headers(info);
-	if (err)
-		return ERR_PTR(err);
+	info->index.mod = find_sec(info, ".gnu.linkonce.this_module");
+	if (!info->index.mod) {
+		printk(KERN_WARNING "No module found in object\n");
+		return -ENOEXEC;
+	}
+	/* This is temporary: point mod into copy of data. */
+	info->mod = (void *)info->hdr + info->sechdrs[info->index.mod].sh_offset;
 
 	/* Find internal symbols and strings. */
 	for (i = 1; i < info->hdr->e_shnum; i++) {
@@ -2592,29 +2600,18 @@ static struct module *setup_load_info(struct load_info *info)
 		}
 	}
 
-	info->index.mod = find_sec(info, ".gnu.linkonce.this_module");
-	if (!info->index.mod) {
-		printk(KERN_WARNING "No module found in object\n");
-		return ERR_PTR(-ENOEXEC);
-	}
-	/* This is temporary: point mod into copy of data. */
-	mod = (void *)info->sechdrs[info->index.mod].sh_addr;
-
 	if (info->index.sym == 0) {
 		printk(KERN_WARNING "%s: module has no symbols (stripped?)\n",
-		       mod->name);
-		return ERR_PTR(-ENOEXEC);
+		       info->mod->name);
+		return -ENOEXEC;
 	}
 
+	info->index.vers = find_sec(info, "__versions");
+	info->index.info = find_sec(info, ".modinfo");
 	info->index.pcpu = find_pcpusec(info);
-
 	info->index.unwind = find_unwind(info);
 
-	/* Check module struct version now, before we try to use module. */
-	if (!check_modstruct_version(info->sechdrs, info->index.vers, mod))
-		return ERR_PTR(-ENOEXEC);
-
-	return mod;
+	return 0;
 }
 
 static int check_modinfo(struct module *mod, struct load_info *info)
@@ -2850,29 +2847,24 @@ static void flush_module_icache(const struct module *mod)
 
 static struct module *layout_and_allocate(struct load_info *info)
 {
-	/* Module within temporary copy. */
 	struct module *mod;
 	Elf_Shdr *pcpusec;
 	int err;
 
-	mod = setup_load_info(info);
-	if (IS_ERR(mod))
-		return mod;
-
-	err = check_modinfo(mod, info);
+	err = check_modinfo(info->mod, info);
 	if (err)
 		return ERR_PTR(err);
 
 	/* Allow arches to frob section contents and sizes.  */
 	err = module_frob_arch_sections(info->hdr, info->sechdrs,
-					info->secstrings, mod);
+					info->secstrings, info->mod);
 	if (err < 0)
 		goto out;
 
 	pcpusec = &info->sechdrs[info->index.pcpu];
 	if (pcpusec->sh_size) {
 		/* We have a special allocation for this section. */
-		err = percpu_modalloc(mod,
+		err = percpu_modalloc(info->mod,
 				      pcpusec->sh_size, pcpusec->sh_addralign);
 		if (err)
 			goto out;
@@ -2882,7 +2874,7 @@ static struct module *layout_and_allocate(struct load_info *info)
 	/* Determine total sizes, and put offsets in sh_entsize.  For now
 	   this is done generically; there doesn't appear to be any
 	   special cases for the architectures. */
-	layout_sections(mod, info);
+	layout_sections(info->mod, info);
 
 	info->strmap = kzalloc(BITS_TO_LONGS(info->sechdrs[info->index.str].sh_size)
 			 * sizeof(long), GFP_KERNEL);
@@ -2890,10 +2882,10 @@ static struct module *layout_and_allocate(struct load_info *info)
 		err = -ENOMEM;
 		goto free_percpu;
 	}
-	layout_symtab(mod, info);
+	layout_symtab(info->mod, info);
 
 	/* Allocate and move to the final place */
-	err = move_module(mod, info);
+	err = move_module(info->mod, info);
 	if (err)
 		goto free_strmap;
 
@@ -2905,7 +2897,7 @@ static struct module *layout_and_allocate(struct load_info *info)
 free_strmap:
 	kfree(info->strmap);
 free_percpu:
-	percpu_modfree(mod);
+	percpu_modfree(info->mod);
 out:
 	return ERR_PTR(err);
 }
@@ -2943,7 +2935,7 @@ static struct module *load_module(void __user *umod,
 {
 	struct load_info info = { NULL, };
 	struct module *mod;
-	long err;
+	long err = 0;
 
 	DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n",
 	       umod, len, uargs);
@@ -2952,6 +2944,24 @@ static struct module *load_module(void __user *umod,
 	err = copy_and_check(&info, umod, len, uargs);
 	if (err)
 		return ERR_PTR(err);
+
+	err = setup_load_info(&info);
+	if (err)
+		goto free_copy;
+
+	err = module_sig_check(&info);
+	if (err)
+		goto free_copy;
+
+	err = rewrite_section_headers(&info);
+	if (err)
+		goto free_copy;
+
+	/* Check module struct version now, before we try to use module. */
+	if (!check_modstruct_version(info.sechdrs, info.index.vers, info.mod)) {
+		err = -ENOEXEC;
+		goto free_copy;
+	}
 
 	/* Figure out module layout, and allocate all the memory. */
 	mod = layout_and_allocate(&info);
