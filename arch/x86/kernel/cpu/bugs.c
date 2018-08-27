@@ -1008,7 +1008,7 @@ unsigned long max_swapfile_size(void)
 	pages = generic_max_swapfile_size();
 
 	if (x86_bug_l1tf) {
-		unsigned long long l1tf_limit = l1tf_pfn_limit() + 1;
+		unsigned long long l1tf_limit = l1tf_pfn_limit();
 		/* Limit the swap file size to MAX_PA/2 for L1TF workaround */
 		pages = min_t(unsigned long long, l1tf_limit, pages);
 	}
