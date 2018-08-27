@@ -124,8 +124,10 @@ struct cpuinfo_x86 {
 #ifndef CONFIG_XEN
 	u32			microcode;
 #endif
+#ifndef __GENKSYMS__
 	/* Address space bits used by the cache internally */
 	u8			x86_cache_bits;
+#endif
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define X86_VENDOR_INTEL	0
