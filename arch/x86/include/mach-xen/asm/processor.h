@@ -124,6 +124,8 @@ struct cpuinfo_x86 {
 #ifndef CONFIG_XEN
 	u32			microcode;
 #endif
+	/* Address space bits used by the cache internally */
+	u8			x86_cache_bits;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define X86_VENDOR_INTEL	0
@@ -173,7 +175,7 @@ extern struct pt_regs *idle_regs(struct pt_regs *);
 
 static inline unsigned long long l1tf_pfn_limit(void)
 {
-	return BIT_ULL(boot_cpu_data.x86_phys_bits - 1 - PAGE_SHIFT);
+	return BIT_ULL(boot_cpu_data.x86_cache_bits - 1 - PAGE_SHIFT);
 }
 
 extern void early_cpu_init(void);
