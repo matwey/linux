@@ -2226,6 +2226,8 @@ dasd_3990_erp_control_check(struct dasd_ccw_req *erp)
 					   | SCHN_STAT_CHN_CTRL_CHK)) {
 		DBF_DEV_EVENT(DBF_WARNING, device, "%s",
 			    "channel or interface control check");
+		dev_notice(&device->cdev->dev,
+			   "channel or interface control check\n");
 		erp = dasd_3990_erp_action_4(erp, NULL);
 	}
 	return erp;
