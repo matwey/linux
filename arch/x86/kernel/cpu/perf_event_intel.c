@@ -1783,33 +1783,6 @@ static struct attribute *intel_arch_formats_attr[] = {
 	NULL,
 };
 
-static __initconst const struct x86_pmu core_pmu = {
-	.name			= "core",
-	.handle_irq		= x86_pmu_handle_irq,
-	.disable_all		= x86_pmu_disable_all,
-	.enable_all		= core_pmu_enable_all,
-	.enable			= core_pmu_enable_event,
-	.disable		= x86_pmu_disable_event,
-	.hw_config		= x86_pmu_hw_config,
-	.schedule_events	= x86_schedule_events,
-	.eventsel		= MSR_ARCH_PERFMON_EVENTSEL0,
-	.perfctr		= MSR_ARCH_PERFMON_PERFCTR0,
-	.event_map		= intel_pmu_event_map,
-	.max_events		= ARRAY_SIZE(intel_perfmon_event_map),
-	.apic			= 1,
-	/*
-	 * Intel PMCs cannot be accessed sanely above 32 bit width,
-	 * so we install an artificial 1<<31 period regardless of
-	 * the generic event period:
-	 */
-	.max_period		= (1ULL << 31) - 1,
-	.get_event_constraints	= intel_get_event_constraints,
-	.put_event_constraints	= intel_put_event_constraints,
-	.event_constraints	= intel_core_event_constraints,
-	.guest_get_msrs		= core_guest_get_msrs,
-	.format_attrs		= intel_arch_formats_attr,
-};
-
 struct intel_shared_regs *allocate_shared_regs(int cpu)
 {
 	struct intel_shared_regs *regs;
@@ -1919,6 +1892,43 @@ static struct attribute *intel_arch3_formats_attr[] = {
 
 	&format_attr_offcore_rsp.attr, /* XXX do NHM/WSM + SNB breakout */
 	NULL,
+};
+
+static __initconst const struct x86_pmu core_pmu = {
+	.name			= "core",
+	.handle_irq		= x86_pmu_handle_irq,
+	.disable_all		= x86_pmu_disable_all,
+	.enable_all		= core_pmu_enable_all,
+	.enable			= core_pmu_enable_event,
+	.disable		= x86_pmu_disable_event,
+	.hw_config		= x86_pmu_hw_config,
+	.schedule_events	= x86_schedule_events,
+	.eventsel		= MSR_ARCH_PERFMON_EVENTSEL0,
+	.perfctr		= MSR_ARCH_PERFMON_PERFCTR0,
+	.event_map		= intel_pmu_event_map,
+	.max_events		= ARRAY_SIZE(intel_perfmon_event_map),
+	.apic			= 1,
+	/*
+	 * Intel PMCs cannot be accessed sanely above 32-bit width,
+	 * so we install an artificial 1<<31 period regardless of
+	 * the generic event period:
+	 */
+	.max_period		= (1ULL<<31) - 1,
+	.get_event_constraints	= intel_get_event_constraints,
+	.put_event_constraints	= intel_put_event_constraints,
+	.event_constraints	= intel_core_event_constraints,
+	.guest_get_msrs		= core_guest_get_msrs,
+	.format_attrs		= intel_arch_formats_attr,
+
+	/*
+	 * Virtual (or funny metal) CPU can define x86_pmu.extra_regs
+	 * together with PMU version 1 and thus be using core_pmu with
+	 * shared_regs. We need following callbacks here to allocate
+	 * it properly.
+	 */
+	.cpu_prepare		= intel_pmu_cpu_prepare,
+	.cpu_starting		= intel_pmu_cpu_starting,
+	.cpu_dying		= intel_pmu_cpu_dying,
 };
 
 static __initconst const struct x86_pmu intel_pmu = {
