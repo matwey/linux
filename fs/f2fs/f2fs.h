@@ -1782,7 +1782,6 @@ int create_flush_cmd_control(struct f2fs_sb_info *);
 void destroy_flush_cmd_control(struct f2fs_sb_info *);
 void invalidate_blocks(struct f2fs_sb_info *, block_t);
 bool is_checkpointed_data(struct f2fs_sb_info *, block_t);
-void refresh_sit_entry(struct f2fs_sb_info *, block_t, block_t);
 void clear_prefree_segments(struct f2fs_sb_info *, struct cp_control *);
 void release_discard_addrs(struct f2fs_sb_info *);
 bool discard_next_dnode(struct f2fs_sb_info *, block_t);
