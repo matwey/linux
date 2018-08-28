@@ -350,7 +350,7 @@ static inline u64 flip_protnone_guard(u64 oldval, u64 val, u64 mask);
 
 static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 {
-	pteval_t val = pte_val(pte) & _PAGE_CHG_MASK, oldval = val;
+	pteval_t oldval = pte_val(pte), val = oldval & _PAGE_CHG_MASK;
 
 	val |= massage_pgprot(newprot) & ~_PAGE_CHG_MASK;
 	val = flip_protnone_guard(oldval, val, PTE_PFN_MASK);
