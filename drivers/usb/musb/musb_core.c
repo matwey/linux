@@ -2466,6 +2466,13 @@ static int musb_suspend(struct device *dev)
 {
 	struct musb	*musb = dev_to_musb(dev);
 	unsigned long	flags;
+	int ret;
+
+	ret = pm_runtime_get_sync(dev);
+	if (ret < 0) {
+		pm_runtime_put_noidle(dev);
+		return ret;
+	}
 
 	musb_platform_disable(musb);
 	musb_generic_disable(musb);
@@ -2516,14 +2523,6 @@ static int musb_resume(struct device *dev)
 				      msecs_to_jiffies(USB_RESUME_TIMEOUT));
 	}
 
-	/*
-	 * The USB HUB code expects the device to be in RPM_ACTIVE once it came
-	 * out of suspend
-	 */
-	pm_runtime_disable(dev);
-	pm_runtime_set_active(dev);
-	pm_runtime_enable(dev);
-
 	musb_enable_interrupts(musb);
 	musb_platform_enable(musb);
 
@@ -2535,6 +2534,9 @@ static int musb_runtime_suspend(struct device *dev)
 	struct musb	*musb = dev_to_musb(dev);
 
 	musb_save_context(musb);
+
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_put_autosuspend(dev);
 
 	return 0;
 }

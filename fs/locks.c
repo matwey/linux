@@ -233,13 +233,56 @@ out:
 	return ctx;
 }
 
-void
-locks_free_lock_context(struct file_lock_context *ctx)
+static void
+locks_dump_ctx_list(struct list_head *list, char *list_type)
 {
-	if (ctx) {
-		WARN_ON_ONCE(!list_empty(&ctx->flc_flock));
-		WARN_ON_ONCE(!list_empty(&ctx->flc_posix));
-		WARN_ON_ONCE(!list_empty(&ctx->flc_lease));
+	struct file_lock *fl;
+
+	list_for_each_entry(fl, list, fl_list) {
+		pr_warn("%s: fl_owner=%p fl_flags=0x%x fl_type=0x%x fl_pid=%u\n", list_type, fl->fl_owner, fl->fl_flags, fl->fl_type, fl->fl_pid);
+	}
+}
+
+static void
+locks_check_ctx_lists(struct inode *inode)
+{
+	struct file_lock_context *ctx = inode->i_flctx;
+
+	if (unlikely(!list_empty(&ctx->flc_flock) ||
+		     !list_empty(&ctx->flc_posix) ||
+		     !list_empty(&ctx->flc_lease))) {
+		pr_warn("Leaked locks on dev=0x%x:0x%x ino=0x%lx:\n",
+			MAJOR(inode->i_sb->s_dev), MINOR(inode->i_sb->s_dev),
+			inode->i_ino);
+		locks_dump_ctx_list(&ctx->flc_flock, "FLOCK");
+		locks_dump_ctx_list(&ctx->flc_posix, "POSIX");
+		locks_dump_ctx_list(&ctx->flc_lease, "LEASE");
+	}
+}
+
+static void
+locks_check_ctx_file_list(struct file *filp, struct list_head *list,
+				char *list_type)
+{
+	struct file_lock *fl;
+	struct inode *inode = filp->f_inode;
+
+	list_for_each_entry(fl, list, fl_list)
+		if (fl->fl_file == filp)
+			pr_warn("Leaked %s lock on dev=0x%x:0x%x ino=0x%lx "
+				" fl_owner=%p fl_flags=0x%x fl_type=0x%x fl_pid=%u\n",
+				list_type, MAJOR(inode->i_sb->s_dev),
+				MINOR(inode->i_sb->s_dev), inode->i_ino,
+				fl->fl_owner, fl->fl_flags, fl->fl_type, fl->fl_pid);
+}
+
+void
+locks_free_lock_context(struct inode *inode)
+{
+	struct file_lock_context *ctx = inode->i_flctx;
+
+	if (unlikely(ctx)) {
+		locks_check_ctx_lists(inode);
 		kmem_cache_free(flctx_cache, ctx);
 	}
 }
@@ -2491,6 +2534,12 @@ void locks_remove_file(struct file *filp)
 
 	/* remove any leases */
 	locks_remove_lease(filp, ctx);
+
+	spin_lock(&ctx->flc_lock);
+	locks_check_ctx_file_list(filp, &ctx->flc_posix, "POSIX");
+	locks_check_ctx_file_list(filp, &ctx->flc_flock, "FLOCK");
+	locks_check_ctx_file_list(filp, &ctx->flc_lease, "LEASE");
+	spin_unlock(&ctx->flc_lock);
 }
 
 /**
