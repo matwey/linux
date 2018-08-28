@@ -342,7 +342,7 @@ static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)
 {
 	phys_addr_t paddr = PFN_PHYS(page_nr);
 	paddr ^= protnone_mask(pgprot_val(pgprot));
-	paddr &= PMD_PAGE_MASK;
+	paddr &= PTE_PFN_MASK;
 	return __pmd(paddr | massage_pgprot(pgprot));
 }
 

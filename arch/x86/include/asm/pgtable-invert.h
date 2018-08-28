@@ -6,14 +6,7 @@
 
 static inline bool __pte_needs_invert(u64 val)
 {
-	/*
-	 * temporary workaround until we catch all unexpected usage of prot_none
-	 * entries
-	 */
-#if 0
 	return (val & (_PAGE_PRESENT|_PAGE_PROTNONE)) == _PAGE_PROTNONE;
-#endif
-	return false;
 }
 
 /* Get a mask to xor with the page table entry to get the correct pfn. */
