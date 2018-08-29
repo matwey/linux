@@ -121,7 +121,7 @@ int jfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 		rc = posix_acl_update_mode(inode, &inode->i_mode, &acl);
 		if (rc)
 			goto end_tx;
-		inode->i_ctime = current_time(inode);
+		inode->i_ctime = CURRENT_TIME;
 		mark_inode_dirty(inode);
 	}
 	rc = __jfs_set_acl(tid, inode, type, acl);
