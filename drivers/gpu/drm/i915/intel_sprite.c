@@ -312,32 +312,71 @@ chv_update_csc(struct intel_plane *intel_plane, uint32_t format)
 		return;
 
 	/*
-	 * BT.601 limited range YCbCr -> full range RGB
+	 * BT.601 full range YCbCr -> full range RGB
 	 *
-	 * |r|   | 6537 4769     0|   |cr  |
-	 * |g| = |-3330 4769 -1605| x |y-64|
-	 * |b|   |    0 4769  8263|   |cb  |
+	 * |r|   | 5743 4096     0|   |cr|
+	 * |g| = |-2925 4096 -1410| x |y |
+	 * |b|   |    0 4096  7258|   |cb|
 	 *
-	 * Cb and Cr apparently come in as signed already, so no
-	 * need for any offset. For Y we need to remove the offset.
+	 * Cb and Cr apparently come in as signed already,
+	 * and we get full range data in on account of CLRC0/1
 	 */
-	I915_WRITE(SPCSCYGOFF(plane), SPCSC_OOFF(0) | SPCSC_IOFF(-64));
+	I915_WRITE_FW(SPCSCYGOFF(plane), SPCSC_OOFF(0) | SPCSC_IOFF(0));
 	I915_WRITE(SPCSCCBOFF(plane), SPCSC_OOFF(0) | SPCSC_IOFF(0));
 	I915_WRITE(SPCSCCROFF(plane), SPCSC_OOFF(0) | SPCSC_IOFF(0));
 
-	I915_WRITE(SPCSCC01(plane), SPCSC_C1(4769) | SPCSC_C0(6537));
-	I915_WRITE(SPCSCC23(plane), SPCSC_C1(-3330) | SPCSC_C0(0));
-	I915_WRITE(SPCSCC45(plane), SPCSC_C1(-1605) | SPCSC_C0(4769));
-	I915_WRITE(SPCSCC67(plane), SPCSC_C1(4769) | SPCSC_C0(0));
-	I915_WRITE(SPCSCC8(plane), SPCSC_C0(8263));
+	I915_WRITE_FW(SPCSCC01(plane), SPCSC_C1(4096) | SPCSC_C0(5743));
+	I915_WRITE_FW(SPCSCC23(plane), SPCSC_C1(-2925) | SPCSC_C0(0));
+	I915_WRITE_FW(SPCSCC45(plane), SPCSC_C1(-1410) | SPCSC_C0(4096));
+	I915_WRITE_FW(SPCSCC67(plane), SPCSC_C1(4096) | SPCSC_C0(0));
+	I915_WRITE_FW(SPCSCC8(plane), SPCSC_C0(7258));
 
-	I915_WRITE(SPCSCYGICLAMP(plane), SPCSC_IMAX(940) | SPCSC_IMIN(64));
-	I915_WRITE(SPCSCCBICLAMP(plane), SPCSC_IMAX(448) | SPCSC_IMIN(-448));
-	I915_WRITE(SPCSCCRICLAMP(plane), SPCSC_IMAX(448) | SPCSC_IMIN(-448));
+	I915_WRITE_FW(SPCSCYGICLAMP(plane), SPCSC_IMAX(1023) | SPCSC_IMIN(0));
+	I915_WRITE_FW(SPCSCCBICLAMP(plane), SPCSC_IMAX(512) | SPCSC_IMIN(-512));
+	I915_WRITE_FW(SPCSCCRICLAMP(plane), SPCSC_IMAX(512) | SPCSC_IMIN(-512));
 
 	I915_WRITE(SPCSCYGOCLAMP(plane), SPCSC_OMAX(1023) | SPCSC_OMIN(0));
 	I915_WRITE(SPCSCCBOCLAMP(plane), SPCSC_OMAX(1023) | SPCSC_OMIN(0));
 	I915_WRITE(SPCSCCROCLAMP(plane), SPCSC_OMAX(1023) | SPCSC_OMIN(0));
+}
+
+#define SIN_0 0
+#define COS_0 1
+
+static void
+vlv_update_clrc(struct intel_plane *plane, uint32_t format)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
+	enum pipe pipe = plane->pipe;
+	int plane_id = plane->plane;
+	int contrast, brightness, sh_scale, sh_sin, sh_cos;
+
+	if (format_is_yuv(format)) {
+		/*
+		 * Expand limited range to full range:
+		 * Contrast is applied first and is used to expand Y range.
+		 * Brightness is applied second and is used to remove the
+		 * offset from Y. Saturation/hue is used to expand CbCr range.
+		 */
+		contrast = DIV_ROUND_CLOSEST(255 << 6, 235 - 16);
+		brightness = -DIV_ROUND_CLOSEST(16 * 255, 235 - 16);
+		sh_scale = DIV_ROUND_CLOSEST(128 << 7, 240 - 128);
+		sh_sin = SIN_0 * sh_scale;
+		sh_cos = COS_0 * sh_scale;
+	} else {
+		/* Pass-through everything. */
+		contrast = 1 << 6;
+		brightness = 0;
+		sh_scale = 1 << 7;
+		sh_sin = SIN_0 * sh_scale;
+		sh_cos = COS_0 * sh_scale;
+	}
+
+	/* FIXME these register are single buffered :( */
+	I915_WRITE_FW(SPCLRC0(pipe, plane_id),
+		      SP_CONTRAST(contrast) | SP_BRIGHTNESS(brightness));
+	I915_WRITE_FW(SPCLRC1(pipe, plane_id),
+		      SP_SH_SIN(sh_sin) | SP_SH_COS(sh_cos));
 }
 
 static void
@@ -444,6 +483,8 @@ vlv_update_plane(struct drm_plane *dplane, struct drm_crtc *crtc,
 
 	if (key->flags & I915_SET_COLORKEY_SOURCE)
 		sprctl |= SP_SOURCE_KEY;
+
+	vlv_update_clrc(intel_plane, fb->pixel_format);
 
 	if (IS_CHERRYVIEW(dev) && pipe == PIPE_B)
 		chv_update_csc(intel_plane, fb->pixel_format);
