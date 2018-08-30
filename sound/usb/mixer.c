@@ -1231,6 +1231,12 @@ static int parse_audio_feature_unit(struct mixer_build *state, int unitid, void 
 	__u8 *bmaControls;
 
 	if (state->mixer->protocol == UAC_VERSION_1) {
+		if (hdr->bLength < 7) {
+			snd_printk(KERN_ERR "usb-audio: "
+				      "unit %u: invalid UAC_FEATURE_UNIT descriptor\n",
+				      unitid);
+			return -EINVAL;
+		}
 		csize = hdr->bControlSize;
 		if (!csize) {
 			snd_printdd(KERN_ERR "usbaudio: unit %u: "
@@ -1247,6 +1253,12 @@ static int parse_audio_feature_unit(struct mixer_build *state, int unitid, void 
 		}
 	} else {
 		struct uac2_feature_unit_descriptor *ftr = _ftr;
+		if (hdr->bLength < 6) {
+			snd_printk(KERN_ERR "usb-audio: "
+				      "unit %u: invalid UAC_FEATURE_UNIT descriptor\n",
+				      unitid);
+			return -EINVAL;
+		}
 		csize = 4;
 		channels = (hdr->bLength - 6) / 4 - 1;
 		bmaControls = ftr->bmaControls;
