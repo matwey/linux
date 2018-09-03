@@ -1664,6 +1664,11 @@ static void edge_interrupt_callback(struct urb *urb)
 		goto exit;
 	}
 
+	if (port_number >= edge_serial->serial->num_ports) {
+		dev_err(&urb->dev->dev, "bad port number %d\n", port_number);
+		goto exit;
+	}
+
 	port_number = TIUMP_GET_PORT_FROM_CODE(data[0]);
 	function    = TIUMP_GET_FUNC_FROM_CODE(data[0]);
 	dbg("%s - port_number %d, function %d, info 0x%x",
