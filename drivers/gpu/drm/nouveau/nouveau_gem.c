@@ -490,7 +490,7 @@ nouveau_gem_pushbuf_reloc_apply(struct drm_device *dev,
 		struct nouveau_bo *nvbo;
 		uint32_t data;
 
-		if (unlikely(r->bo_index > req->nr_buffers)) {
+		if (unlikely(r->bo_index >= req->nr_buffers)) {
 			NV_ERROR(dev, "reloc bo index invalid\n");
 			ret = -EINVAL;
 			break;
@@ -500,7 +500,7 @@ nouveau_gem_pushbuf_reloc_apply(struct drm_device *dev,
 		if (b->presumed.valid)
 			continue;
 
-		if (unlikely(r->reloc_bo_index > req->nr_buffers)) {
+		if (unlikely(r->reloc_bo_index >= req->nr_buffers)) {
 			NV_ERROR(dev, "reloc container bo index invalid\n");
 			ret = -EINVAL;
 			break;
