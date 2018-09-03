@@ -657,7 +657,7 @@ int rt6_route_rcv(struct net_device *dev, u8 *opt, int len,
 		else
 			rt6_set_expires(rt, jiffies + HZ * lifetime);
 
-		dst_release(&rt->dst);
+		ip6_rt_put(rt);
 	}
 	return 0;
 }
@@ -871,7 +871,7 @@ restart:
 	else
 		goto out2;
 
-	dst_release(&rt->dst);
+	ip6_rt_put(rt);
 	rt = nrt ? : net->ipv6.ip6_null_entry;
 
 	dst_hold(&rt->dst);
@@ -888,7 +888,7 @@ restart:
 	 * Race condition! In the gap, when table->tb6_lock was
 	 * released someone could insert this route.  Relookup.
 	 */
-	dst_release(&rt->dst);
+	ip6_rt_put(rt);
 	goto relookup;
 
 out:
@@ -1382,7 +1382,7 @@ int ip6_route_add(struct fib6_config *cfg)
 				goto out;
 			if (dev) {
 				if (dev != grt->rt6i_dev) {
-					dst_release(&grt->dst);
+					ip6_rt_put(grt);
 					goto out;
 				}
 			} else {
@@ -1393,7 +1393,7 @@ int ip6_route_add(struct fib6_config *cfg)
 			}
 			if (!(grt->rt6i_flags&RTF_GATEWAY))
 				err = 0;
-			dst_release(&grt->dst);
+			ip6_rt_put(grt);
 
 			if (err)
 				goto out;
@@ -1464,7 +1464,7 @@ static int __ip6_del_rt(struct rt6_info *rt, struct nl_info *info)
 	write_unlock_bh(&table->tb6_lock);
 
 out:
-	dst_release(&rt->dst);
+	ip6_rt_put(rt);
 	return err;
 }
 
