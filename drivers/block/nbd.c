@@ -561,7 +561,7 @@ static void do_nbd_request(struct request_queue *q)
 		BUG_ON(lo->magic != LO_MAGIC);
 
 		if (unlikely(!lo->sock)) {
-			printk(KERN_ERR "%s: Attempted send on closed socket\n",
+			printk_ratelimited(KERN_ERR "%s: Attempted send on closed socket\n",
 				lo->disk->disk_name);
 			req->errors++;
 			nbd_end_request(req);
