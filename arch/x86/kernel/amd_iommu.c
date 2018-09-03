@@ -550,7 +550,7 @@ again:
 	next_tail = (tail + sizeof(*cmd)) % iommu->cmd_buf_size;
 	left      = (head - next_tail) % iommu->cmd_buf_size;
 
-	if (left <= 2) {
+	if (left <= 0x20) {
 		struct iommu_cmd sync_cmd;
 		volatile u64 sem = 0;
 		int ret;
@@ -1470,6 +1470,9 @@ static void dma_ops_domain_free(struct dma_ops_domain *dom)
 		kfree(dom->aperture[i]);
 	}
 
+	if (dom->domain.id)
+		domain_id_free(dom->domain.id);
+
 	kfree(dom);
 }
 
@@ -1897,7 +1900,14 @@ static void update_device_table(struct protection_domain *domain)
 	list_for_each_entry(dev_data, &domain->dev_list, list) {
 		struct pci_dev *pdev = to_pci_dev(dev_data->dev);
 		u16 devid = get_device_id(dev_data->dev);
+		u16 alias = get_device_id(dev_data->alias);
 		set_dte_entry(devid, domain, pci_ats_enabled(pdev));
+
+		if (devid == alias)
+			continue;
+
+		/* There is an alias, update device table entry for it */
+		set_dte_entry(alias, domain, pci_ats_enabled(pdev));
 	}
 }
 
@@ -2708,6 +2718,7 @@ static int amd_iommu_unmap(struct iommu_domain *dom, unsigned long iova,
 	mutex_unlock(&domain->api_lock);
 
 	domain_flush_tlb_pde(domain);
+	domain_flush_complete(domain);
 
 	return get_order(unmap_size);
 }
