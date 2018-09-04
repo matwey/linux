@@ -1123,7 +1123,7 @@ cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_io_restore+8)
 	jl	cleanup_io_restore
 0:
-	BR_EX	%r14
+	BR_EX	%r14,%r13
 
 cleanup_table_system_call:
 	.quad	system_call, sysc_do_svc
