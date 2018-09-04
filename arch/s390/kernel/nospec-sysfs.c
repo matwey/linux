@@ -13,6 +13,8 @@ ssize_t cpu_show_spectre_v1(struct device *dev,
 ssize_t cpu_show_spectre_v2(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
+	if (__test_facility(156, S390_lowcore.alt_stfle_fac_list))
+		return sprintf(buf, "Mitigation: etokens\n");
 #ifdef CC_USING_EXPOLINE
 	if (!nospec_disable)
 		return sprintf(buf, "Mitigation: execute trampolines\n");
