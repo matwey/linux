@@ -17,11 +17,6 @@ vobjs-y := vdso-note.o vclock_gettime.o vgetcpu.o
 obj-$(VDSO64-y)			+= vma.o vdso.o
 obj-$(VDSO32-y)			+= vdso32.o vdso32-setup.o
 
-
-ifdef CONFIG_RETPOLINE
-	KBUILD_CFLAGS := $(filter-out $(RETPOLINE_CFLAGS),$(KBUILD_CFLAGS))
-endif
-
 vobjs := $(foreach F,$(vobjs-y),$(obj)/$F)
 
 $(obj)/vdso.o: $(obj)/vdso.so
@@ -48,9 +43,10 @@ $(obj)/%.so: $(obj)/%.so.dbg FORCE
 #
 CFL := $(PROFILING) -mcmodel=small -fPIC -O2 -fasynchronous-unwind-tables -m64 \
        $(filter -g%,$(KBUILD_CFLAGS)) $(call cc-option, -fno-stack-protector) \
-       -fno-omit-frame-pointer -foptimize-sibling-calls
+       -fno-omit-frame-pointer -foptimize-sibling-calls \
+       $(RETPOLINE_VDSO_CFLAGS)
 
-$(vobjs): KBUILD_CFLAGS += $(CFL)
+$(vobjs): KBUILD_CFLAGS := $(filter-out $(RETPOLINE_CFLAGS),$(KBUILD_CFLAGS)) $(CFL)
 
 #
 # vDSO code runs in userspace and -pg doesn't help with profiling anyway.
