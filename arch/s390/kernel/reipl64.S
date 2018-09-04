@@ -6,6 +6,9 @@
 
 #include <linux/linkage.h>
 #include <asm/asm-offsets.h>
+#include <asm/nospec-insn.h>
+
+	GEN_BR_THUNK %r14
 
 #
 # store_status
@@ -61,7 +64,7 @@ ENTRY(store_status)
 	st	%r3,__LC_PSW_SAVE_AREA-SAVE_AREA_BASE + 4(%r1)
 	larl	%r2,store_status
 	stg	%r2,__LC_PSW_SAVE_AREA-SAVE_AREA_BASE + 8(%r1)
-	br	%r14
+	BR_EX	%r14
 
 	.section .bss
 	.align	8
