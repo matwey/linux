@@ -819,7 +819,7 @@ static void atmel_hlcdc_plane_init_properties(struct atmel_hlcdc_plane *plane,
 				ATMEL_HLCDC_LAYER_GA_MASK);
 	}
 
-	if (desc->layout.xstride && desc->layout.pstride)
+	if (desc->layout.xstride[0] && desc->layout.pstride[0]) {
 		drm_object_attach_property(&plane->base.base,
 				plane->base.dev->mode_config.rotation_property,
 				BIT(DRM_ROTATE_0));

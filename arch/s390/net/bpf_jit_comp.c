@@ -522,8 +522,6 @@ static void bpf_jit_epilogue(struct bpf_jit *jit)
 			/* br %r1 */
 			_EMIT2(0x07f1);
 		} else {
-			/* larl %r1,.+14 */
-			EMIT6_PCREL_RILB(0xc0000000, REG_1, jit->prg + 14);
 			/* ex 0,S390_lowcore.br_r1_tampoline */
 			EMIT4_DISP(0x44000000, REG_0, REG_0,
 				   offsetof(struct _lowcore, br_r1_trampoline));
@@ -1277,8 +1275,13 @@ call_fn:
 			/* agfr %b2,%src (%src is s32 here) */
 			EMIT4(0xb9180000, BPF_REG_2, src_reg);
 
-		/* basr %b5,%w1 (%b5 is call saved) */
-		EMIT2(0x0d00, BPF_REG_5, REG_W1);
+		if (IS_ENABLED(CC_USING_EXPOLINE) && !nospec_disable) {
+			/* brasl %r5,__s390_indirect_jump_r1 */
+			EMIT6_PCREL_RILB(0xc0050000, BPF_REG_5, jit->r1_thunk_ip);
+		} else {
+			/* basr %b5,%w1 (%b5 is call saved) */
+			EMIT2(0x0d00, BPF_REG_5, REG_W1);
+		}
 
 		/*
 		 * Note: For fast access we jump directly after the
