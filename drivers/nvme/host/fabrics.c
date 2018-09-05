@@ -543,12 +543,21 @@ static struct nvmf_transport_ops *nvmf_lookup_transport(
  * Note: commands used to initialize the controller will be marked for failfast.
  * Note: nvme cli/ioctl commands are marked for failfast.
  */
-int nvmf_fail_nonready_command(struct nvme_ctrl *ctrl,
-		struct request *rq)
+int __nvmf_fail_nonready_command(struct nvme_ctrl *ctrl,
+				 struct request *rq)
 {
 	if (ctrl->state != NVME_CTRL_DELETING &&
 	    ctrl->state != NVME_CTRL_DEAD &&
 	    !blk_noretry_request(rq))
+		return BLK_MQ_RQ_QUEUE_BUSY; /* try again later */
+	nvme_req(rq)->status = NVME_SC_ABORT_REQ;
+	return BLK_MQ_RQ_QUEUE_ERROR;
+}
+EXPORT_SYMBOL_GPL(__nvmf_fail_nonready_command);
+
+int nvmf_fail_nonready_command(struct request *rq)
+{
+	if (!blk_noretry_request(rq))
 		return BLK_MQ_RQ_QUEUE_BUSY; /* try again later */
 	nvme_req(rq)->status = NVME_SC_ABORT_REQ;
 	return BLK_MQ_RQ_QUEUE_ERROR;
