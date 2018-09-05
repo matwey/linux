@@ -2316,7 +2316,7 @@ nvme_fc_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	if (ctrl->rport->remoteport.port_state != FC_OBJSTATE_ONLINE ||
 	    !nvmf_check_ready(&queue->ctrl->ctrl, rq, queue_ready))
-		return nvmf_fail_nonready_command(rq);
+		return __nvmf_fail_nonready_command(&queue->ctrl->ctrl, rq);
 
 	ret = nvme_setup_cmd(ns, rq, sqe);
 	if (ret)
@@ -2850,6 +2850,9 @@ nvme_fc_delete_association(struct nvme_fc_ctrl *ctrl)
 	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
 	blk_mq_kick_requeue_list(ctrl->ctrl.admin_q);
 
+	/* resume the io queues so that things will fast fail */
+	nvme_start_queues(&ctrl->ctrl);
+
 	nvme_fc_ctlr_inactive_on_rport(ctrl);
 }
 
@@ -2867,9 +2870,6 @@ nvme_fc_delete_ctrl_work(struct work_struct *work)
 	 * waiting for io to terminate
 	 */
 	nvme_fc_delete_association(ctrl);
-
-	/* resume the io queues so that things will fail */
-	nvme_start_queues(&ctrl->ctrl);
 
 	/*
 	 * tear down the controller
