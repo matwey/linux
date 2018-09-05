@@ -75,7 +75,7 @@ static struct sk_buff *alloc_tx(struct atm_vcc *vcc, unsigned int size)
 	while (!(skb = alloc_skb(size, GFP_KERNEL)))
 		schedule();
 	pr_debug("%d += %d\n", sk_wmem_alloc_get(sk), skb->truesize);
-	atomic_add(skb->truesize, &sk->sk_wmem_alloc);
+	atm_account_tx(vcc, skb);
 	return skb;
 }
 
@@ -629,7 +629,6 @@ int vcc_sendmsg(struct socket *sock, struct msghdr *m, size_t size)
 	if (error)
 		goto out;
 	skb->dev = NULL; /* for paths shared with net_device interfaces */
-	ATM_SKB(skb)->atm_options = vcc->atm_options;
 	if (copy_from_iter(skb_put(skb, size), size, &m->msg_iter) != size) {
 		kfree_skb(skb);
 		error = -EFAULT;
