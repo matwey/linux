@@ -167,6 +167,8 @@ int nvmf_check_if_ready(struct nvme_ctrl *ctrl,
 int nvmf_fail_nonready_command(struct request *rq);
 bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
 		bool queue_live);
+int __nvmf_fail_nonready_command(struct nvme_ctrl *ctrl,
+		struct request *rq);
 
 static inline bool nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
 		bool queue_live)
