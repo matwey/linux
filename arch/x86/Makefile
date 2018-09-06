@@ -122,11 +122,12 @@ KBUILD_AFLAGS += $(mflags-y)
 
 # Avoid indirect branches in kernel to deal with Spectre
 ifdef CONFIG_RETPOLINE
-    RETPOLINE_CFLAGS := $(call cc-option,-mindirect-branch=thunk-extern -mindirect-branch-register)
+    RETPOLINE_CFLAGS += $(call cc-option,-mindirect-branch=thunk-extern -mindirect-branch-register)
+    RETPOLINE_VDSO_CFLAGS := $(call cc-option,-mindirect-branch=thunk-inline -mindirect-branch-register)
+    export RETPOLINE_CFLAGS
+    export RETPOLINE_VDSO_CFLAGS
     ifneq ($(RETPOLINE_CFLAGS),)
-        RETPOLINE_CFLAGS += -DRETPOLINE
-	KBUILD_CFLAGS += $(RETPOLINE_CFLAGS)
-	export RETPOLINE_CFLAGS
+        KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
     endif
 endif
 
