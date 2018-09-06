@@ -44,6 +44,8 @@ early_param("nogmb", nogmb_setup_early);
 
 static int __init nospec_report(void)
 {
+	if (test_facility(156))
+		pr_info("Spectre V2 mitigation: etokens\n");
 #ifdef CC_USING_EXPOLINE
 	if (!nospec_disable)
 		pr_info("Spectre V2 mitigation: execute trampolines.\n");
@@ -53,26 +55,6 @@ static int __init nospec_report(void)
 	return 0;
 }
 arch_initcall(nospec_report);
-
-#ifdef CONFIG_SYSFS
-ssize_t cpu_show_spectre_v1(struct device *dev,
-			    struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "Mitigation: __user pointer sanitization\n");
-}
-
-ssize_t cpu_show_spectre_v2(struct device *dev,
-			    struct device_attribute *attr, char *buf)
-{
-#ifdef CC_USING_EXPOLINE
-	if (!nospec_disable)
-		return sprintf(buf, "Mitigation: execute trampolines\n");
-#endif
-	if (__test_facility(82, S390_lowcore.alt_stfle_fac_list))
-		return sprintf(buf, "Mitigation: limited branch prediction.\n");
-	return sprintf(buf, "Vulnerable\n");
-}
-#endif
 
 #ifdef CONFIG_EXPOLINE
 
@@ -91,6 +73,17 @@ early_param("nospectre_v2", nospectre_v2_setup_early);
 
 void __init nospec_auto_detect(void)
 {
+	if (test_facility(156)) {
+		/*
+		 * The machine supports etokens.
+		 * Disable expolines and disable nobp.
+		 */
+#ifdef CC_USING_EXPOLINE
+			nospec_disable = 1;
+#endif
+		__clear_facility(82, S390_lowcore.alt_stfle_fac_list);
+		return;
+	}
 #ifdef CC_USING_EXPOLINE
 	/*
 	 * The kernel has been compiled with expolines.

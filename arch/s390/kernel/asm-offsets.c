@@ -97,6 +97,7 @@ int main(void)
 	DEFINE(__LC_IO_INT_WORD, offsetof(struct _lowcore, io_int_word));
 	DEFINE(__LC_STFL_FAC_LIST, offsetof(struct _lowcore, stfl_fac_list));
 	DEFINE(__LC_MCCK_CODE, offsetof(struct _lowcore, mcck_interruption_code));
+	OFFSET(__LC_BR_R1, _lowcore, br_r1_trampoline);
 	DEFINE(__LC_DUMP_REIPL, offsetof(struct _lowcore, ipib));
 	BLANK();
 	DEFINE(__LC_RST_NEW_PSW, offsetof(struct _lowcore, restart_psw));

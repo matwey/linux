@@ -7,17 +7,21 @@
 
 #include <asm/asm-offsets.h>
 #include <asm/ftrace.h>
+#include <asm/nospec-insn.h>
+
+	GEN_BR_THUNK %r1
+	GEN_BR_THUNK %r14
 
 	.section .kprobes.text, "ax"
 
 	.globl ftrace_stub
 ftrace_stub:
-	br	%r14
+	BR_EX	%r14
 
 	.globl _mcount
 _mcount:
 #ifdef CONFIG_DYNAMIC_FTRACE
-	br	%r14
+	BR_EX	%r14
 
 	.globl ftrace_caller
 ftrace_caller:
@@ -34,8 +38,8 @@ ftrace_caller:
 	lg	%r3,168(%r15)
 	aghi	%r2,-MCOUNT_INSN_SIZE
 	larl	%r14,ftrace_trace_function
-	lg	%r14,0(%r14)
-	basr	%r14,%r14
+	lg	%r1,0(%r14)
+	BASR_EX	%r14,%r1
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 	lg	%r2,168(%r15)
 	lg	%r3,272(%r15)
@@ -50,7 +54,7 @@ ftrace_graph_caller:
 	aghi	%r15,160
 	lmg	%r2,%r5,32(%r15)
 	lg	%r14,112(%r15)
-	br	%r14
+	BR_EX	%r14
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 
@@ -64,6 +68,6 @@ return_to_handler:
 	aghi	%r15,160
 	lgr	%r14,%r2
 	lmg	%r2,%r5,32(%r15)
-	br	%r14
+	BR_EX	%r14
 
 #endif
