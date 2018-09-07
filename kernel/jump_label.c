@@ -15,6 +15,7 @@
 #include <linux/static_key.h>
 #include <linux/jump_label_ratelimit.h>
 #include <linux/bug.h>
+#include <linux/cpu.h>
 
 #ifdef HAVE_JUMP_LABEL
 
@@ -124,6 +125,7 @@ void static_key_slow_inc(struct static_key *key)
 			return;
 	}
 
+	get_online_cpus();
 	jump_label_lock();
 	if (atomic_read(&key->enabled) == 0) {
 		atomic_set(&key->enabled, -1);
@@ -133,12 +135,14 @@ void static_key_slow_inc(struct static_key *key)
 		atomic_inc(&key->enabled);
 	}
 	jump_label_unlock();
+	put_online_cpus();
 }
 EXPORT_SYMBOL_GPL(static_key_slow_inc);
 
 static void __static_key_slow_dec(struct static_key *key,
 		unsigned long rate_limit, struct delayed_work *work)
 {
+	get_online_cpus();
 	/*
 	 * The negative count check is valid even when a negative
 	 * key->enabled is in use by static_key_slow_inc(); a
@@ -149,6 +153,7 @@ static void __static_key_slow_dec(struct static_key *key,
 	if (!atomic_dec_and_mutex_lock(&key->enabled, &jump_label_mutex)) {
 		WARN(atomic_read(&key->enabled) < 0,
 		     "jump label: negative count!\n");
+		put_online_cpus();
 		return;
 	}
 
@@ -159,6 +164,7 @@ static void __static_key_slow_dec(struct static_key *key,
 		jump_label_update(key);
 	}
 	jump_label_unlock();
+	put_online_cpus();
 }
 
 static void jump_label_update_timeout(struct work_struct *work)
@@ -320,6 +326,7 @@ void __init jump_label_init(void)
 	if (static_key_initialized)
 		return;
 
+	get_online_cpus();
 	jump_label_lock();
 	jump_label_sort_entries(iter_start, iter_stop);
 
@@ -339,6 +346,7 @@ void __init jump_label_init(void)
 	}
 	static_key_initialized = true;
 	jump_label_unlock();
+	put_online_cpus();
 }
 
 #ifdef CONFIG_MODULES
@@ -567,27 +575,27 @@ jump_label_module_notify(struct notifier_block *self, unsigned long val,
 	struct module *mod = data;
 	int ret = 0;
 
+	get_online_cpus();
+	jump_label_lock();
+
 	switch (val) {
 	case MODULE_STATE_COMING:
-		jump_label_lock();
 		ret = jump_label_add_module(mod);
 		if (ret) {
 			WARN(1, "Failed to allocatote memory: jump_label may not work properly.\n");
 			jump_label_del_module(mod);
 		}
-		jump_label_unlock();
 		break;
 	case MODULE_STATE_GOING:
-		jump_label_lock();
 		jump_label_del_module(mod);
-		jump_label_unlock();
 		break;
 	case MODULE_STATE_LIVE:
-		jump_label_lock();
 		jump_label_invalidate_module_init(mod);
-		jump_label_unlock();
 		break;
 	}
+
+	jump_label_unlock();
+	put_online_cpus();
 
 	return notifier_from_errno(ret);
 }
