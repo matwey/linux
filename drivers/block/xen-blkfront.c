@@ -2395,6 +2395,15 @@ static int __init xlblk_init(void)
 	if (!xen_domain())
 		return -ENODEV;
 
+	if (!xen_has_pv_disk_devices())
+		return -ENODEV;
+
+	if (register_blkdev(XENVBD_MAJOR, DEV_NAME)) {
+		pr_warn("xen_blk: can't get major %d with name %s\n",
+			XENVBD_MAJOR, DEV_NAME);
+		return -ENODEV;
+	}
+
 	if (xen_blkif_max_segments < BLKIF_MAX_SEGMENTS_PER_REQUEST)
 		xen_blkif_max_segments = BLKIF_MAX_SEGMENTS_PER_REQUEST;
 
@@ -2402,15 +2411,6 @@ static int __init xlblk_init(void)
 		pr_info("Invalid max_ring_order (%d), will use default max: %d.\n",
 			xen_blkif_max_ring_order, XENBUS_MAX_RING_GRANT_ORDER);
 		xen_blkif_max_ring_order = 0;
-	}
-
-	if (!xen_has_pv_disk_devices())
-		return -ENODEV;
-
-	if (register_blkdev(XENVBD_MAJOR, DEV_NAME)) {
-		printk(KERN_WARNING "xen_blk: can't get major %d with name %s\n",
-		       XENVBD_MAJOR, DEV_NAME);
-		return -ENODEV;
 	}
 
 	INIT_DELAYED_WORK(&blkfront_work, blkfront_delay_work);
