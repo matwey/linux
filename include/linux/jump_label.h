@@ -118,9 +118,10 @@ struct module;
 
 #ifdef HAVE_JUMP_LABEL
 
-#define JUMP_TYPE_FALSE	0UL
-#define JUMP_TYPE_TRUE	1UL
-#define JUMP_TYPE_MASK	1UL
+#define JUMP_TYPE_FALSE		0UL
+#define JUMP_TYPE_TRUE		1UL
+#define JUMP_TYPE_LINKED	2UL
+#define JUMP_TYPE_MASK		3UL
 
 static __always_inline bool static_key_false(struct static_key *key)
 {
