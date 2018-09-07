@@ -216,8 +216,9 @@ static void qed_ll2b_complete_rx_packet(struct qed_hwfn *p_hwfn,
 
 	skb = build_skb(buffer->data, 0);
 	if (!skb) {
-		rc = -ENOMEM;
-		goto out_post;
+		DP_INFO(cdev, "Failed to build SKB\n");
+		kfree(buffer->data);
+		goto out_post1;
 	}
 
 	pad += NET_SKB_PAD;
@@ -237,8 +238,14 @@ static void qed_ll2b_complete_rx_packet(struct qed_hwfn *p_hwfn,
 			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), vlan);
 		cdev->ll2->cbs->rx_cb(cdev->ll2->cb_cookie, skb,
 				      opaque_data_0, opaque_data_1);
+	} else {
+		DP_VERBOSE(p_hwfn, (NETIF_MSG_RX_STATUS | NETIF_MSG_PKTDATA |
+				    QED_MSG_LL2 | QED_MSG_STORAGE),
+			   "Dropping the packet\n");
+		kfree(buffer->data);
 	}
 
+out_post1:
 	/* Update Buffer information and update FW producer */
 	buffer->data = new_data;
 	buffer->phys_addr = new_phys_addr;
