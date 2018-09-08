@@ -46,6 +46,7 @@
 #include <linux/scatterlist.h>
 #include <linux/bitmap.h>
 #include <linux/list.h>
+#include <linux/workqueue.h>
 
 #include <xen/xen.h>
 #include <xen/xenbus.h>
@@ -88,6 +89,8 @@ struct split_bio {
 
 static DEFINE_MUTEX(blkfront_mutex);
 static const struct block_device_operations xlvbd_block_fops;
+static struct delayed_work blkfront_work;
+static LIST_HEAD(info_list);
 
 /*
  * Maximum number of segments in indirect requests, the actual value used by
@@ -158,6 +161,7 @@ struct blkfront_info
 	unsigned int max_indirect_segments;
 	int is_ready;
 	struct blk_mq_tag_set tag_set;
+	struct list_head info_list;
 };
 
 static unsigned int nr_minors;
@@ -1452,6 +1456,11 @@ fail:
 	return err;
 }
 
+static void free_info(struct blkfront_info *info)
+{
+	list_del(&info->info_list);
+	kfree(info);
+}
 
 /* Common code used when first setting up, and when resuming. */
 static int talk_to_blkback(struct xenbus_device *dev,
@@ -1551,7 +1560,10 @@ again:
  destroy_blkring:
 	blkif_free(info, 0);
  out:
-	kfree(info);
+	mutex_lock(&blkfront_mutex);
+	free_info(info);
+	mutex_unlock(&blkfront_mutex);
+
 	dev_set_drvdata(&dev->dev, NULL);
 
 	return err;
@@ -1630,6 +1642,10 @@ static int blkfront_probe(struct xenbus_device *dev,
 	/* Front end dir is a number, which is used as the id. */
 	info->handle = simple_strtoul(strrchr(dev->nodename, '/')+1, NULL, 0);
 	dev_set_drvdata(&dev->dev, info);
+
+	mutex_lock(&blkfront_mutex);
+	list_add(&info->info_list, &info_list);
+	mutex_unlock(&blkfront_mutex);
 
 	return 0;
 }
@@ -1995,6 +2011,12 @@ static int blkfront_gather_backend_features(struct blkfront_info *info)
 		indirect_segments = 0;
 	info->max_indirect_segments = indirect_segments;
 
+	if (info->feature_persistent) {
+		mutex_lock(&blkfront_mutex);
+		schedule_delayed_work(&blkfront_work, HZ * 10);
+		mutex_unlock(&blkfront_mutex);
+	}
+
 	return blkfront_setup_indirect(info);
 }
 
@@ -2176,7 +2198,9 @@ static int blkfront_remove(struct xenbus_device *xbdev)
 	mutex_unlock(&info->mutex);
 
 	if (!bdev) {
-		kfree(info);
+		mutex_lock(&blkfront_mutex);
+		free_info(info);
+		mutex_unlock(&blkfront_mutex);
 		return 0;
 	}
 
@@ -2196,7 +2220,9 @@ static int blkfront_remove(struct xenbus_device *xbdev)
 	if (info && !bdev->bd_openers) {
 		xlvbd_release_gendisk(info);
 		disk->private_data = NULL;
-		kfree(info);
+		mutex_lock(&blkfront_mutex);
+		free_info(info);
+		mutex_unlock(&blkfront_mutex);
 	}
 
 	mutex_unlock(&bdev->bd_mutex);
@@ -2279,7 +2305,7 @@ static void blkif_release(struct gendisk *disk, fmode_t mode)
 		dev_info(disk_to_dev(bdev->bd_disk), "releasing disk\n");
 		xlvbd_release_gendisk(info);
 		disk->private_data = NULL;
-		kfree(info);
+		free_info(info);
 	}
 
 out:
@@ -2312,12 +2338,71 @@ static struct xenbus_driver blkfront_driver = {
 	.is_ready = blkfront_is_ready,
 };
 
+static void purge_persistent_grants(struct blkfront_info *info)
+{
+	unsigned long flags;
+
+	struct grant *gnt_list_entry, *tmp;
+
+	spin_lock_irq(&info->io_lock);
+
+	if (info->persistent_gnts_c == 0) {
+		spin_unlock_irq(&info->io_lock);
+		return;
+	}
+
+	list_for_each_entry_safe(gnt_list_entry, tmp, &info->grants,
+			node) {
+		if (gnt_list_entry->gref == GRANT_INVALID_REF ||
+				gnttab_query_foreign_access(gnt_list_entry->gref))
+			continue;
+
+		list_del(&gnt_list_entry->node);
+		gnttab_end_foreign_access(gnt_list_entry->gref, 0, 0UL);
+		info->persistent_gnts_c--;
+		__free_page(gnt_list_entry->page);
+		kfree(gnt_list_entry);
+	}
+	spin_unlock_irq(&info->io_lock);
+}
+
+static void blkfront_delay_work(struct work_struct *work)
+{
+	struct blkfront_info *info;
+	bool need_schedule_work = false;
+
+	mutex_lock(&blkfront_mutex);
+
+	list_for_each_entry(info, &info_list, info_list) {
+		if (info->feature_persistent) {
+			need_schedule_work = true;
+			mutex_lock(&info->mutex);
+			purge_persistent_grants(info);
+			mutex_unlock(&info->mutex);
+		}
+	}
+
+	if (need_schedule_work)
+		schedule_delayed_work(&blkfront_work, HZ * 10);
+
+	mutex_unlock(&blkfront_mutex);
+}
+
 static int __init xlblk_init(void)
 {
 	int ret;
 
 	if (!xen_domain())
 		return -ENODEV;
+
+	if (!xen_has_pv_disk_devices())
+		return -ENODEV;
+
+	if (register_blkdev(XENVBD_MAJOR, DEV_NAME)) {
+		pr_warn("xen_blk: can't get major %d with name %s\n",
+			XENVBD_MAJOR, DEV_NAME);
+		return -ENODEV;
+	}
 
 	if (xen_blkif_max_segments < BLKIF_MAX_SEGMENTS_PER_REQUEST)
 		xen_blkif_max_segments = BLKIF_MAX_SEGMENTS_PER_REQUEST;
@@ -2328,14 +2413,7 @@ static int __init xlblk_init(void)
 		xen_blkif_max_ring_order = 0;
 	}
 
-	if (!xen_has_pv_disk_devices())
-		return -ENODEV;
-
-	if (register_blkdev(XENVBD_MAJOR, DEV_NAME)) {
-		printk(KERN_WARNING "xen_blk: can't get major %d with name %s\n",
-		       XENVBD_MAJOR, DEV_NAME);
-		return -ENODEV;
-	}
+	INIT_DELAYED_WORK(&blkfront_work, blkfront_delay_work);
 
 	ret = xenbus_register_frontend(&blkfront_driver);
 	if (ret) {
@@ -2350,6 +2428,8 @@ module_init(xlblk_init);
 
 static void __exit xlblk_exit(void)
 {
+	cancel_delayed_work_sync(&blkfront_work);
+
 	xenbus_unregister_driver(&blkfront_driver);
 	unregister_blkdev(XENVBD_MAJOR, DEV_NAME);
 	kfree(minors);
