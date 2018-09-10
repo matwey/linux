@@ -702,6 +702,8 @@ void x86_spec_ctrl_setup_ap(void)
  */
 static void override_cache_bits(struct cpuinfo_x86 *c)
 {
+	c->x86_cache_bits = c->x86_phys_bits;
+
 	if (c->x86 != 6)
 		return;
 
