@@ -23,10 +23,13 @@ static void disable_hotplug_cpu(int cpu)
 	lock_device_hotplug();
 	if (cpu_online(cpu))
 		device_offline(get_cpu_device(cpu));
+	if (cpu_online(cpu))
+		goto unlock;
 	if (cpu_present(cpu))
 		xen_arch_unregister_cpu(cpu);
 
 	set_cpu_present(cpu, false);
+unlock:
 	unlock_device_hotplug();
 }
 
