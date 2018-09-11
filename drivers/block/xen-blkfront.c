@@ -2340,8 +2340,6 @@ static struct xenbus_driver blkfront_driver = {
 
 static void purge_persistent_grants(struct blkfront_info *info)
 {
-	unsigned long flags;
-
 	struct grant *gnt_list_entry, *tmp;
 
 	spin_lock_irq(&info->io_lock);
