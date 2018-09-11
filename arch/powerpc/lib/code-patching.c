@@ -12,11 +12,29 @@
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <asm/page.h>
+#include <asm/sections.h>
 #include <asm/code-patching.h>
 
+static inline bool in_init_section(unsigned int *patch_addr)
+{
+	if (patch_addr < (unsigned int *)__init_begin)
+		return false;
+	if (patch_addr >= (unsigned int *)__init_end)
+		return false;
+	return true;
+}
+
+static inline bool init_freed(void)
+{
+	return (system_state >= SYSTEM_RUNNING);
+}
 
 void patch_instruction(unsigned int *addr, unsigned int instr)
 {
+	/* Make sure we aren't patching a freed init section */
+	if (in_init_section(addr) && init_freed())
+		return;
+
 	*addr = instr;
 	asm ("dcbst 0, %0; sync; icbi 0,%0; sync; isync" : : "r" (addr));
 }

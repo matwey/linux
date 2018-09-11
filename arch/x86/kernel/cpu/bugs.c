@@ -1043,6 +1043,7 @@ static void x86_amd_ssbd_disable(void)
 }
 
 
+#ifdef CONFIG_SWAP
 unsigned long max_swapfile_size(void)
 {
 	unsigned long pages;
@@ -1056,6 +1057,7 @@ unsigned long max_swapfile_size(void)
 	}
 	return pages;
 }
+#endif
 
 void x86_sync_spec_ctrl(void)
 {
