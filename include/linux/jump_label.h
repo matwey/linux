@@ -78,7 +78,6 @@
 
 #include <linux/types.h>
 #include <linux/compiler.h>
-#include <linux/bug.h>
 
 extern bool static_key_initialized;
 
@@ -117,23 +116,12 @@ enum jump_label_type {
 
 struct module;
 
-#include <linux/atomic.h>
-
 #ifdef HAVE_JUMP_LABEL
 
-static inline int static_key_count(struct static_key *key)
-{
-	/*
-	 * -1 means the first static_key_slow_inc() is in progress.
-	 *  static_key_enabled() must return true, so return 1 here.
-	 */
-	int n = atomic_read(&key->enabled);
-	return n >= 0 ? n : 1;
-}
-
-#define JUMP_TYPE_FALSE	0UL
-#define JUMP_TYPE_TRUE	1UL
-#define JUMP_TYPE_MASK	1UL
+#define JUMP_TYPE_FALSE		0UL
+#define JUMP_TYPE_TRUE		1UL
+#define JUMP_TYPE_LINKED	2UL
+#define JUMP_TYPE_MASK		3UL
 
 static __always_inline bool static_key_false(struct static_key *key)
 {
@@ -159,15 +147,30 @@ extern int jump_label_text_reserved(void *start, void *end);
 extern void static_key_slow_inc(struct static_key *key);
 extern void static_key_slow_dec(struct static_key *key);
 extern void jump_label_apply_nops(struct module *mod);
+extern int static_key_count(struct static_key *key);
+extern void static_key_enable(struct static_key *key);
+extern void static_key_disable(struct static_key *key);
+extern void static_key_enable_cpuslocked(struct static_key *key);
+extern void static_key_disable_cpuslocked(struct static_key *key);
 
+/*
+ * We should be using ATOMIC_INIT() for initializing .enabled, but
+ * the inclusion of atomic.h is problematic for inclusion of jump_label.h
+ * in 'low-level' headers. Thus, we are initializing .enabled with a
+ * raw value, but have added a BUILD_BUG_ON() to catch any issues in
+ * jump_label_init() see: kernel/jump_label.c.
+ */
 #define STATIC_KEY_INIT_TRUE					\
-	{ .enabled = ATOMIC_INIT(1),				\
+	{ .enabled = { 1 },					\
 	  .entries = (void *)JUMP_TYPE_TRUE }
 #define STATIC_KEY_INIT_FALSE					\
-	{ .enabled = ATOMIC_INIT(0),				\
+	{ .enabled = { 0 },					\
 	  .entries = (void *)JUMP_TYPE_FALSE }
 
 #else  /* !HAVE_JUMP_LABEL */
+
+#include <linux/atomic.h>
+#include <linux/bug.h>
 
 static inline int static_key_count(struct static_key *key)
 {
@@ -218,6 +221,31 @@ static inline int jump_label_apply_nops(struct module *mod)
 	return 0;
 }
 
+static inline void static_key_enable(struct static_key *key)
+{
+	STATIC_KEY_CHECK_USE();
+
+	if (atomic_read(&key->enabled) != 0) {
+		WARN_ON_ONCE(atomic_read(&key->enabled) != 1);
+		return;
+	}
+	atomic_set(&key->enabled, 1);
+}
+
+static inline void static_key_disable(struct static_key *key)
+{
+	STATIC_KEY_CHECK_USE();
+
+	if (atomic_read(&key->enabled) != 1) {
+		WARN_ON_ONCE(atomic_read(&key->enabled) != 0);
+		return;
+	}
+	atomic_set(&key->enabled, 0);
+}
+
+#define static_key_enable_cpuslocked(k)		static_key_enable((k))
+#define static_key_disable_cpuslocked(k)	static_key_disable((k))
+
 #define STATIC_KEY_INIT_TRUE	{ .enabled = ATOMIC_INIT(1) }
 #define STATIC_KEY_INIT_FALSE	{ .enabled = ATOMIC_INIT(0) }
 
@@ -225,26 +253,6 @@ static inline int jump_label_apply_nops(struct module *mod)
 
 #define STATIC_KEY_INIT STATIC_KEY_INIT_FALSE
 #define jump_label_enabled static_key_enabled
-
-static inline void static_key_enable(struct static_key *key)
-{
-	int count = static_key_count(key);
-
-	WARN_ON_ONCE(count < 0 || count > 1);
-
-	if (!count)
-		static_key_slow_inc(key);
-}
-
-static inline void static_key_disable(struct static_key *key)
-{
-	int count = static_key_count(key);
-
-	WARN_ON_ONCE(count < 0 || count > 1);
-
-	if (count)
-		static_key_slow_dec(key);
-}
 
 /* -------------------------------------------------------------------------- */
 
@@ -399,8 +407,10 @@ extern bool ____wrong_branch_error(void);
  * Normal usage; boolean enable/disable.
  */
 
-#define static_branch_enable(x)		static_key_enable(&(x)->key)
-#define static_branch_disable(x)	static_key_disable(&(x)->key)
+#define static_branch_enable(x)			static_key_enable(&(x)->key)
+#define static_branch_disable(x)		static_key_disable(&(x)->key)
+#define static_branch_enable_cpuslocked(x)	static_key_enable_cpuslocked(&(x)->key)
+#define static_branch_disable_cpuslocked(x)	static_key_disable_cpuslocked(&(x)->key)
 
 #endif	/* _LINUX_JUMP_LABEL_H */
 
