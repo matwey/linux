@@ -335,14 +335,14 @@ struct task_struct *kthread_create_on_node(int (*threadfn)(void *data),
 		char name[TASK_COMM_LEN];
 		va_list args;
 
+		va_start(args, namefmt);
 		/*
 		 * task is already visible to other tasks, so updating
 		 * COMM must be protected.
 		 */
-		va_start(args, namefmt);
 		vsnprintf(name, sizeof(name), namefmt, args);
-		va_end(args);
 		set_task_comm(task, name);
+		va_end(args);
 		/*
 		 * root may have changed our (kthreadd's) priority or CPU mask.
 		 * The kernel thread should not inherit these properties.
