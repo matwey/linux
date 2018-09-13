@@ -321,7 +321,7 @@ xfs_ip_to_stat(
 
 	switch (dic->di_format) {
 	case XFS_DINODE_FMT_DEV:
-		buf->dt_rdev = ip->i_df.if_u2.if_rdev;
+		buf->dt_rdev = sysv_encode_dev(VFS_I(ip)->i_rdev);
 		buf->dt_blksize = BLKDEV_IOSIZE;
 		buf->dt_blocks = 0;
 		break;
