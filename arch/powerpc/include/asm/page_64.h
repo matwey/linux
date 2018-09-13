@@ -66,6 +66,7 @@ extern u64 ppc64_pft_size;
 
 /* Large pages size */
 #ifdef CONFIG_HUGETLB_PAGE
+extern bool hugetlb_disabled;
 extern unsigned int HPAGE_SHIFT;
 #else
 #define HPAGE_SHIFT PAGE_SHIFT

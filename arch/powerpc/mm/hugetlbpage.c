@@ -19,6 +19,8 @@
 #define PAGE_SHIFT_16M	24
 #define PAGE_SHIFT_16G	34
 
+bool hugetlb_disabled = false;
+
 #define MAX_NUMBER_GPAGES	1024
 
 /* Tracks the 16G pages after the device tree is scanned and before the
@@ -540,6 +542,11 @@ __setup("hugepagesz=", hugepage_setup_sz);
 static int __init hugetlbpage_init(void)
 {
 	int psize;
+
+	if (hugetlb_disabled) {
+		pr_info("HugeTLB support is disabled!\n");
+		return 0;
+	}
 
 	if (!mmu_has_feature(MMU_FTR_16M_PAGE))
 		return -ENODEV;
