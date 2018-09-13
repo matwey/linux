@@ -377,7 +377,7 @@ void		xfs_inactive(struct xfs_inode *ip);
 int		xfs_lookup(struct xfs_inode *dp, struct xfs_name *name,
 			   struct xfs_inode **ipp, struct xfs_name *ci_name);
 int		xfs_create(struct xfs_inode *dp, struct xfs_name *name,
-			   umode_t mode, xfs_dev_t rdev, struct xfs_inode **ipp);
+			   umode_t mode, dev_t rdev, struct xfs_inode **ipp);
 int		xfs_create_tmpfile(struct xfs_inode *dp, struct dentry *dentry,
 			   umode_t mode, struct xfs_inode **ipp);
 int		xfs_remove(struct xfs_inode *dp, struct xfs_name *name,
@@ -421,7 +421,7 @@ void		xfs_lock_two_inodes(xfs_inode_t *, xfs_inode_t *, uint);
 xfs_extlen_t	xfs_get_extsz_hint(struct xfs_inode *ip);
 
 int		xfs_dir_ialloc(struct xfs_trans **, struct xfs_inode *, umode_t,
-			       xfs_nlink_t, xfs_dev_t, prid_t, int,
+			       xfs_nlink_t, dev_t, prid_t, int,
 			       struct xfs_inode **, int *);
 int		xfs_droplink(struct xfs_trans *, struct xfs_inode *);
 int		xfs_bumplink(struct xfs_trans *, struct xfs_inode *);
