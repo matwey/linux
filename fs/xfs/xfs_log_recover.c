@@ -3112,16 +3112,8 @@ xlog_recover_inode_pass2(
 	xfs_dinode_to_disk(dip, dicp);
 
 	fields = in_f->ilf_fields;
-	switch (fields & (XFS_ILOG_DEV | XFS_ILOG_UUID)) {
-	case XFS_ILOG_DEV:
+	if (fields & XFS_ILOG_DEV)
 		xfs_dinode_put_rdev(dip, in_f->ilf_u.ilfu_rdev);
-		break;
-	case XFS_ILOG_UUID:
-		memcpy(XFS_DFORK_DPTR(dip),
-		       &in_f->ilf_u.ilfu_uuid,
-		       sizeof(uuid_t));
-		break;
-	}
 
 	if (in_f->ilf_size == 2)
 		goto out_owner_change;
@@ -3867,7 +3859,7 @@ xlog_recover_add_to_cont_trans(
 	old_ptr = item->ri_buf[item->ri_cnt-1].i_addr;
 	old_len = item->ri_buf[item->ri_cnt-1].i_len;
 
-	ptr = kmem_realloc(old_ptr, len+old_len, old_len, KM_SLEEP);
+	ptr = kmem_realloc(old_ptr, len + old_len, KM_SLEEP);
 	memcpy(&ptr[old_len], dp, len);
 	item->ri_buf[item->ri_cnt-1].i_len += len;
 	item->ri_buf[item->ri_cnt-1].i_addr = ptr;

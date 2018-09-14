@@ -146,7 +146,6 @@ xfs_generic_create(
 	if (S_ISCHR(mode) || S_ISBLK(mode)) {
 		if (unlikely(!sysv_valid_dev(rdev) || MAJOR(rdev) & ~0x1ff))
 			return -EINVAL;
-		rdev = sysv_encode_dev(rdev);
 	} else {
 		rdev = 0;
 	}
@@ -472,8 +471,7 @@ xfs_vn_getattr(
 	case S_IFBLK:
 	case S_IFCHR:
 		stat->blksize = BLKDEV_IOSIZE;
-		stat->rdev = MKDEV(sysv_major(ip->i_df.if_u2.if_rdev) & 0x1ff,
-				   sysv_minor(ip->i_df.if_u2.if_rdev));
+		stat->rdev = inode->i_rdev;
 		break;
 	default:
 		if (XFS_IS_REALTIME_INODE(ip)) {
@@ -1085,12 +1083,10 @@ xfs_vn_update_time(
  */
 STATIC int
 xfs_fiemap_format(
-	void			**arg,
-	struct getbmapx		*bmv,
-	int			*full)
+	struct kgetbmap		*bmv,
+	struct fiemap_extent_info *fieinfo)
 {
 	int			error;
-	struct fiemap_extent_info *fieinfo = *arg;
 	u32			fiemap_flags = 0;
 	u64			logical, physical, length;
 
@@ -1114,10 +1110,8 @@ xfs_fiemap_format(
 
 	error = fiemap_fill_next_extent(fieinfo, logical, physical,
 					length, fiemap_flags);
-	if (error > 0) {
+	if (error > 0)
 		error = 0;
-		*full = 1;	/* user array now full */
-	}
 
 	return error;
 }
@@ -1132,6 +1126,8 @@ xfs_vn_fiemap(
 	xfs_inode_t		*ip = XFS_I(inode);
 	struct getbmapx		bm;
 	int			error;
+	struct kgetbmap		*buf;
+	int i;
 
 	error = fiemap_check_flags(fieinfo, XFS_FIEMAP_FLAGS);
 	if (error)
@@ -1156,11 +1152,27 @@ xfs_vn_fiemap(
 	if (!(fieinfo->fi_flags & FIEMAP_FLAG_SYNC))
 		bm.bmv_iflags |= BMV_IF_DELALLOC;
 
-	error = xfs_getbmap(ip, &bm, xfs_fiemap_format, fieinfo);
-	if (error)
-		return error;
+	buf = kmem_zalloc_large(bm.bmv_count * sizeof(*buf), 0);
+	if (!buf)
+		return -ENOMEM;
 
-	return 0;
+	error = xfs_getbmap(ip, &bm, buf);
+	if (error)
+		goto out_free;
+
+	for (i = 0; i < bm.bmv_entries; i++) {
+		/*
+		 * If the fiemap buffer is full we just skip the rest of the
+		 * mapped extents
+		 */
+		error = xfs_fiemap_format(buf + i, fieinfo);
+		if (error)
+			break;
+	}
+
+out_free:
+	kmem_free(buf);
+	return error;
 }
 
 STATIC int
@@ -1303,18 +1315,6 @@ xfs_setup_inode(
 	set_nlink(inode, ip->i_d.di_nlink);
 	inode->i_uid    = xfs_uid_to_kuid(ip->i_d.di_uid);
 	inode->i_gid    = xfs_gid_to_kgid(ip->i_d.di_gid);
-
-	switch (inode->i_mode & S_IFMT) {
-	case S_IFBLK:
-	case S_IFCHR:
-		inode->i_rdev =
-			MKDEV(sysv_major(ip->i_df.if_u2.if_rdev) & 0x1ff,
-			      sysv_minor(ip->i_df.if_u2.if_rdev));
-		break;
-	default:
-		inode->i_rdev = 0;
-		break;
-	}
 
 	inode->i_generation = ip->i_d.di_gen;
 	i_size_write(inode, ip->i_d.di_size);
