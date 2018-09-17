@@ -10,6 +10,7 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/xattr.h>
+#include <linux/cred.h>
 #include "overlayfs.h"
 
 static int ovl_copy_up_truncate(struct dentry *dentry)
@@ -93,6 +94,7 @@ int ovl_permission(struct inode *inode, int mask)
 	struct inode *realinode;
 	struct dentry *realdentry;
 	bool is_upper;
+	const struct cred *old_cred;
 	int err;
 
 	if (S_ISDIR(inode->i_mode)) {
@@ -167,13 +169,22 @@ int ovl_permission(struct inode *inode, int mask)
 		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
 			goto out_dput;
 	}
+	/*
+	 * Check overlay inode with the creds of task and underlying inode
+	 * with creds of mounter
+	 */
+	err = generic_permission(inode, mask);
+	if (err)
+		return err;
 
+	old_cred = ovl_override_creds(inode->i_sb);
 	if (!is_upper && !special_file(realinode->i_mode) && mask & MAY_WRITE) {
 		mask &= ~(MAY_WRITE | MAY_APPEND);
 		/* Make sure mounter can read file for copy up later */
 		mask |= MAY_READ;
 	}
 	err = __inode_permission(realinode, mask);
+	revert_creds(old_cred);
 out_dput:
 	dput(alias);
 	return err;
