@@ -22,7 +22,10 @@
 #include <linux/bio.h>
 #include <linux/sort.h>
 #include <linux/btrfs.h>
+#include <linux/sizes.h>
 #include "async-thread.h"
+
+#define BTRFS_MAX_DATA_CHUNK_SIZE	(10ULL * SZ_1G)
 
 extern struct mutex uuid_mutex;
 
