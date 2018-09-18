@@ -1330,8 +1330,8 @@ static ssize_t fadump_register_store(struct kobject *kobj,
 		break;
 	case '1':
 		if (fw_dump.dump_registered == 1) {
-			ret = -EINVAL;
-			goto unlock_out;
+			/* Un-register Firmware-assisted dump */
+			fadump_unregister_dump(&fdm);
 		}
 		/* Register Firmware-assisted dump */
 		register_fadump();
