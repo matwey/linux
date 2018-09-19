@@ -199,7 +199,7 @@ static struct ucma_multicast* ucma_alloc_multicast(struct ucma_context *ctx)
 			goto error;
 
 		mutex_lock(&mut);
-		ret = idr_get_new(&multicast_idr, mc, &mc->id);
+		ret = idr_get_new(&multicast_idr, NULL, &mc->id);
 		mutex_unlock(&mut);
 	} while (ret == -EAGAIN);
 
@@ -1075,6 +1075,10 @@ static ssize_t ucma_join_multicast(struct ucma_file *file,
 		ret = -EFAULT;
 		goto err3;
 	}
+
+	mutex_lock(&mut);
+	idr_replace(&multicast_idr, mc, mc->id);
+	mutex_unlock(&mut);
 
 	mutex_unlock(&file->mut);
 	ucma_put_ctx(ctx);
