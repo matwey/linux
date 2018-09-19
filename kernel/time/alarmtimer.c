@@ -369,8 +369,10 @@ static void alarm_handle_timer(struct alarm *alarm)
 {
 	struct k_itimer *ptr = container_of(alarm, struct k_itimer,
 						it.alarmtimer);
-	if (posix_timer_event(ptr, 0) != 0)
+	if (posix_timer_event(ptr, 0) != 0) {
 		ptr->it_overrun++;
+		ptr->__it_overrun++;
+	}
 }
 
 /**
