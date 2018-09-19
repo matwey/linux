@@ -175,7 +175,7 @@ int ovl_permission(struct inode *inode, int mask)
 	 */
 	err = generic_permission(inode, mask);
 	if (err)
-		return err;
+		goto out_dput;
 
 	old_cred = ovl_override_creds(inode->i_sb);
 	if (!is_upper && !special_file(realinode->i_mode) && mask & MAY_WRITE) {
