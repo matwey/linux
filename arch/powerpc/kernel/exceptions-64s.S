@@ -41,7 +41,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)				\
 
 #define SYSCALL_PSERIES_2_RFID 					\
 	mfspr	r12,SPRN_SRR1 ;					\
-	ld	r10,PACAKBASE(r13) ; 				\
 	LOAD_HANDLER(r10, system_call_entry) ; 			\
 	mtspr	SPRN_SRR0,r10 ; 				\
 	ld	r10,PACAKMSR(r13) ;				\
@@ -64,7 +63,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)				\
 	 */
 #define SYSCALL_PSERIES_2_DIRECT				\
 	mflr	r10 ;						\
-	ld	r12,PACAKBASE(r13) ; 				\
 	LOAD_HANDLER(r12, system_call_entry) ;			\
 	mtctr	r12 ;						\
 	mfspr	r12,SPRN_SRR1 ;					\
@@ -177,7 +175,7 @@ machine_check_pSeries_1:
 	SET_PACA(r13)
 	EXCEPTION_PROLOG_0(PACA_EXMC)
 BEGIN_FTR_SECTION
-	b	machine_check_pSeries_early
+	b	machine_check_powernv_early
 FTR_SECTION_ELSE
 	b	machine_check_pSeries_0
 ALT_FTR_SECTION_END_IFSET(CPU_FTR_HVMODE)
@@ -214,7 +212,6 @@ data_access_slb_pSeries:
 	 * the kernel ends up being put.
 	 */
 	mfctr	r11
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, slb_miss_realmode)
 	mtctr	r10
 	bctr
@@ -241,7 +238,6 @@ instruction_access_slb_pSeries:
 	b	slb_miss_realmode
 #else
 	mfctr	r11
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, slb_miss_realmode)
 	mtctr	r10
 	bctr
@@ -453,7 +449,7 @@ denorm_exception_hv:
 
 	.align	7
 	/* moved from 0x200 */
-machine_check_pSeries_early:
+machine_check_powernv_early:
 BEGIN_FTR_SECTION
 	EXCEPTION_PROLOG_1(PACA_EXMC, NOTEST, 0x200)
 	/*
@@ -506,7 +502,6 @@ BEGIN_FTR_SECTION
 	mfmsr	r11			/* get MSR value */
 	ori	r11,r11,MSR_ME		/* turn on ME bit */
 	ori	r11,r11,MSR_RI		/* turn on RI bit */
-	ld	r12,PACAKBASE(r13)	/* get high part of &label */
 	LOAD_HANDLER(r12, machine_check_handle_early)
 1:	mtspr	SPRN_SRR0,r12
 	mtspr	SPRN_SRR1,r11
@@ -519,7 +514,6 @@ BEGIN_FTR_SECTION
 	 */
 	addi	r1,r1,INT_FRAME_SIZE	/* go back to previous stack frame */
 	ld	r11,PACAKMSR(r13)
-	ld	r12,PACAKBASE(r13)
 	LOAD_HANDLER(r12, unrecover_mce)
 	li	r10,MSR_ME
 	andc	r11,r11,r10		/* Turn off MSR_ME */
@@ -856,7 +850,6 @@ data_access_slb_relon_pSeries:
 	 * the kernel ends up being put.
 	 */
 	mfctr	r11
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, slb_miss_realmode)
 	mtctr	r10
 	bctr
@@ -876,7 +869,6 @@ instruction_access_slb_relon_pSeries:
 	b	slb_miss_realmode
 #else
 	mfctr	r11
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10, slb_miss_realmode)
 	mtctr	r10
 	bctr
@@ -1452,7 +1444,6 @@ machine_check_handle_early:
 	andi.	r11,r12,MSR_RI
 	bne	2f
 1:	mfspr	r11,SPRN_SRR0
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10,unrecover_mce)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
@@ -1565,7 +1556,6 @@ slb_miss_realmode:
 	b	.	/* prevent speculative execution */
 
 2:	mfspr	r11,SPRN_SRR0
-	ld	r10,PACAKBASE(r13)
 	LOAD_HANDLER(r10,unrecov_slb)
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
