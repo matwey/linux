@@ -217,6 +217,7 @@ void free_initmem(void)
 		 #TYPE);
 
 	printk ("Freeing unused kernel memory:");
+	init_mem_is_free = true;
 	FREESEC(init);
  	printk("\n");
 	ppc_md.progress = NULL;
