@@ -498,7 +498,6 @@ static int setup_clone(struct request *clone, struct request *rq,
 	if (r)
 		return r;
 
-	clone->cmd_flags = rq->cmd_flags | REQ_NOMERGE;
 	clone->end_io = end_clone_request;
 	clone->end_io_data = tio;
 

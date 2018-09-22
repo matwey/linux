@@ -12,32 +12,21 @@
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <asm/page.h>
+#include <asm/setup.h>
+#include <asm/sections.h>
 #include <asm/code-patching.h>
 #include <linux/uaccess.h>
 
-static inline bool in_init_section(unsigned int *patch_addr)
-{
-	extern char __init_begin[], __init_end[];
-
-	if (patch_addr < (unsigned int *)__init_begin)
-		return false;
-	if (patch_addr >= (unsigned int *)__init_end)
-		return false;
-	return true;
-}
-
-static inline bool init_freed(void)
-{
-	return (system_state >= SYSTEM_RUNNING);
-}
 
 int patch_instruction(unsigned int *addr, unsigned int instr)
 {
 	int err;
 
 	/* Make sure we aren't patching a freed init section */
-	if (in_init_section(addr) && init_freed())
+	if (init_mem_is_free && init_section_contains(addr, 4)) {
+		pr_debug("Skipping init section patching addr: 0x%px\n", addr);
 		return 0;
+	}
 
 	__put_user_size(instr, addr, 4, err);
 	if (err)
