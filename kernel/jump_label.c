@@ -326,8 +326,13 @@ static bool jump_entry_branch(struct jump_entry *entry)
 static void static_key_set_entries(struct static_key *key,
                                   struct jump_entry *entries)
 {
+	unsigned long e;
+
 	WARN_ON_ONCE((unsigned long)entries & JUMP_TYPE_MASK);
-	key->entries = entries;
+
+	/* transfer previous JUMP_TYPE_MASK bits */
+	e = (unsigned long)key->entries & JUMP_TYPE_MASK;
+	key->entries = (struct jump_entry *)((unsigned long)entries | e);
 }
 
 static enum jump_label_type jump_label_type(struct jump_entry *entry)
