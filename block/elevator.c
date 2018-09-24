@@ -973,6 +973,10 @@ int elevator_change(struct request_queue *q, const char *name)
 	if (!q->elevator)
 		return -ENXIO;
 
+	/* Make sure queue is not in the middle of being removed */
+	if (!test_bit(QUEUE_FLAG_REGISTERED, &q->queue_flags))
+		return -ENOENT;
+
 	strlcpy(elevator_name, name, sizeof(elevator_name));
 	e = elevator_get(strstrip(elevator_name));
 	if (!e) {

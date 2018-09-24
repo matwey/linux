@@ -416,7 +416,7 @@ struct request_queue
 #define QUEUE_FLAG_SECDISCARD  17	/* supports SECDISCARD */
 #define QUEUE_FLAG_NO_ROUND    18	/* Don't round timeout up to next second */
 #define QUEUE_FLAG_DEAD        19	/* queue tear-down finished */
-
+#define QUEUE_FLAG_REGISTERED  26       /* queue has been registered to a disk */
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\
 				 (1 << QUEUE_FLAG_SAME_COMP)	|	\
