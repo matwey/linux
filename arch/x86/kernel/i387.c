@@ -594,7 +594,8 @@ int save_i387_xstate_ia32(void __user *buf)
 	 * This will cause a "finit" to be triggered by the next
 	 * attempted FPU operation by the 'current' process.
 	 */
-	drop_init_fpu(tsk);
+	if (!use_eager_fpu())
+		clear_used_math();
 
 	if (!HAVE_HWFP) {
 		return fpregs_soft_get(current, NULL,
@@ -611,6 +612,8 @@ int save_i387_xstate_ia32(void __user *buf)
                 __save_init_fpu(tsk);
 		if (!use_eager_fpu())
 	                __thread_fpu_end(tsk);
+		else
+			drop_init_fpu(tsk);
         } else
                 tsk->fpu_counter = 0;
 
@@ -698,8 +701,19 @@ int restore_i387_xstate_ia32(void __user *buf)
 	struct task_struct *tsk = current;
 	struct _fpstate_ia32 __user *fp = (struct _fpstate_ia32 __user *) buf;
 
-	if (HAVE_HWFP)
-		clear_fpu(tsk);
+	if (HAVE_HWFP) {
+		if (!use_eager_fpu()) {
+			clear_fpu(tsk);
+		} else {
+			/*
+			 * Unlike clear_fpu(), keep FPU ownership, but
+			 * clear any pending exceptions from user space.
+			 */
+			asm volatile("1: fwait\n"
+				     "2:\n"
+				     _ASM_EXTABLE(1b, 2b));
+		}
+	}
 
 	if (!buf) {
 		drop_init_fpu(tsk);
@@ -723,6 +737,24 @@ int restore_i387_xstate_ia32(void __user *buf)
 							   i387_fxsave_struct));
 		else
 			err = restore_i387_fsave(fp);
+
+		if (use_eager_fpu()) {
+			/*
+			 * Should be the case already, but better be
+			 * on the safe side: the init_fpu() from above
+			 * should never get called in eager mode, but
+			 * who knows?
+			 */
+			if (WARN_ON_ONCE(!__thread_has_fpu(tsk)))
+				__thread_set_has_fpu(tsk);
+
+			/* copied from math_state_restore */
+			if(unlikely(restore_fpu_checking(tsk))) {
+				drop_init_fpu(tsk);
+				return -EACCES;
+			}
+		}
+
 	} else {
 		err = fpregs_soft_set(current, NULL,
 				      0, sizeof(struct user_i387_ia32_struct),
