@@ -290,15 +290,16 @@ EXPORT_SYMBOL_GPL(cleanup_srcu_struct);
 
 /*
  * Counts the new reader in the appropriate per-CPU element of the
- * srcu_struct.  Must be called from process context.
- * Returns an index that must be passed to the matching srcu_read_unlock().
+ * srcu_struct.  Can be invoked from irq/bh handlers, but the matching
+ * __srcu_read_unlock() must be in the same handler instance.  Returns an
+ * index that must be passed to the matching srcu_read_unlock().
  */
 int __srcu_read_lock(struct srcu_struct *sp)
 {
 	int idx;
 
 	idx = READ_ONCE(sp->completed) & 0x1;
-	__this_cpu_inc(sp->per_cpu_ref->c[idx]);
+	this_cpu_inc(sp->per_cpu_ref->c[idx]);
 	smp_mb(); /* B */  /* Avoid leaking the critical section. */
 	__this_cpu_inc(sp->per_cpu_ref->seq[idx]);
 	return idx;
@@ -309,7 +310,6 @@ EXPORT_SYMBOL_GPL(__srcu_read_lock);
  * Removes the count for the old reader from the appropriate per-CPU
  * element of the srcu_struct.  Note that this may well be a different
  * CPU than that which was incremented by the corresponding srcu_read_lock().
- * Must be called from process context.
  */
 void __srcu_read_unlock(struct srcu_struct *sp, int idx)
 {
