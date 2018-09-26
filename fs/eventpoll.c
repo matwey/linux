@@ -585,7 +585,6 @@ static int ep_scan_ready_list(struct eventpoll *ep,
 			      void *priv, int depth, bool ep_locked)
 {
 	int error, pwake = 0;
-	unsigned long flags;
 	struct epitem *epi, *nepi;
 	LIST_HEAD(txlist);
 
@@ -605,17 +604,17 @@ static int ep_scan_ready_list(struct eventpoll *ep,
 	 * because we want the "sproc" callback to be able to do it
 	 * in a lockless way.
 	 */
-	spin_lock_irqsave(&ep->lock, flags);
+	spin_lock_irq(&ep->lock);
 	list_splice_init(&ep->rdllist, &txlist);
 	ep->ovflist = NULL;
-	spin_unlock_irqrestore(&ep->lock, flags);
+	spin_unlock_irq(&ep->lock);
 
 	/*
 	 * Now call the callback function.
 	 */
 	error = (*sproc)(ep, &txlist, priv);
 
-	spin_lock_irqsave(&ep->lock, flags);
+	spin_lock_irq(&ep->lock);
 	/*
 	 * During the time we spent inside the "sproc" callback, some
 	 * other events might have been queued by the poll callback.
@@ -657,7 +656,7 @@ static int ep_scan_ready_list(struct eventpoll *ep,
 		if (waitqueue_active(&ep->poll_wait))
 			pwake++;
 	}
-	spin_unlock_irqrestore(&ep->lock, flags);
+	spin_unlock_irq(&ep->lock);
 
 	if (!ep_locked)
 		mutex_unlock(&ep->mtx);
@@ -681,7 +680,6 @@ static void epi_rcu_free(struct rcu_head *head)
  */
 static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 {
-	unsigned long flags;
 	struct file *file = epi->ffd.file;
 
 	/*
@@ -708,10 +706,10 @@ static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 
 	rb_erase(&epi->rbn, &ep->rbr);
 
-	spin_lock_irqsave(&ep->lock, flags);
+	spin_lock_irq(&ep->lock);
 	if (ep_is_linked(&epi->rdllink))
 		list_del_init(&epi->rdllink);
-	spin_unlock_irqrestore(&ep->lock, flags);
+	spin_unlock_irq(&ep->lock);
 
 	wakeup_source_unregister(ep_wakeup_source(epi));
 	/*
@@ -1271,7 +1269,6 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 		     struct file *tfile, int fd, int full_check)
 {
 	int error, revents, pwake = 0;
-	unsigned long flags;
 	long user_watches;
 	struct epitem *epi;
 	struct ep_pqueue epq;
@@ -1338,7 +1335,7 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 		goto error_remove_epi;
 
 	/* We have to drop the new item inside our item list to keep track of it */
-	spin_lock_irqsave(&ep->lock, flags);
+	spin_lock_irq(&ep->lock);
 
 	/* If the file is already "ready" we drop it inside the ready list */
 	if ((revents & event->events) && !ep_is_linked(&epi->rdllink)) {
@@ -1352,7 +1349,7 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 			pwake++;
 	}
 
-	spin_unlock_irqrestore(&ep->lock, flags);
+	spin_unlock_irq(&ep->lock);
 
 	atomic_long_inc(&ep->user->epoll_watches);
 
@@ -1385,10 +1382,10 @@ error_unregister:
 	 * list, since that is used/cleaned only inside a section bound by "mtx".
 	 * And ep_insert() is called with "mtx" held.
 	 */
-	spin_lock_irqsave(&ep->lock, flags);
+	spin_lock_irq(&ep->lock);
 	if (ep_is_linked(&epi->rdllink))
 		list_del_init(&epi->rdllink);
-	spin_unlock_irqrestore(&ep->lock, flags);
+	spin_unlock_irq(&ep->lock);
 
 	wakeup_source_unregister(ep_wakeup_source(epi));
 
@@ -1599,7 +1596,6 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
 		   int maxevents, long timeout)
 {
 	int res = 0, eavail, timed_out = 0;
-	unsigned long flags;
 	long slack = 0;
 	wait_queue_t wait;
 	ktime_t expires, *to = NULL;
@@ -1616,12 +1612,12 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
 		 * caller specified a non blocking operation.
 		 */
 		timed_out = 1;
-		spin_lock_irqsave(&ep->lock, flags);
+		spin_lock_irq(&ep->lock);
 		goto check_events;
 	}
 
 fetch_events:
-	spin_lock_irqsave(&ep->lock, flags);
+	spin_lock_irq(&ep->lock);
 
 	if (!ep_events_available(ep)) {
 		/*
@@ -1656,11 +1652,11 @@ fetch_events:
 				break;
 			}
 
-			spin_unlock_irqrestore(&ep->lock, flags);
+			spin_unlock_irq(&ep->lock);
 			if (!schedule_hrtimeout_range(to, slack, HRTIMER_MODE_ABS))
 				timed_out = 1;
 
-			spin_lock_irqsave(&ep->lock, flags);
+			spin_lock_irq(&ep->lock);
 		}
 
 		__remove_wait_queue(&ep->wq, &wait);
@@ -1670,7 +1666,7 @@ check_events:
 	/* Is it worth to try to dig for events ? */
 	eavail = ep_events_available(ep);
 
-	spin_unlock_irqrestore(&ep->lock, flags);
+	spin_unlock_irq(&ep->lock);
 
 	/*
 	 * Try to transfer events to user space. In case we get 0 events and
