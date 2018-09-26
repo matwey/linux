@@ -116,7 +116,9 @@ xfs_setfilesize_trans_alloc(
 	struct xfs_trans	*tp;
 	int			error;
 
-	tp = xfs_trans_alloc(mp, XFS_TRANS_FSYNC_TS);
+	sb_start_intwrite(mp->m_super);
+	tp = _xfs_trans_alloc(mp, XFS_TRANS_FSYNC_TS, KM_NOFS);
+	tp->t_flags |= XFS_TRANS_FREEZE_PROT;
 
 	error = xfs_trans_reserve(tp, &M_RES(mp)->tr_fsyncts, 0, 0);
 	if (error) {
