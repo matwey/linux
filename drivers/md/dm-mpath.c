@@ -561,6 +561,7 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 		 */
 		clone->q = bdev_get_queue(bdev);
 		clone->rq_disk = bdev->bd_disk;
+		clone->cmd_flags = rq->cmd_flags | REQ_NOMERGE;
 		clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
 	} else {
 		/*
