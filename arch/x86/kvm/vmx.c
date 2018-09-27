@@ -8227,7 +8227,7 @@ static void vmx_cleanup_l1d_flush(void)
 	l1tf_vmx_mitigation = VMENTER_L1D_FLUSH_AUTO;
 }
 
-static void __exit vmx_exit(void)
+static void vmx_exit(void)
 {
 	free_page((unsigned long)vmx_msr_bitmap_legacy_x2apic);
 	free_page((unsigned long)vmx_msr_bitmap_longmode_x2apic);
