@@ -5,6 +5,8 @@
 
 #ifndef __ASSEMBLY__
 
+extern bool init_mem_is_free;
+
 void check_for_initrd(void);
 void do_init_bootmem(void);
 void setup_panic(void);

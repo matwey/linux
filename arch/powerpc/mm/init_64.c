@@ -89,6 +89,7 @@ void free_initmem(void)
 {
 	unsigned long addr;
 
+	init_mem_is_free = true;
 	addr = (unsigned long)__init_begin;
 	for (; addr < (unsigned long)__init_end; addr += PAGE_SIZE) {
 		memset((void *)addr, POISON_FREE_INITMEM, PAGE_SIZE);
