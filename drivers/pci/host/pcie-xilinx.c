@@ -566,6 +566,7 @@ static int xilinx_pcie_init_irq_domain(struct xilinx_pcie_port *port)
 	port->irq_domain = irq_domain_add_linear(pcie_intc_node, 4,
 						 &intx_domain_ops,
 						 port);
+	of_node_put(pcie_intc_node);
 	if (!port->irq_domain) {
 		dev_err(dev, "Failed to get a INTx IRQ domain\n");
 		return PTR_ERR(port->irq_domain);
