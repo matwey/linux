@@ -212,6 +212,53 @@ static inline u16 get_pci_device_id(struct device *dev)
 	return PCI_DEVID(pdev->bus->number, pdev->devfn);
 }
 
+static inline int match_hid_uid(struct device *dev,
+				struct acpihid_map_entry *entry)
+{
+	const char *hid, *uid;
+
+	hid = acpi_device_hid(ACPI_COMPANION(dev));
+	uid = acpi_device_uid(ACPI_COMPANION(dev));
+
+	if (!hid || !(*hid))
+		return -ENODEV;
+
+	if (!uid || !(*uid))
+		return strcmp(hid, entry->hid);
+
+	if (!(*entry->uid))
+		return strcmp(hid, entry->hid);
+
+	return (strcmp(hid, entry->hid) || strcmp(uid, entry->uid));
+}
+
+static inline int get_acpihid_device_id(struct device *dev,
+					struct acpihid_map_entry **entry)
+{
+	struct acpihid_map_entry *p;
+
+	list_for_each_entry(p, &acpihid_map, list) {
+		if (!match_hid_uid(dev, p)) {
+			if (entry)
+				*entry = p;
+			return p->devid;
+		}
+	}
+	return -EINVAL;
+}
+
+static inline int get_device_id(struct device *dev)
+{
+	int devid;
+
+	if (dev_is_pci(dev))
+		devid = get_pci_device_id(dev);
+	else
+		devid = get_acpihid_device_id(dev, NULL);
+
+	return devid;
+}
+
 static struct dma_ops_domain* to_dma_ops_domain(struct protection_domain *domain)
 {
 	BUG_ON(domain->flags != PD_DMA_OPS_MASK);
@@ -268,8 +315,14 @@ static u16 get_alias(struct device *dev)
 	struct pci_dev *pdev = to_pci_dev(dev);
 	u16 devid, ivrs_alias, pci_alias;
 
-	devid = get_pci_device_id(dev);
+	devid = get_device_id(dev);
+
+	/* For ACPI HID devices, we simply return the devid as such */
+	if (!dev_is_pci(dev))
+		return devid;
+
 	ivrs_alias = amd_iommu_alias_table[devid];
+
 	pci_for_each_dma_alias(pdev, __last_alias, &pci_alias);
 
 	if (ivrs_alias == pci_alias)
@@ -328,53 +381,6 @@ static struct iommu_dev_data *find_dev_data(u16 devid)
 		dev_data = alloc_dev_data(devid);
 
 	return dev_data;
-}
-
-static inline int match_hid_uid(struct device *dev,
-				struct acpihid_map_entry *entry)
-{
-	const char *hid, *uid;
-
-	hid = acpi_device_hid(ACPI_COMPANION(dev));
-	uid = acpi_device_uid(ACPI_COMPANION(dev));
-
-	if (!hid || !(*hid))
-		return -ENODEV;
-
-	if (!uid || !(*uid))
-		return strcmp(hid, entry->hid);
-
-	if (!(*entry->uid))
-		return strcmp(hid, entry->hid);
-
-	return (strcmp(hid, entry->hid) || strcmp(uid, entry->uid));
-}
-
-static inline int get_acpihid_device_id(struct device *dev,
-					struct acpihid_map_entry **entry)
-{
-	struct acpihid_map_entry *p;
-
-	list_for_each_entry(p, &acpihid_map, list) {
-		if (!match_hid_uid(dev, p)) {
-			if (entry)
-				*entry = p;
-			return p->devid;
-		}
-	}
-	return -EINVAL;
-}
-
-static inline int get_device_id(struct device *dev)
-{
-	int devid;
-
-	if (dev_is_pci(dev))
-		devid = get_pci_device_id(dev);
-	else
-		devid = get_acpihid_device_id(dev, NULL);
-
-	return devid;
 }
 
 static struct iommu_dev_data *get_dev_data(struct device *dev)
