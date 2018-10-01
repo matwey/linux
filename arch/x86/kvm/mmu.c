@@ -4494,7 +4494,7 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u32 error_code,
 		goto out;
 	}
 
-	if (is_mmio_page_fault(vcpu, cr2))
+	if (is_mmio_page_fault(vcpu, cr2) || is_guest_mode(vcpu))
 		emulation_type = 0;
 
 	er = x86_emulate_instruction(vcpu, cr2, emulation_type, insn, insn_len);
