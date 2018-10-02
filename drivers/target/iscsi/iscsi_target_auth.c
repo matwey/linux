@@ -28,15 +28,6 @@
 #include "iscsi_target_auth.h"
 
 
-static void chap_binaryhex_to_asciihex(char *dst, char *src, int src_len)
-{
-	int i;
-
-	for (i = 0; i < src_len; i++) {
-		sprintf(&dst[i*2], "%02x", (int) src[i] & 0xff);
-	}
-}
-
 static void chap_set_random(char *data, int length)
 {
 	long r;
@@ -75,7 +66,7 @@ static void chap_gen_challenge(
 	memset(challenge_asciihex, 0, CHAP_CHALLENGE_LENGTH * 2 + 1);
 
 	chap_set_random(chap->challenge, CHAP_CHALLENGE_LENGTH);
-	chap_binaryhex_to_asciihex(challenge_asciihex, chap->challenge,
+	bin2hex(challenge_asciihex, chap->challenge,
 				CHAP_CHALLENGE_LENGTH);
 	/*
 	 * Set CHAP_C, and copy the generated challenge into c_str.
@@ -273,7 +264,7 @@ static int chap_server_compute_md5(
 	}
 	crypto_free_hash(tfm);
 
-	chap_binaryhex_to_asciihex(response, server_digest, MD5_SIGNATURE_SIZE);
+	bin2hex(response, server_digest, MD5_SIGNATURE_SIZE);
 	pr_debug("[server] MD5 Server Digest: %s\n", response);
 
 	if (memcmp(server_digest, client_digest, MD5_SIGNATURE_SIZE) != 0) {
@@ -393,7 +384,7 @@ static int chap_server_compute_md5(
 	/*
 	 * Convert response from binary hex to ascii hext.
 	 */
-	chap_binaryhex_to_asciihex(response, digest, MD5_SIGNATURE_SIZE);
+	bin2hex(response, digest, MD5_SIGNATURE_SIZE);
 	*nr_out_len += sprintf(nr_out_ptr + *nr_out_len, "CHAP_R=0x%s",
 			response);
 	*nr_out_len += 1;
