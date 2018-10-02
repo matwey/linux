@@ -561,8 +561,11 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 		 */
 		clone->q = bdev_get_queue(bdev);
 		clone->rq_disk = bdev->bd_disk;
-		clone->cmd_flags = rq->cmd_flags | REQ_NOMERGE;
-		clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
+		if (rq)
+			clone->cmd_flags = rq->cmd_flags;
+		else
+			clone->cmd_flags = 0;
+		clone->cmd_flags |= REQ_NOMERGE | REQ_FAILFAST_TRANSPORT;
 	} else {
 		/*
 		 * blk-mq request-based interface; used by both:
