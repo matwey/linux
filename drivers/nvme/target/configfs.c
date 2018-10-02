@@ -281,6 +281,7 @@ static ssize_t nvmet_ns_device_path_store(struct config_item *item,
 {
 	struct nvmet_ns *ns = to_nvmet_ns(item);
 	struct nvmet_subsys *subsys = ns->subsys;
+	size_t len;
 	int ret;
 
 	mutex_lock(&subsys->lock);
@@ -288,10 +289,14 @@ static ssize_t nvmet_ns_device_path_store(struct config_item *item,
 	if (ns->enabled)
 		goto out_unlock;
 
-	kfree(ns->device_path);
+	ret = -EINVAL;
+	len = strcspn(page, "\n");
+	if (!len)
+		goto out_unlock;
 
+	kfree(ns->device_path);
 	ret = -ENOMEM;
-	ns->device_path = kstrdup(page, GFP_KERNEL);
+	ns->device_path = kstrndup(page, len, GFP_KERNEL);
 	if (!ns->device_path)
 		goto out_unlock;
 
