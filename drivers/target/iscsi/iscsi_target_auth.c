@@ -27,44 +27,6 @@
 #include "iscsi_target_nego.h"
 #include "iscsi_target_auth.h"
 
-static unsigned char chap_asciihex_to_binaryhex(unsigned char val[2])
-{
-	unsigned char result = 0;
-	/*
-	 * MSB
-	 */
-	if ((val[0] >= 'a') && (val[0] <= 'f'))
-		result = ((val[0] - 'a' + 10) & 0xf) << 4;
-	else
-		if ((val[0] >= 'A') && (val[0] <= 'F'))
-			result = ((val[0] - 'A' + 10) & 0xf) << 4;
-		else /* digit */
-			result = ((val[0] - '0') & 0xf) << 4;
-	/*
-	 * LSB
-	 */
-	if ((val[1] >= 'a') && (val[1] <= 'f'))
-		result |= ((val[1] - 'a' + 10) & 0xf);
-	else
-		if ((val[1] >= 'A') && (val[1] <= 'F'))
-			result |= ((val[1] - 'A' + 10) & 0xf);
-		else /* digit */
-			result |= ((val[1] - '0') & 0xf);
-
-	return result;
-}
-
-static int chap_string_to_hex(unsigned char *dst, unsigned char *src, int len)
-{
-	int i, j = 0;
-
-	for (i = 0; i < len; i += 2) {
-		dst[j++] = (unsigned char) chap_asciihex_to_binaryhex(&src[i]);
-	}
-
-	dst[j] = '\0';
-	return j;
-}
 
 static void chap_binaryhex_to_asciihex(char *dst, char *src, int src_len)
 {
@@ -253,9 +215,16 @@ static int chap_server_compute_md5(
 		pr_err("Could not find CHAP_R.\n");
 		goto out;
 	}
+	if (strlen(chap_r) != MD5_SIGNATURE_SIZE * 2) {
+		pr_err("Malformed CHAP_R\n");
+		goto out;
+	}
+	if (_hex2bin(client_digest, chap_r, MD5_SIGNATURE_SIZE) < 0) {
+		pr_err("Malformed CHAP_R\n");
+		goto out;
+	}
 
 	pr_debug("[server] Got CHAP_R=%s\n", chap_r);
-	chap_string_to_hex(client_digest, chap_r, strlen(chap_r));
 
 	tfm = crypto_alloc_hash("md5", 0, CRYPTO_ALG_ASYNC);
 	if (IS_ERR(tfm)) {
@@ -352,13 +321,16 @@ static int chap_server_compute_md5(
 		pr_err("Could not find CHAP_C.\n");
 		goto out;
 	}
-	pr_debug("[server] Got CHAP_C=%s\n", challenge);
-	challenge_len = chap_string_to_hex(challenge_binhex, challenge,
-				strlen(challenge));
+	challenge_len = DIV_ROUND_UP(strlen(challenge), 2);
 	if (!challenge_len) {
 		pr_err("Unable to convert incoming challenge\n");
 		goto out;
 	}
+	if (_hex2bin(challenge_binhex, challenge, challenge_len) < 0) {
+		pr_err("Malformed CHAP_C\n");
+		goto out;
+	}
+	pr_debug("[server] Got CHAP_C=%s\n", challenge);
 	/*
 	 * Generate CHAP_N and CHAP_R for mutual authentication.
 	 */
