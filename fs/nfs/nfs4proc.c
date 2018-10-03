@@ -5619,12 +5619,8 @@ int nfs4_init_session(struct nfs_server *server)
 	if (!test_and_clear_bit(NFS4_SESSION_INITING, &session->session_state))
 		return 0;
 
-	rsize = server->rsize;
-	if (rsize == 0)
-		rsize = NFS_MAX_FILE_IO_SIZE;
-	wsize = server->wsize;
-	if (wsize == 0)
-		wsize = NFS_MAX_FILE_IO_SIZE;
+	rsize = NFS_MAX_FILE_IO_SIZE;
+	wsize = NFS_MAX_FILE_IO_SIZE;
 
 	session->fc_attrs.max_rqst_sz = wsize + nfs41_maxwrite_overhead;
 	session->fc_attrs.max_resp_sz = rsize + nfs41_maxread_overhead;
