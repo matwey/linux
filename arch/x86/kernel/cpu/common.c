@@ -843,6 +843,8 @@ void get_cpu_cap(struct cpuinfo_x86 *c)
 		c->x86_phys_bits = 36;
 #endif
 
+	c->x86_cache_bits = c->x86_phys_bits;
+
 	init_scattered_cpuid_features(c);
 	init_speculation_control(c);
 
