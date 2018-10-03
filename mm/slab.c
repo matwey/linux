@@ -2597,7 +2597,6 @@ static int cache_grow(struct kmem_cache *cachep,
 		pr_emerg("gfp: %u\n", flags & GFP_SLAB_BUG_MASK);
 		BUG();
 	}
-	WARN_ON_ONCE(cachep->ctor && (flags & __GFP_ZERO));
 	local_flags = flags & (GFP_CONSTRAINT_MASK|GFP_RECLAIM_MASK);
 
 	/* Take the node list lock to change the colour_next on this node */
@@ -2862,7 +2861,6 @@ static void *cache_alloc_debugcheck_after(struct kmem_cache *cachep,
 {
 	struct page *page;
 
-	WARN_ON_ONCE(cachep->ctor && (flags & __GFP_ZERO));
 	if (!objp)
 		return objp;
 	if (cachep->flags & SLAB_POISON) {

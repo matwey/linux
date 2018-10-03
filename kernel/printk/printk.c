@@ -27,6 +27,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/interrupt.h>			/* For in_interrupt() */
+#include <linux/preempt.h>			/* For in_nmi() */
 #include <linux/delay.h>
 #include <linux/smp.h>
 #include <linux/security.h>
@@ -1750,6 +1751,8 @@ static size_t cont_print_text(char *text, size_t size)
 	return textlen;
 }
 
+void defer_console(void);
+
 asmlinkage int vprintk_emit(int facility, int level,
 			    const char *dict, size_t dictlen,
 			    const char *fmt, va_list args)
@@ -1757,6 +1760,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 	/* cpu currently holding logbuf_lock in this function */
 	static unsigned int logbuf_cpu = UINT_MAX;
 	static bool recursion_bug;
+	static bool messages_dropped;
 	static char textbuf[LOG_LINE_MAX];
 	char *text = textbuf;
 	size_t text_len = 0;
@@ -1765,14 +1769,15 @@ asmlinkage int vprintk_emit(int facility, int level,
 	int this_cpu;
 	int printed_len = 0;
 	bool in_sched = false;
+	bool in_nmi = in_nmi();
 
 	if (level == LOGLEVEL_SCHED) {
 		level = LOGLEVEL_DEFAULT;
 		in_sched = true;
 	}
 
-	boot_delay_msec(level);
-	printk_delay();
+	if (!in_nmi) boot_delay_msec(level);
+	if (!in_nmi) printk_delay();
 
 	local_irq_save(flags);
 	this_cpu = smp_processor_id();
@@ -1788,7 +1793,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		 * recursion and return - but flag the recursion so that
 		 * it can be printed at the next appropriate moment:
 		 */
-		if (!oops_in_progress && !lockdep_recursing(current)) {
+		if (!oops_in_progress && !lockdep_recursing(current) && !in_nmi) {
 			recursion_bug = true;
 			local_irq_restore(flags);
 			return 0;
@@ -1798,7 +1803,15 @@ asmlinkage int vprintk_emit(int facility, int level,
 
 	lockdep_off();
 	/* This stops the holder of console_sem just where we want him */
-	raw_spin_lock(&logbuf_lock);
+	if (in_nmi) {
+		if (!raw_spin_trylock(&logbuf_lock)) {
+			messages_dropped = true;
+			lockdep_on();
+			local_irq_restore(flags);
+			return 0;
+		}
+	} else
+		raw_spin_lock(&logbuf_lock);
 	logbuf_cpu = this_cpu;
 
 	if (unlikely(recursion_bug)) {
@@ -1810,6 +1823,16 @@ asmlinkage int vprintk_emit(int facility, int level,
 		printed_len += log_store(0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
 					 NULL, 0, recursion_msg,
 					 strlen(recursion_msg));
+	}
+
+	if (unlikely(messages_dropped)) {
+		static const char drop_msg[] =
+			"Warning: some messages from NMI context have been dropped!";
+
+		messages_dropped = false;
+		/* emit KERN_WARN message */
+		printed_len += log_store(0, 4, LOG_PREFIX|LOG_NEWLINE, 0,
+					 NULL, 0, drop_msg, strlen(drop_msg));
 	}
 
 	/*
@@ -1908,7 +1931,9 @@ asmlinkage int vprintk_emit(int facility, int level,
 	local_irq_restore(flags);
 
 	/* If called from the scheduler, we can not call up(). */
-	if (!in_sched) {
+	if (in_sched || in_nmi) {
+		defer_console();
+	} else {
 		lockdep_off();
 		/*
 		 * Attempt to print the messages to console asynchronously so
@@ -3090,6 +3115,14 @@ void wake_up_klogd(void)
 	preempt_enable();
 }
 
+void defer_console(void)
+{
+	preempt_disable();
+	__this_cpu_or(printk_pending, PRINTK_PENDING_OUTPUT);
+	irq_work_queue(this_cpu_ptr(&wake_up_klogd_work));
+	preempt_enable();
+}
+
 int printk_deferred(const char *fmt, ...)
 {
 	va_list args;
@@ -3099,9 +3132,6 @@ int printk_deferred(const char *fmt, ...)
 	va_start(args, fmt);
 	r = vprintk_emit(0, LOGLEVEL_SCHED, NULL, 0, fmt, args);
 	va_end(args);
-
-	__this_cpu_or(printk_pending, PRINTK_PENDING_OUTPUT);
-	irq_work_queue(this_cpu_ptr(&wake_up_klogd_work));
 	preempt_enable();
 
 	return r;
