@@ -56,14 +56,6 @@ struct thread_info {
 	int			cpu;		/* cpu */
 };
 
-#define INIT_THREAD_INFO(tsk)						\
-{									\
-	.task		= &tsk,						\
-	.flags		= 0,						\
-	.preempt_count	= INIT_PREEMPT_COUNT,				\
-	.addr_limit	= KERNEL_DS,					\
-}
-
 #define init_thread_info	(init_thread_union.thread_info)
 #define init_stack		(init_thread_union.stack)
 
@@ -146,6 +138,14 @@ static inline struct thread_info *get_thread_info(unsigned long thread_stack)
 #define _TIF_SYSCALL_WORK	(_TIF_SYSCALL_TRACE | _TIF_SYSCALL_AUDIT | \
 				 _TIF_SYSCALL_TRACEPOINT | _TIF_SECCOMP | \
 				 _TIF_NOHZ)
+
+#define INIT_THREAD_INFO(tsk)						\
+{									\
+	.task		= &tsk,						\
+	.flags		= _TIF_FOREIGN_FPSTATE,				\
+	.preempt_count	= INIT_PREEMPT_COUNT,				\
+	.addr_limit	= KERNEL_DS,					\
+}
 
 #endif /* __KERNEL__ */
 #endif /* __ASM_THREAD_INFO_H */
