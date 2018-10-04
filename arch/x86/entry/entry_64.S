@@ -1353,7 +1353,7 @@ ENTRY(nmi)
 	SWAPGS_UNSAFE_STACK
 	cld
 
-	SWITCH_KERNEL_CR3
+	SWITCH_KERNEL_CR3_NO_STACK
 
 	movq	%rsp, %rdx
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
