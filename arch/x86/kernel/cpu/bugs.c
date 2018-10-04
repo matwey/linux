@@ -686,6 +686,9 @@ void x86_spec_ctrl_setup_ap(void)
 		x86_amd_ssb_disable();
 }
 
+#undef pr_fmt
+#define pr_fmt(fmt)	"L1TF: " fmt
+
 /*
  * These CPUs all support 44bits physical address space internally in the
  * cache but CPUID can report a smaller number of physical address bits.
@@ -702,8 +705,6 @@ void x86_spec_ctrl_setup_ap(void)
  */
 static void override_cache_bits(struct cpuinfo_x86 *c)
 {
-	c->x86_cache_bits = c->x86_phys_bits;
-
 	if (c->x86 != 6)
 		return;
 
@@ -727,8 +728,6 @@ static void override_cache_bits(struct cpuinfo_x86 *c)
 	}
 }
 
-#undef pr_fmt
-#define pr_fmt(fmt)	"L1TF: " fmt
 static void __init l1tf_select_mitigation(void)
 {
 	u64 half_pa;
