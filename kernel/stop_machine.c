@@ -88,6 +88,7 @@ static void cpu_stop_queue_work(unsigned int cpu, struct cpu_stop_work *work)
 	unsigned long flags;
 	WAKE_Q(wakeq);
 
+	preempt_disable();
 	spin_lock_irqsave(&stopper->lock, flags);
 	if (stopper->enabled)
 		__cpu_stop_queue_work(stopper, work, &wakeq);
@@ -96,6 +97,7 @@ static void cpu_stop_queue_work(unsigned int cpu, struct cpu_stop_work *work)
 	spin_unlock_irqrestore(&stopper->lock, flags);
 
 	wake_up_q(&wakeq);
+	preempt_enable();
 }
 
 /**
