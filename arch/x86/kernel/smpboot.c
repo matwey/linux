@@ -1026,6 +1026,15 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 
 	cpu_set_booted(cpu);
 
+	/*
+	 * bp: Run the function below again so that cpu_smt_available gets set for
+	 * cpu_smt_check_topology()'s check to succeed. The whole CPU hotplug
+	 * order in this kernel is significantly different from upstream so we
+	 * have to do monkey business in order to fit the upstream scheme without
+	 * changing too much.
+	*/
+	cpu_smt_allowed(cpu);
+
 	return 0;
 }
 
