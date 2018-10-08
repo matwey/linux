@@ -844,6 +844,7 @@ static inline void spin_lock_prefetch(const void *x)
 #define IA32_PAGE_OFFSET	PAGE_OFFSET
 #define TASK_SIZE		PAGE_OFFSET
 #define TASK_SIZE_MAX		TASK_SIZE
+#define DEFAULT_MAP_WINDOW	TASK_SIZE
 #define STACK_TOP		TASK_SIZE
 #define STACK_TOP_MAX		STACK_TOP
 
@@ -876,6 +877,8 @@ static inline void spin_lock_prefetch(const void *x)
  * With page table isolation enabled, we map the LDT in ... [stay tuned]
  */
 #define TASK_SIZE_MAX	((1UL << 47) - PAGE_SIZE)
+
+#define DEFAULT_MAP_WINDOW	TASK_SIZE_MAX
 
 /* This decides where the kernel will search for a free chunk of vm
  * space during mmap's.
@@ -968,6 +971,7 @@ bool xen_set_default_idle(void);
 
 void stop_this_cpu(void *dummy);
 void df_debug(struct pt_regs *regs, long error_code);
+void microcode_check(void);
 
 enum l1tf_mitigations {
 	L1TF_MITIGATION_OFF,
