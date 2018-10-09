@@ -607,6 +607,11 @@ static bool too_many_pipe_buffers_hard(struct user_struct *user)
 	       atomic_long_read(&user->pipe_bufs) >= pipe_user_pages_hard;
 }
 
+static bool is_unprivileged_user(void)
+{
+	return !capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN);
+}
+
 struct pipe_inode_info *alloc_pipe_info(void)
 {
 	struct pipe_inode_info *pipe;
@@ -619,8 +624,8 @@ struct pipe_inode_info *alloc_pipe_info(void)
 		if (pipe_bufs * PAGE_SIZE > pipe_max_size && !capable(CAP_SYS_RESOURCE))
 			pipe_bufs = pipe_max_size >> PAGE_SHIFT;
 
-		if (!too_many_pipe_buffers_hard(user)) {
-			if (too_many_pipe_buffers_soft(user))
+		if (!too_many_pipe_buffers_hard(user) || !is_unprivileged_user()) {
+			if (too_many_pipe_buffers_soft(user) && is_unprivileged_user())
 				pipe_bufs = 1;
 			pipe->bufs = kzalloc(sizeof(struct pipe_buffer) * pipe_bufs, GFP_KERNEL);
 		}
@@ -1126,7 +1131,7 @@ long pipe_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
 			goto out;
 		} else if ((too_many_pipe_buffers_hard(pipe->user) ||
 			    too_many_pipe_buffers_soft(pipe->user)) &&
-		           !capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN)) {
+		            is_unprivileged_user()) {
 			ret = -EPERM;
 			goto out;
 		}
