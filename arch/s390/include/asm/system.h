@@ -306,7 +306,7 @@ extern void smp_ctl_clear_bit(int cr, int bit);
 
 #endif /* CONFIG_SMP */
 
-#define MAX_FACILITY_BIT (256*8)	/* stfle_fac_list has 256 bytes */
+#define MAX_FACILITY_BIT (sizeof(((struct _lowcore *)0)->stfle_fac_list) * 8)
 
 static inline void __set_facility(unsigned long nr, void *facilities)
 {
