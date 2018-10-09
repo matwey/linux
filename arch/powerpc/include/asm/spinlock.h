@@ -28,6 +28,7 @@
 #include <asm/asm-compat.h>
 #include <asm/synch.h>
 #include <asm/ppc-opcode.h>
+#include <asm/atomic.h> /* PPC specific smp_mb__before_spinlock */
 
 #ifdef CONFIG_PPC64
 /* use 0x800000yy when locked, where yy == CPU number */
