@@ -77,7 +77,7 @@ void __flush_tlb_power9(unsigned int action)
 
 
 /* flush SLBs and reload */
-static void flush_and_reload_slb(void)
+void flush_and_reload_slb(void)
 {
 	/* Invalidate all SLBs */
 	slb_flush_all_realmode();
