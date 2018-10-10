@@ -75,7 +75,7 @@ static inline void slb_shadow_update(unsigned long ea, int ssize,
 
 static inline void slb_shadow_clear(unsigned long entry)
 {
-	ACCESS_ONCE(get_slb_shadow()->save_area[entry].esid) = 0;
+	ACCESS_ONCE(get_slb_shadow()->save_area[entry].esid) = entry;
 }
 
 static inline void create_shadowed_slbe(unsigned long ea, int ssize,
