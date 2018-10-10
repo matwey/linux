@@ -68,11 +68,12 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD)
 
 	. = 0x200
-_machine_check_pSeries:
-	HMT_MEDIUM_PPR_DISCARD
-	DO_KVM	0x200
-	SET_SCRATCH0(r13)
-	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
+machine_check_pSeries_1:
+	/* This is moved out of line as it can be patched by FW, but
+	 * some code path might still want to branch into the original
+	 * vector
+	 */
+	b	machine_check_pSeries
 
 	. = 0x300
 	.globl data_access_pSeries
@@ -250,6 +251,15 @@ vsx_unavailable_pSeries_1:
 
 /*** Out of line interrupts support ***/
 
+	/* moved from 0x200 */
+machine_check_pSeries:
+	.globl machine_check_fwnmi
+machine_check_fwnmi:
+	HMT_MEDIUM_PPR_DISCARD
+	DO_KVM	0x200
+	SET_SCRATCH0(r13)		/* save r13 */
+	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
+
 #ifndef CONFIG_POWER4_ONLY
 	/* moved from 0x300 */
 data_access_check_stab:
@@ -331,13 +341,6 @@ system_reset_fwnmi:
 	HMT_MEDIUM_PPR_DISCARD
 	SET_SCRATCH0(r13)		/* save r13 */
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD)
-
-	.globl machine_check_fwnmi
-      .align 7
-machine_check_fwnmi:
-	HMT_MEDIUM_PPR_DISCARD
-	SET_SCRATCH0(r13)		/* save r13 */
-	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
 
 #endif /* CONFIG_PPC_PSERIES */
 
