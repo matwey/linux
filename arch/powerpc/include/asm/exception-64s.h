@@ -50,6 +50,11 @@
 #define EX_PPR		88	/* SMT thread status register (priority) */
 #define EX_CTR		96
 
+/*
+ * maximum recursive depth of MCE exceptions
+ */
+#define MAX_MCE_DEPTH	4
+
 #define STF_ENTRY_BARRIER_SLOT						\
 	STF_ENTRY_BARRIER_FIXUP_SECTION;				\
 	nop;								\

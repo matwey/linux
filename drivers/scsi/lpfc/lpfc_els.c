@@ -7890,6 +7890,9 @@ lpfc_els_unsol_buffer(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	elsiocb->context1 = lpfc_nlp_get(ndlp);
 	elsiocb->vport = vport;
 
+	if (!elsiocb->context1)
+		goto dropit;
+
 	if ((cmd & ELS_CMD_MASK) == ELS_CMD_RSCN) {
 		cmd &= ELS_CMD_MASK;
 	}
