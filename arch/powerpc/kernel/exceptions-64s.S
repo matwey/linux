@@ -80,34 +80,13 @@ data_access_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x300
 	SET_SCRATCH0(r13)
-#ifndef CONFIG_BIGMEM
+#ifndef CONFIG_POWER4_ONLY
 BEGIN_FTR_SECTION
-	GET_PACA(r13)
-	std	r9,PACA_EXSLB+EX_R9(r13)
-	HMT_MEDIUM_PPR_SAVE(PACA_EXGEN, r9)
-	std	r10,PACA_EXSLB+EX_R10(r13)
-	mfspr	r10,SPRN_DAR
-	mfspr	r9,SPRN_DSISR
-	srdi	r10,r10,60
-	rlwimi	r10,r9,16,0x20
-	mfcr	r9
-	cmpwi	r10,0x2c
-	beq	do_stab_bolted_pSeries
-	ld	r10,PACA_EXSLB+EX_R10(r13)
-	std	r11,PACA_EXGEN+EX_R11(r13)
-	ld	r11,PACA_EXSLB+EX_R9(r13)
-	std	r12,PACA_EXGEN+EX_R12(r13)
-	GET_SCRATCH0(r12)
-	std	r10,PACA_EXGEN+EX_R10(r13)
-	std	r11,PACA_EXGEN+EX_R9(r13)
-	std	r12,PACA_EXGEN+EX_R13(r13)
-	EXCEPTION_PROLOG_PSERIES_1(data_access_common, EXC_STD)
-FTR_SECTION_ELSE
+	b	data_access_check_stab
+data_access_not_stab:
+END_MMU_FTR_SECTION_IFCLR(MMU_FTR_SLB)
 #endif
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, data_access_common, EXC_STD)
-#ifndef CONFIG_BIGMEM
-ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_SLB)
-#endif
 
 	. = 0x380
 	.globl data_access_slb_pSeries
@@ -131,7 +110,6 @@ data_access_slb_pSeries:
 	std	r12,PACA_EXSLB+EX_R12(r13)
 	GET_SCRATCH0(r10)
 	std	r10,PACA_EXSLB+EX_R13(r13)
-	INTERRUPT_TO_KERNEL
 	mfspr	r12,SPRN_SRR1		/* and SRR1 */
 #ifndef CONFIG_RELOCATABLE
 	b	.slb_miss_realmode
@@ -172,6 +150,7 @@ instruction_access_slb_pSeries:
 	std	r12,PACA_EXSLB+EX_R12(r13)
 	GET_SCRATCH0(r10)
 	std	r10,PACA_EXSLB+EX_R13(r13)
+	INTERRUPT_TO_KERNEL
 	INTERRUPT_TO_KERNEL
 	mfspr	r12,SPRN_SRR1		/* and SRR1 */
 #ifndef CONFIG_RELOCATABLE
@@ -289,6 +268,35 @@ vsx_unavailable_pSeries_1:
 
 /*** Out of line interrupts support ***/
 
+#ifndef CONFIG_POWER4_ONLY
+	/* moved from 0x300 */
+data_access_check_stab:
+	GET_PACA(r13)
+	std	r9,PACA_EXSLB+EX_R9(r13)
+	std	r10,PACA_EXSLB+EX_R10(r13)
+	mfspr	r10,SPRN_DAR
+	mfspr	r9,SPRN_DSISR
+	srdi	r10,r10,60
+	rlwimi	r10,r9,16,0x20
+#ifdef CONFIG_KVM_BOOK3S_64_HANDLER
+	lbz	r9,PACA_KVM_SVCPU+SVCPU_IN_GUEST(r13)
+	rlwimi	r10,r9,8,0x300
+#endif
+	mfcr	r9
+	cmpwi	r10,0x2c
+	beq	do_stab_bolted_pSeries
+	mtcrf	0x80,r9
+	ld	r9,PACA_EXSLB+EX_R9(r13)
+	ld	r10,PACA_EXSLB+EX_R10(r13)
+	b	data_access_not_stab
+do_stab_bolted_pSeries:
+	std	r11,PACA_EXSLB+EX_R11(r13)
+	std	r12,PACA_EXSLB+EX_R12(r13)
+	GET_SCRATCH0(r10)
+	std	r10,PACA_EXSLB+EX_R13(r13)
+	EXCEPTION_PROLOG_PSERIES_1(.do_stab_bolted, EXC_STD)
+#endif /* CONFIG_POWER4_ONLY */
+
 	/* moved from 0xe00 */
 	STD_EXCEPTION_HV(., 0xe00, h_data_storage)
 	STD_EXCEPTION_HV(., 0xe20, h_instr_storage)
@@ -331,16 +339,6 @@ masked_Hinterrupt:
 	HRFI_TO_KERNEL
 	b	.
 
-#ifndef CONFIG_BIGMEM
-	.align	7
-do_stab_bolted_pSeries:
-	std	r11,PACA_EXSLB+EX_R11(r13)
-	std	r12,PACA_EXSLB+EX_R12(r13)
-	GET_SCRATCH0(r10)
-	std	r10,PACA_EXSLB+EX_R13(r13)
-	EXCEPTION_PROLOG_PSERIES_1(.do_stab_bolted, EXC_STD)
-
-#endif
 #ifdef CONFIG_PPC_PSERIES
 /*
  * Vectors for the FWNMI option.  Share common code.
