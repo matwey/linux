@@ -94,23 +94,15 @@ data_access_slb_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x380
 	SET_SCRATCH0(r13)
-	GET_PACA(r13)
+	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST, 0x380)
 	std	r3,PACA_EXSLB+EX_R3(r13)
-	HMT_MEDIUM_PPR_SAVE(PACA_EXSLB, r3)
 	mfspr	r3,SPRN_DAR
-	std	r9,PACA_EXSLB+EX_R9(r13)	/* save r9 - r12 */
-	mfcr	r9
 #ifdef __DISABLED__
 	/* Keep that around for when we re-implement dynamic VSIDs */
 	cmpdi	r3,0
 	bge	slb_miss_user_pseries
 #endif /* __DISABLED__ */
-	std	r10,PACA_EXSLB+EX_R10(r13)
-	std	r11,PACA_EXSLB+EX_R11(r13)
-	std	r12,PACA_EXSLB+EX_R12(r13)
-	GET_SCRATCH0(r10)
-	std	r10,PACA_EXSLB+EX_R13(r13)
-	mfspr	r12,SPRN_SRR1		/* and SRR1 */
+	mfspr	r12,SPRN_SRR1
 #ifndef CONFIG_RELOCATABLE
 	b	.slb_miss_realmode
 #else
@@ -134,25 +126,15 @@ instruction_access_slb_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x480
 	SET_SCRATCH0(r13)
-	GET_PACA(r13)
+	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST, 0x480)
 	std	r3,PACA_EXSLB+EX_R3(r13)
-	HMT_MEDIUM_PPR_SAVE(PACA_EXSLB, r3)
 	mfspr	r3,SPRN_SRR0		/* SRR0 is faulting address */
-	std	r9,PACA_EXSLB+EX_R9(r13)	/* save r9 - r12 */
-	mfcr	r9
 #ifdef __DISABLED__
 	/* Keep that around for when we re-implement dynamic VSIDs */
 	cmpdi	r3,0
 	bge	slb_miss_user_pseries
 #endif /* __DISABLED__ */
-	std	r10,PACA_EXSLB+EX_R10(r13)
-	std	r11,PACA_EXSLB+EX_R11(r13)
-	std	r12,PACA_EXSLB+EX_R12(r13)
-	GET_SCRATCH0(r10)
-	std	r10,PACA_EXSLB+EX_R13(r13)
-	INTERRUPT_TO_KERNEL
-	INTERRUPT_TO_KERNEL
-	mfspr	r12,SPRN_SRR1		/* and SRR1 */
+	mfspr	r12,SPRN_SRR1
 #ifndef CONFIG_RELOCATABLE
 	b	.slb_miss_realmode
 #else
