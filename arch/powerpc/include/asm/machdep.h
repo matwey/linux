@@ -164,9 +164,6 @@ struct machdep_calls {
 	int		(*system_reset_exception)(struct pt_regs *regs);
 	int 		(*machine_check_exception)(struct pt_regs *regs);
 
-	/* Early exception handlers called in realmode */
-	long		(*machine_check_early)(struct pt_regs *regs);
-
 	/* Motherboard/chipset features. This is a kind of general purpose
 	 * hook used to control some machine specific features (like reset
 	 * lines, chip power control, etc...).
@@ -263,6 +260,11 @@ struct machdep_calls {
 #ifdef CONFIG_ARCH_CPU_PROBE_RELEASE
 	ssize_t (*cpu_probe)(const char *, size_t);
 	ssize_t (*cpu_release)(const char *, size_t);
+#endif
+
+#ifndef __GENKSYMS__
+	/* Early exception handlers called in realmode */
+	long		(*machine_check_early)(struct pt_regs *regs);
 #endif
 };
 
