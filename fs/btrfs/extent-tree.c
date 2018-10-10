@@ -2669,6 +2669,7 @@ int btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 	int run_all = count == (unsigned long)-1;
 	int run_most = 0;
 	int loops;
+	bool can_flush_pending_bgs = trans->can_flush_pending_bgs;
 
 	/* We'll clean this up in btrfs_cleanup_transaction */
 	if (trans->aborted)
@@ -2728,6 +2729,7 @@ again:
 	delayed_refs->run_delayed_start = find_middle(&delayed_refs->root);
 #endif
 
+	trans->can_flush_pending_bgs = false;
 	while (1) {
 		if (!(run_all || run_most) &&
 		    !btrfs_should_throttle_delayed_refs(trans, root))
@@ -2832,6 +2834,7 @@ out:
 
 	spin_unlock(&delayed_refs->lock);
 	assert_qgroups_uptodate(trans);
+	trans->can_flush_pending_bgs = can_flush_pending_bgs;
 	return 0;
 }
 
@@ -4003,7 +4006,8 @@ out:
 	 * the block groups that were made dirty during the lifetime of the
 	 * transaction.
 	 */
-	if (trans->chunk_bytes_reserved >= (2 * 1024 * 1024ull)) {
+	if (trans->can_flush_pending_bgs &&
+	    trans->chunk_bytes_reserved >= (2 * 1024 * 1024ull)) {
 		btrfs_create_pending_block_groups(trans, trans->root);
 		btrfs_trans_release_chunk_metadata(trans);
 	}
@@ -8642,7 +8646,9 @@ void btrfs_create_pending_block_groups(struct btrfs_trans_handle *trans,
 	struct btrfs_block_group_item item;
 	struct btrfs_key key;
 	int ret = 0;
+	bool can_flush_pending_bgs = trans->can_flush_pending_bgs;
 
+	trans->can_flush_pending_bgs = false;
 	list_for_each_entry_safe(block_group, tmp, &trans->new_bgs, bg_list) {
 		list_del_init(&block_group->bg_list);
 		if (ret)
@@ -8662,6 +8668,7 @@ void btrfs_create_pending_block_groups(struct btrfs_trans_handle *trans,
 		if (ret)
 			btrfs_abort_transaction(trans, extent_root, ret);
 	}
+	trans->can_flush_pending_bgs = can_flush_pending_bgs;
 }
 
 int btrfs_make_block_group(struct btrfs_trans_handle *trans,
