@@ -40,7 +40,6 @@ __start_interrupts:
 	.globl system_reset_pSeries;
 system_reset_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
-	DO_KVM	0x100;
 	SET_SCRATCH0(r13)
 #ifdef CONFIG_PPC_P7_NAP
 BEGIN_FTR_SECTION
@@ -65,7 +64,8 @@ BEGIN_FTR_SECTION
 	beq	.
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
 #endif /* CONFIG_PPC_P7_NAP */
-	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD)
+	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD,
+				 NOTEST, 0x100)
 
 	. = 0x200
 machine_check_pSeries_1:
@@ -79,7 +79,6 @@ machine_check_pSeries_1:
 	.globl data_access_pSeries
 data_access_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
-	DO_KVM	0x300
 	SET_SCRATCH0(r13)
 #ifndef CONFIG_POWER4_ONLY
 BEGIN_FTR_SECTION
@@ -87,13 +86,13 @@ BEGIN_FTR_SECTION
 data_access_not_stab:
 END_MMU_FTR_SECTION_IFCLR(MMU_FTR_SLB)
 #endif
-	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, data_access_common, EXC_STD)
+	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, data_access_common, EXC_STD,
+				 KVMTEST, 0x300)
 
 	. = 0x380
 	.globl data_access_slb_pSeries
 data_access_slb_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
-	DO_KVM	0x380
 	SET_SCRATCH0(r13)
 	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST, 0x380)
 	std	r3,PACA_EXSLB+EX_R3(r13)
@@ -125,7 +124,6 @@ data_access_slb_pSeries:
 	.globl instruction_access_slb_pSeries
 instruction_access_slb_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
-	DO_KVM	0x480
 	SET_SCRATCH0(r13)
 	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST, 0x480)
 	std	r3,PACA_EXSLB+EX_R3(r13)
@@ -155,26 +153,46 @@ instruction_access_slb_pSeries:
 hardware_interrupt_pSeries:
 hardware_interrupt_hv:
 	BEGIN_FTR_SECTION
-		_MASKABLE_EXCEPTION_PSERIES(0x500, hardware_interrupt, EXC_STD)
+		_MASKABLE_EXCEPTION_PSERIES(0x500, hardware_interrupt,
+					    EXC_STD, SOFTEN_TEST)
+		KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x500)
 	FTR_SECTION_ELSE
-		_MASKABLE_EXCEPTION_PSERIES(0x502, hardware_interrupt, EXC_HV)
+		_MASKABLE_EXCEPTION_PSERIES(0x502, hardware_interrupt,
+					    EXC_HV, SOFTEN_TEST_HV)
+		KVM_HANDLER(PACA_EXGEN, EXC_HV, 0x502)
 	ALT_FTR_SECTION_END_IFCLR(CPU_FTR_HVMODE)
 
 	STD_EXCEPTION_PSERIES(0x600, 0x600, alignment)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x600)
+
 	STD_EXCEPTION_PSERIES(0x700, 0x700, program_check)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x700)
+
 	STD_EXCEPTION_PSERIES(0x800, 0x800, fp_unavailable)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x800)
 
 	MASKABLE_EXCEPTION_PSERIES(0x900, 0x900, decrementer)
-	MASKABLE_EXCEPTION_HV(0x980, 0x980, decrementer)
+	MASKABLE_EXCEPTION_HV(0x980, 0x982, decrementer)
 
 	STD_EXCEPTION_PSERIES(0xa00, 0xa00, trap_0a)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xa00)
+
 	STD_EXCEPTION_PSERIES(0xb00, 0xb00, trap_0b)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xb00)
 
 	. = 0xc00
 	.globl	system_call_pSeries
 system_call_pSeries:
 	HMT_MEDIUM
-	DO_KVM	0xc00
+#ifdef CONFIG_KVM_BOOK3S_64_HANDLER
+	SET_SCRATCH0(r13)
+	GET_PACA(r13)
+	std	r9,PACA_EXGEN+EX_R9(r13)
+	std	r10,PACA_EXGEN+EX_R10(r13)
+	mfcr	r9
+	KVMTEST(0xc00)
+	GET_SCRATCH0(r13)
+#endif
 BEGIN_FTR_SECTION
 	cmpdi	r0,0x1ebe
 	beq-	1f
@@ -192,6 +210,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	RFI_TO_KERNEL ;						\
 	b	.	/* prevent speculative execution */
 
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xc00)
+
 /* Fast LE/BE switch system call */
 1:	mfspr	r12,SPRN_SRR1
 	xori	r12,r12,MSR_LE
@@ -200,6 +220,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	b	.
 
 	STD_EXCEPTION_PSERIES(0xd00, 0xd00, single_step)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xd00)
 
 	/* At 0xe??? we have a bunch of hypervisor exceptions, we branch
 	 * out of line to handle them
@@ -237,14 +258,23 @@ vsx_unavailable_pSeries_1:
 
 #ifdef CONFIG_CBE_RAS
 	STD_EXCEPTION_HV(0x1200, 0x1202, cbe_system_error)
+	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_HV, 0x1202)
 #endif /* CONFIG_CBE_RAS */
+
 	STD_EXCEPTION_PSERIES(0x1300, 0x1300, instruction_breakpoint)
+	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_STD, 0x1300)
+
 #ifdef CONFIG_CBE_RAS
 	STD_EXCEPTION_HV(0x1600, 0x1602, cbe_maintenance)
+	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_HV, 0x1602)
 #endif /* CONFIG_CBE_RAS */
+
 	STD_EXCEPTION_PSERIES(0x1700, 0x1700, altivec_assist)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x1700)
+
 #ifdef CONFIG_CBE_RAS
 	STD_EXCEPTION_HV(0x1800, 0x1802, cbe_thermal)
+	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_HV, 0x1802)
 #endif /* CONFIG_CBE_RAS */
 
 	. = 0x3000
@@ -256,9 +286,10 @@ machine_check_pSeries:
 	.globl machine_check_fwnmi
 machine_check_fwnmi:
 	HMT_MEDIUM_PPR_DISCARD
-	DO_KVM	0x200
 	SET_SCRATCH0(r13)		/* save r13 */
-	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
+	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common,
+				 EXC_STD, KVMTEST, 0x200)
+	KVM_HANDLER_SKIP(PACA_EXMC, EXC_STD, 0x200)
 
 #ifndef CONFIG_POWER4_ONLY
 	/* moved from 0x300 */
@@ -289,17 +320,33 @@ do_stab_bolted_pSeries:
 	EXCEPTION_PROLOG_PSERIES_1(.do_stab_bolted, EXC_STD)
 #endif /* CONFIG_POWER4_ONLY */
 
+	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_STD, 0x300)
+	KVM_HANDLER_SKIP(PACA_EXSLB, EXC_STD, 0x380)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x400)
+	KVM_HANDLER(PACA_EXSLB, EXC_STD, 0x480)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0x900)
+	KVM_HANDLER(PACA_EXGEN, EXC_HV, 0x982)
+
+	.align	7
 	/* moved from 0xe00 */
-	STD_EXCEPTION_HV(., 0xe00, h_data_storage)
-	STD_EXCEPTION_HV(., 0xe20, h_instr_storage)
-	STD_EXCEPTION_HV(., 0xe40, emulation_assist)
-	STD_EXCEPTION_HV(., 0xe60, hmi_exception) /* need to flush cache ? */
+	STD_EXCEPTION_HV(., 0xe02, h_data_storage)
+	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_HV, 0xe02)
+	STD_EXCEPTION_HV(., 0xe22, h_instr_storage)
+	KVM_HANDLER(PACA_EXGEN, EXC_HV, 0xe22)
+	STD_EXCEPTION_HV(., 0xe42, emulation_assist)
+	KVM_HANDLER(PACA_EXGEN, EXC_HV, 0xe42)
+	STD_EXCEPTION_HV(., 0xe62, hmi_exception) /* need to flush cache ? */
+	KVM_HANDLER(PACA_EXGEN, EXC_HV, 0xe62)
 
 	/* moved from 0xf00 */
 	STD_EXCEPTION_PSERIES(., 0xf00, performance_monitor)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xf00)
 	STD_EXCEPTION_PSERIES(., 0xf20, altivec_unavailable)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xf20)
 	STD_EXCEPTION_PSERIES(., 0xf40, vsx_unavailable)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xf40)
 	STD_EXCEPTION_PSERIES(., 0xf60, facility_unavailable)
+	KVM_HANDLER(PACA_EXGEN, EXC_STD, 0xf60)
 
 /*
  * An interrupt came in while soft-disabled; clear EE in SRR1,
@@ -340,7 +387,8 @@ masked_Hinterrupt:
 system_reset_fwnmi:
 	HMT_MEDIUM_PPR_DISCARD
 	SET_SCRATCH0(r13)		/* save r13 */
-	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD)
+	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD,
+				 NOTEST, 0x100)
 
 #endif /* CONFIG_PPC_PSERIES */
 
