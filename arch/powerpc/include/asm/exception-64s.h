@@ -52,6 +52,11 @@
 
 #define EX_SIZE		12	/* size in u64 units */
 
+/*
+ * maximum recursive depth of MCE exceptions
+ */
+#define MAX_MCE_DEPTH	4
+
 #define STF_ENTRY_BARRIER_SLOT						\
 	STF_ENTRY_BARRIER_FIXUP_SECTION;				\
 	nop;								\

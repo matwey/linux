@@ -377,7 +377,13 @@ extern void hpte_init_beat_v3(void);
 
 #ifndef CONFIG_BIGMEM
 extern void stabs_alloc(void);
+
 #endif
+struct slb_entry {
+	u64	esid;
+	u64	vsid;
+};
+
 extern void slb_initialize(void);
 extern void slb_flush_and_rebolt(void);
 #ifndef CONFIG_BIGMEM
@@ -386,6 +392,8 @@ extern void stab_initialize(unsigned long stab);
 void slb_flush_all_realmode(void);
 void __slb_restore_bolted_realmode(void);
 void slb_restore_bolted_realmode(void);
+void slb_save_contents(struct slb_entry *slb_ptr);
+void slb_dump_contents(struct slb_entry *slb_ptr);
 
 extern void slb_vmalloc_update(void);
 extern void slb_set_size(u16 size);
@@ -495,7 +503,6 @@ extern void slb_set_size(u16 size);
 #define ESID_BITS		(VA_BITS - (SID_SHIFT + CONTEXT_BITS))
 #define ESID_BITS_1T		(VA_BITS - (SID_SHIFT_1T + CONTEXT_BITS))
 #endif
-extern void slb_dump_contents(void);
 
 #ifndef CONFIG_BIGMEM
 #define VSID_MULTIPLIER_256M	ASM_CONST(200730139)	/* 28-bit prime */
