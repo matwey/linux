@@ -95,6 +95,72 @@ static inline void create_shadowed_slbe(unsigned long ea, int ssize,
 		     : "memory" );
 }
 
+/*
+ * Insert bolted entries into SLB (which may not be empty, so don't clear
+ * slb_cache_ptr).
+ */
+void __slb_restore_bolted_realmode(void)
+{
+	struct slb_shadow *p = get_slb_shadow();
+	int index;
+
+	 /* No isync needed because realmode. */
+	for (index = 0; index < SLB_NUM_BOLTED; index++) {
+		asm volatile("slbmte  %0,%1" :
+		     : "r" (be64_to_cpu(p->save_area[index].vsid)),
+		       "r" (be64_to_cpu(p->save_area[index].esid)));
+	}
+}
+
+/*
+ * Insert the bolted entries into an empty SLB.
+ * This is not the same as rebolt because the bolted segments are not
+ * changed, just loaded from the shadow area.
+ */
+void slb_restore_bolted_realmode(void)
+{
+	__slb_restore_bolted_realmode();
+	get_paca()->slb_cache_ptr = 0;
+}
+
+/*
+ * This flushes all SLB entries including 0, so it must be realmode.
+ */
+void slb_flush_all_realmode(void)
+{
+	/*
+	 * This flushes all SLB entries including 0, so it must be realmode.
+	 */
+	asm volatile("slbmte %0,%0; slbia" : : "r" (0));
+}
+
+/* flush SLBs and reload */
+static void flush_and_reload_slb(void)
+{
+	/* Invalidate all SLBs */
+	slb_flush_all_realmode();
+
+#ifdef CONFIG_KVM_BOOK3S_HANDLER
+	/*
+	 * If machine check is hit when in guest or in transition, we will
+	 * only flush the SLBs and continue.
+	 */
+	if (get_paca()->kvm_hstate.in_guest)
+		return;
+#endif
+	if (early_radix_enabled())
+		return;
+
+	/*
+	 * This probably shouldn't happen, but it may be possible it's
+	 * called in early boot before SLB shadows are allocated.
+	 */
+	if (!get_slb_shadow())
+		return;
+
+	slb_restore_bolted_realmode();
+}
+
 static void __slb_flush_and_rebolt(void)
 {
 	/* If you change this make sure you change SLB_NUM_BOLTED

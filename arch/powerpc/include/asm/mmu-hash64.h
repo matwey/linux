@@ -383,7 +383,9 @@ extern void slb_flush_and_rebolt(void);
 #ifndef CONFIG_BIGMEM
 extern void stab_initialize(unsigned long stab);
 #endif
-extern void slb_dump_contents(void);
+void slb_flush_all_realmode(void);
+void __slb_restore_bolted_realmode(void);
+void slb_restore_bolted_realmode(void);
 
 extern void slb_vmalloc_update(void);
 extern void slb_set_size(u16 size);
@@ -493,6 +495,7 @@ extern void slb_set_size(u16 size);
 #define ESID_BITS		(VA_BITS - (SID_SHIFT + CONTEXT_BITS))
 #define ESID_BITS_1T		(VA_BITS - (SID_SHIFT_1T + CONTEXT_BITS))
 #endif
+extern void slb_dump_contents(void);
 
 #ifndef CONFIG_BIGMEM
 #define VSID_MULTIPLIER_256M	ASM_CONST(200730139)	/* 28-bit prime */
