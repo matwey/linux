@@ -577,6 +577,7 @@ END(irq_entries_start)
 	ALLOC_PT_GPREGS_ON_STACK
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
+	CLEAR_REGS_NOSPEC
 
 	testb	$3, CS(%rsp)
 	jz	1f
@@ -689,7 +690,6 @@ retint_kernel:
  */
 GLOBAL(restore_regs_and_iret)
 	RESTORE_EXTRA_REGS
-restore_c_regs_and_iret:
 	RESTORE_C_REGS
 	REMOVE_PT_GPREGS_FROM_STACK 8
 	INTERRUPT_RETURN
@@ -1083,6 +1083,7 @@ ENTRY(xen_failsafe_callback)
 	ALLOC_PT_GPREGS_ON_STACK
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
+	CLEAR_REGS_NOSPEC
 	jmp	error_exit
 END(xen_failsafe_callback)
 
@@ -1130,6 +1131,7 @@ ENTRY(paranoid_entry)
 	cld
 	SAVE_C_REGS 8
 	SAVE_EXTRA_REGS 8
+	CLEAR_REGS_NOSPEC
 	movl	$1, %ebx
 	movl	$MSR_GS_BASE, %ecx
 	rdmsr
@@ -1204,6 +1206,7 @@ ENTRY(error_entry)
 	cld
 	SAVE_C_REGS 8
 	SAVE_EXTRA_REGS 8
+	CLEAR_REGS_NOSPEC
 	/*
 	 * error_entry() always returns with a kernel gsbase and
 	 * CR3.  We must also have a kernel CR3/gsbase before
@@ -1211,7 +1214,6 @@ ENTRY(error_entry)
 	 * the kernel CR3 here.
 	 */
 	SWITCH_KERNEL_CR3
-	xorl	%ebx, %ebx
 	testb	$3, CS+8(%rsp)
 	jz	.Lerror_kernelspace
 
@@ -1392,6 +1394,7 @@ ENTRY(nmi)
 	pushq	%r13		/* pt_regs->r13 */
 	pushq	%r14		/* pt_regs->r14 */
 	pushq	%r15		/* pt_regs->r15 */
+	CLEAR_REGS_NOSPEC
 
 	/*
 	 * At this point we no longer need to worry about stack damage
@@ -1414,7 +1417,7 @@ ENTRY(nmi)
 	 * switch to user CR3: we might be going back to kernel code
 	 * that had a user CR3 set.
 	 */
-	jmp	tramp_restore_c_regs_and_iret
+	jmp	tramp_restore_regs_and_iret
 
 .Lnmi_from_kernel:
 	/*
@@ -1618,6 +1621,7 @@ end_repeat_nmi:
 	cld
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
+	CLEAR_REGS_NOSPEC
 	movl	$1, %ebx
 	movl	$MSR_GS_BASE, %ecx
 	rdmsr
