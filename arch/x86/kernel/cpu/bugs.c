@@ -138,6 +138,7 @@ static const char *spectre_v2_strings[] = {
 	[SPECTRE_V2_RETPOLINE_MINIMAL_AMD]	= "Vulnerable: Minimal AMD ASM retpoline",
 	[SPECTRE_V2_RETPOLINE_GENERIC]		= "Mitigation: Full generic retpoline",
 	[SPECTRE_V2_RETPOLINE_AMD]		= "Mitigation: Full AMD retpoline",
+	[SPECTRE_V2_IBRS]			= "Mitigation: IBRS+IBPB",
 };
 
 #undef pr_fmt
@@ -456,6 +457,17 @@ retpoline_auto:
 		setup_force_cpu_cap(X86_FEATURE_RETPOLINE);
 	}
 
+	if (!is_skylake_era()) {
+		pr_info("Retpolines enabled, force-disabling IBRS due to !SKL-era core\n");
+		ibrs_state = 0;
+	} else if (ibrs_state != 0) {
+		/*
+		 * SKL without force-disabled IBRS, see
+		 * spectre_v2_parse_cmdline().
+		 */
+		mode = SPECTRE_V2_IBRS;
+	}
+
 	spectre_v2_enabled = mode;
 	pr_info("%s\n", spectre_v2_strings[mode]);
 
@@ -470,15 +482,10 @@ retpoline_auto:
 	setup_force_cpu_cap(X86_FEATURE_RSB_CTXSW);
 	pr_info("Spectre v2 / SpectreRSB mitigation: Filling RSB on context switch\n");
 
-	if (!is_skylake_era()) {
-		pr_info("Retpolines enabled, force-disabling IBRS due to !SKL-era core\n");
-		ibrs_state = 0;
-	}
-
 	/* Initialize Indirect Branch Prediction Barrier if supported */
 	if (boot_cpu_has(X86_FEATURE_IBPB) && ibpb_state != 0) {
 		setup_force_cpu_cap(X86_FEATURE_USE_IBPB);
-		pr_info("Spectre v2 mitigation: Enabling Indirect Branch Prediction Barrier\n");
+		pr_info("Mitigation: Enabling Indirect Branch Prediction Barrier\n");
 	}
 
 	/*
@@ -892,9 +899,9 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
 		return sprintf(buf, "Mitigation: __user pointer sanitization\n");
 
 	case X86_BUG_SPECTRE_V2:
-		if (boot_cpu_has(X86_FEATURE_SPEC_CTRL) && x86_ibrs_enabled())
-			return sprintf(buf, "Mitigation: IBRS+IBPB\n");
-		ret = sprintf(buf, "%s%s%s%s%s%s\n", spectre_v2_strings[spectre_v2_enabled],
+		ret = sprintf(buf, "%s%s%s%s%s%s\n",
+			      (x86_ibrs_enabled() ? "Mitigation: IBRS+IBPB"
+						  : spectre_v2_strings[spectre_v2_enabled]),
 			       boot_cpu_has(X86_FEATURE_USE_IBPB) && x86_ibpb_enabled() ? ", IBPB" : "",
 			       boot_cpu_has(X86_FEATURE_USE_IBRS_FW) ? ", IBRS_FW" : "",
 			       (x86_spec_ctrl_base & SPEC_CTRL_STIBP) ? ", STIBP" : "",
