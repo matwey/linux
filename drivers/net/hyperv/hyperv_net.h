@@ -807,7 +807,8 @@ struct netvsc_device {
 	u32 max_chn;
 	u32 num_chn;
 
-	atomic_t sc_offered;
+	atomic_t open_chn;
+	wait_queue_head_t subchan_open;
 
 	struct rndis_device *extension;
 
