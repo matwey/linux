@@ -127,7 +127,7 @@ void hyperv_init(void)
 	hv_cpu_init(smp_processor_id());
 	for_each_online_cpu(cpu) {
 		if (cpu == smp_processor_id()) continue;
-		smp_call_function_single(cpu, _hv_cpu_init, (void *) cpu, true);
+		smp_call_function_single(cpu, _hv_cpu_init, (void *)(long)cpu, true);
 	}
 	preempt_enable(); }
 
