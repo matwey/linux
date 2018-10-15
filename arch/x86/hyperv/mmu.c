@@ -95,7 +95,7 @@ static inline int cpumask_to_vp_set(struct hv_flush_pcpu_ex *flush,
 	return nr_bank;
 }
 
-static void hyperv_flush_tlb_others(const struct cpumask *cpus,
+static void hyperv_flush_tlb_others(struct cpumask *cpus,
 				struct mm_struct *mm, unsigned long start, unsigned long end)
 {
 	int cpu, vcpu, gva_n, max_gvas;
@@ -164,7 +164,7 @@ do_native:
 	native_flush_tlb_others(cpus, mm, start, end);
 }
 
-static void hyperv_flush_tlb_others_ex(const struct cpumask *cpus,
+static void hyperv_flush_tlb_others_ex(struct cpumask *cpus,
 				struct mm_struct *mm, unsigned long start, unsigned long end)
 {
 	int nr_bank = 0, max_gvas, gva_n;
