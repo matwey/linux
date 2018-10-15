@@ -28,6 +28,7 @@
 #include <linux/clockchips.h>
 #include <linux/hyperv.h>
 #include <linux/slab.h>
+#include <linux/cpu.h>
 
 #ifdef CONFIG_HYPERV_TSCPAGE
 
@@ -96,10 +97,15 @@ static int hv_cpu_init(unsigned int cpu)
 	return 0;
 }
 
-static void _hv_cpu_init(void *p)
+static int _hv_cpu_init(struct notifier_block *self, unsigned long action, void *hcpu)
 {
-	hv_cpu_init((unsigned long)p);
+	if (action == CPU_STARTING)
+		hv_cpu_init((unsigned long)hcpu);
+	return NOTIFY_OK;
 }
+static struct notifier_block _hv_cpu_notifier = {
+	.notifier_call	= _hv_cpu_init,
+};
 /*
  * This function is to be invoked early in the boot sequence after the
  * hypervisor has been detected.
@@ -123,13 +129,9 @@ void hyperv_init(void)
 	if (!hv_vp_index)
 		return;
 
-	{ int cpu; preempt_disable();
 	hv_cpu_init(smp_processor_id());
-	for_each_online_cpu(cpu) {
-		if (cpu == smp_processor_id()) continue;
-		smp_call_function_single(cpu, _hv_cpu_init, (void *)(long)cpu, true);
-	}
-	preempt_enable(); }
+
+	register_cpu_notifier(&_hv_cpu_notifier);
 
 	/*
 	 * Setup the hypercall page and enable hypercalls.
