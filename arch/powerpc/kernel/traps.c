@@ -248,6 +248,24 @@ void system_reset_exception(struct pt_regs *regs)
 
 	/* What should we do here? We could issue a shutdown or hard reset. */
 }
+
+/*
+ * This function is called in real mode. Strictly no printk's please.
+ *
+ * regs->nip and regs->msr contains srr0 and ssr1.
+ */
+long machine_check_early(struct pt_regs *regs)
+{
+	long handled = 0;
+
+	/*
+	 * See if platform is capable of handling machine check.
+	 */
+	if (ppc_md.machine_check_early)
+		handled = ppc_md.machine_check_early(regs);
+	return handled;
+}
+
 #endif
 
 /*

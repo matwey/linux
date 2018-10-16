@@ -61,6 +61,23 @@ struct paca_aux_struct {
 	u64 exrfi[EX_SIZE] __aligned(0x80);
 	void *rfi_flush_fallback_area;
 	u64 l1d_flush_size;
+
+	/* Exclusive emergency stack pointer for machine check exception. */
+	void *mc_emergency_sp;
+	/*
+	 * Flag to check whether we are in machine check early handler
+	 * and already using emergency stack.
+	 */
+	u16 in_mce;
+#ifdef CONFIG_PPC_PSERIES
+	u8 *mce_data_buf;		/* buffer to hold per cpu rtas errlog */
+#endif /* CONFIG_PPC_PSERIES */
+
+#ifdef CONFIG_PPC_BOOK3S_64
+	/* Capture SLB related old contents in MCE handler. */
+	struct slb_entry *mce_faulty_slbs;
+	u16 slb_save_cache_ptr;
+#endif /* CONFIG_PPC_BOOK3S_64 */
 };
 #endif
 

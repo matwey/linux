@@ -75,7 +75,7 @@ static inline void slb_shadow_update(unsigned long ea, int ssize,
 
 static inline void slb_shadow_clear(unsigned long entry)
 {
-	ACCESS_ONCE(get_slb_shadow()->save_area[entry].esid) = 0;
+	ACCESS_ONCE(get_slb_shadow()->save_area[entry].esid) = entry;
 }
 
 static inline void create_shadowed_slbe(unsigned long ea, int ssize,
@@ -93,6 +93,72 @@ static inline void create_shadowed_slbe(unsigned long ea, int ssize,
 		     : "r" (mk_vsid_data(ea, ssize, flags)),
 		       "r" (mk_esid_data(ea, ssize, entry))
 		     : "memory" );
+}
+
+/*
+ * Insert bolted entries into SLB (which may not be empty, so don't clear
+ * slb_cache_ptr).
+ */
+void __slb_restore_bolted_realmode(void)
+{
+	struct slb_shadow *p = get_slb_shadow();
+	int index;
+
+	 /* No isync needed because realmode. */
+	for (index = 0; index < SLB_NUM_BOLTED; index++) {
+		asm volatile("slbmte  %0,%1" :
+		     : "r" (be64_to_cpu(p->save_area[index].vsid)),
+		       "r" (be64_to_cpu(p->save_area[index].esid)));
+	}
+}
+
+/*
+ * Insert the bolted entries into an empty SLB.
+ * This is not the same as rebolt because the bolted segments are not
+ * changed, just loaded from the shadow area.
+ */
+void slb_restore_bolted_realmode(void)
+{
+	__slb_restore_bolted_realmode();
+	get_paca()->slb_cache_ptr = 0;
+}
+
+/*
+ * This flushes all SLB entries including 0, so it must be realmode.
+ */
+void slb_flush_all_realmode(void)
+{
+	/*
+	 * This flushes all SLB entries including 0, so it must be realmode.
+	 */
+	asm volatile("slbmte %0,%0; slbia" : : "r" (0));
+}
+
+/* flush SLBs and reload */
+void flush_and_reload_slb(void)
+{
+	/* Invalidate all SLBs */
+	slb_flush_all_realmode();
+
+#ifdef CONFIG_KVM_BOOK3S_HANDLER
+	/*
+	 * If machine check is hit when in guest or in transition, we will
+	 * only flush the SLBs and continue.
+	 */
+	if (get_paca()->kvm_hstate.in_guest)
+		return;
+#endif
+	if (early_radix_enabled())
+		return;
+
+	/*
+	 * This probably shouldn't happen, but it may be possible it's
+	 * called in early boot before SLB shadows are allocated.
+	 */
+	if (!get_slb_shadow())
+		return;
+
+	slb_restore_bolted_realmode();
 }
 
 static void __slb_flush_and_rebolt(void)
@@ -149,21 +215,47 @@ void slb_flush_and_rebolt(void)
 	get_paca()->slb_cache_ptr = 0;
 }
 
-void slb_dump_contents(void)
+void slb_save_contents(struct slb_entry *slb_ptr)
 {
 	int i;
 	unsigned long e, v;
-	unsigned long llp;
 
-	pr_err("slb contents:\n");
+	/* Save slb_cache_ptr value. */
+	get_paca()->aux_ptr->slb_save_cache_ptr = get_paca()->slb_cache_ptr;
+
+	if (!slb_ptr)
+		return;
+
 	for (i = 0; i < mmu_slb_size; i++) {
 		asm volatile("slbmfee  %0,%1" : "=r" (e) : "r" (i));
 		asm volatile("slbmfev  %0,%1" : "=r" (v) : "r" (i));
+		slb_ptr->esid = e;
+		slb_ptr->vsid = v;
+		slb_ptr++;
+	}
+}
+
+void slb_dump_contents(struct slb_entry *slb_ptr)
+{
+	int i, n;
+	unsigned long e, v;
+	unsigned long llp;
+
+	if (!slb_ptr)
+		return;
+
+	pr_err("SLB contents of cpu 0x%x\n", smp_processor_id());
+	pr_err("Last SLB entry inserted at slot %lld\n", get_paca()->stab_rr);
+
+	for (i = 0; i < mmu_slb_size; i++) {
+		e = slb_ptr->esid;
+		v = slb_ptr->vsid;
+		slb_ptr++;
 
 		if (!e && !v)
 			continue;
 
-		pr_err("%02d %016lx %016lx", i, e, v);
+		pr_err("%02d %016lx %016lx\n", i, e, v);
 
 		if (!(e & SLB_ESID_V)) {
 			pr_err("\n");
@@ -172,16 +264,25 @@ void slb_dump_contents(void)
 		llp = v & SLB_VSID_LLP;
 		if (v & SLB_VSID_B_1T) {
 			pr_err("  1T  ESID=%9lx  VSID=%13lx LLP:%3lx\n",
-				GET_ESID_1T(e),
-				(v & ~SLB_VSID_B) >> SLB_VSID_SHIFT_1T,
-				llp);
+			       GET_ESID_1T(e),
+			       (v & ~SLB_VSID_B) >> SLB_VSID_SHIFT_1T, llp);
 		} else {
 			pr_err(" 256M ESID=%9lx  VSID=%13lx LLP:%3lx\n",
-				GET_ESID(e),
-				(v & ~SLB_VSID_B) >> SLB_VSID_SHIFT,
-				llp);
+			       GET_ESID(e),
+			       (v & ~SLB_VSID_B) >> SLB_VSID_SHIFT, llp);
 		}
 	}
+	pr_err("----------------------------------\n");
+
+	/* Dump slb cache entires as well. */
+	pr_err("SLB cache ptr value = %d\n", get_paca()->aux_ptr->slb_save_cache_ptr);
+	pr_err("Valid SLB cache entries:\n");
+	n = min_t(int, get_paca()->aux_ptr->slb_save_cache_ptr, SLB_CACHE_ENTRIES);
+	for (i = 0; i < n; i++)
+		pr_err("%02d EA[0-35]=%9x\n", i, get_paca()->slb_cache[i]);
+	pr_err("Rest of SLB cache entries:\n");
+	for (i = n; i < SLB_CACHE_ENTRIES; i++)
+		pr_err("%02d EA[0-35]=%9x\n", i, get_paca()->slb_cache[i]);
 }
 
 void slb_vmalloc_update(void)

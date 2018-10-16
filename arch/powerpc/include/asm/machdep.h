@@ -261,6 +261,11 @@ struct machdep_calls {
 	ssize_t (*cpu_probe)(const char *, size_t);
 	ssize_t (*cpu_release)(const char *, size_t);
 #endif
+
+#ifndef __GENKSYMS__
+	/* Early exception handlers called in realmode */
+	long		(*machine_check_early)(struct pt_regs *regs);
+#endif
 };
 
 extern void e500_idle(void);

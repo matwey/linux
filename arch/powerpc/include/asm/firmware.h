@@ -131,6 +131,9 @@ extern int fwnmi_active;
 
 extern unsigned int __start___fw_ftr_fixup, __stop___fw_ftr_fixup;
 
+#ifdef CONFIG_PPC_BOOK3S_64
+void flush_and_reload_slb(void);
+#endif /* CONFIG_PPC_BOOK3S_64 */
 #endif /* __ASSEMBLY__ */
 #endif /* __KERNEL__ */
 #endif /* __ASM_POWERPC_FIRMWARE_H */
