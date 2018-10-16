@@ -194,7 +194,7 @@ int wlcore_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
 
 	ret = wl1271_ps_elp_wakeup(wl);
 	if (ret < 0)
-		return ret;
+		goto free_vector;
 
 	do {
 		if (time_after(jiffies, timeout_time)) {
@@ -228,6 +228,7 @@ int wlcore_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
 
 out:
 	wl1271_ps_elp_sleep(wl);
+free_vector:
 	kfree(events_vector);
 	return ret;
 }
