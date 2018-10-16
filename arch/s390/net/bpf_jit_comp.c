@@ -1362,8 +1362,10 @@ void bpf_int_jit_compile(struct bpf_prog *fp)
 	header = bpf_jit_binary_alloc(jit.size, &jit.prg_buf, 2, jit_fill_hole);
 	if (!header)
 		goto free_addrs;
-	if (bpf_jit_prog(&jit, fp))
+	if (bpf_jit_prog(&jit, fp)) {
+		bpf_jit_binary_free(header);
 		goto free_addrs;
+	}
 	if (bpf_jit_enable > 1) {
 		bpf_jit_dump(fp->len, jit.size, pass, jit.prg_buf);
 		if (jit.prg_buf)
