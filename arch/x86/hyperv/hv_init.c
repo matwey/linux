@@ -120,12 +120,19 @@ static struct notifier_block _hv_cpu_notifier = {
  */
 void hyperv_init(void)
 {
-	u64 guest_id;
+	u64 guest_id, required_msrs;
 	union hv_x64_msr_hypercall_contents hypercall_msr;
 	__u8 d1 = 0x10; /* SuSE */
 	__u16 d2 = 0x0; /* -d of a.b.c-d */
 
 	if (x86_hyper != &x86_hyper_ms_hyperv)
+		return;
+
+	/* Absolutely required MSRs */
+	required_msrs = HV_X64_MSR_HYPERCALL_AVAILABLE |
+		HV_X64_MSR_VP_INDEX_AVAILABLE;
+
+	if ((ms_hyperv.features & required_msrs) != required_msrs)
 		return;
 
 	/* Allocate percpu VP index */
