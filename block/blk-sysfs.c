@@ -533,6 +533,11 @@ int blk_register_queue(struct gendisk *disk)
 	if (WARN_ON(!q))
 		return -ENXIO;
 
+	WARN_ONCE(test_bit(QUEUE_FLAG_REGISTERED, &q->queue_flags),
+		"%s is registering an already registered queue\n",
+		kobject_name(&dev->kobj));
+	queue_flag_set_unlocked(QUEUE_FLAG_REGISTERED, q);
+
 	ret = blk_trace_init_sysfs(dev);
 	if (ret)
 		return ret;
@@ -567,12 +572,17 @@ unlock:
 	mutex_unlock(&q->sysfs_lock);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(blk_register_queue);
 
 void blk_unregister_queue(struct gendisk *disk)
 {
 	struct request_queue *q = disk->queue;
 
 	if (WARN_ON(!q))
+		return;
+
+	/* Return early if disk->queue was never registered. */
+	if (!test_bit(QUEUE_FLAG_REGISTERED, &q->queue_flags))
 		return;
 
 	if (q->request_fn)
