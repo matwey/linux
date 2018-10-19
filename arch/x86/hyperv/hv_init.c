@@ -192,10 +192,32 @@ void clear_hv_tscchange_cb(void)
 }
 EXPORT_SYMBOL_GPL(clear_hv_tscchange_cb);
 
+static int hv_cpu_die(unsigned int cpu)
+{
+	struct hv_reenlightenment_control re_ctrl;
+	unsigned int new_cpu;
+
+	if (hv_reenlightenment_cb == NULL)
+		return 0;
+
+	rdmsrl(HV_X64_MSR_REENLIGHTENMENT_CONTROL, *((u64 *)&re_ctrl));
+	if (re_ctrl.target_vp == hv_vp_index[cpu]) {
+		/* Reassign to some other online CPU */
+		new_cpu = cpumask_any_but(cpu_online_mask, cpu);
+
+		re_ctrl.target_vp = hv_vp_index[new_cpu];
+		wrmsrl(HV_X64_MSR_REENLIGHTENMENT_CONTROL, *((u64 *)&re_ctrl));
+	}
+
+	return 0;
+}
+
 static int _hv_cpu_init(struct notifier_block *self, unsigned long action, void *hcpu)
 {
 	if (action == CPU_STARTING)
 		hv_cpu_init((unsigned long)hcpu);
+	else if (action == CPU_DOWN_PREPARE)
+		hv_cpu_die((unsigned long)hcpu);
 	return NOTIFY_OK;
 }
 static struct notifier_block _hv_cpu_notifier = {
