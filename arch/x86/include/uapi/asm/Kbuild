@@ -15,7 +15,6 @@ header-y += e820.h
 header-y += errno.h
 header-y += fcntl.h
 header-y += hw_breakpoint.h
-header-y += hyperv.h
 header-y += ioctl.h
 header-y += ioctls.h
 header-y += ipcbuf.h

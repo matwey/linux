@@ -21,7 +21,7 @@
 #include <asm/apic.h>
 #include <asm/desc.h>
 #include <asm/hypervisor.h>
-#include <asm/hyperv.h>
+#include <asm/hyperv-tlfs.h>
 #include <asm/mshyperv.h>
 #include <asm/nospec-branch.h>
 #include <linux/version.h>
