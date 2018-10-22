@@ -1378,6 +1378,7 @@ enum {
 	NFS_IOHDR_REDO,
 };
 
+struct nfs_io_completion;
 struct nfs_pgio_header {
 	struct inode		*inode;
 	struct rpc_cred		*cred;
@@ -1390,6 +1391,7 @@ struct nfs_pgio_header {
 	void (*release) (struct nfs_pgio_header *hdr);
 	const struct nfs_pgio_completion_ops *completion_ops;
 	const struct nfs_rw_ops	*rw_ops;
+	struct nfs_io_completion *io_completion;
 	struct nfs_direct_req	*dreq;
 	void			*layout_private;
 	spinlock_t		lock;
