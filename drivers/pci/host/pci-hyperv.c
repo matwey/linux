@@ -2493,7 +2493,7 @@ static int hv_pci_probe(struct hv_device *hdev,
 			       hdev->dev_instance.b[8] << 8;
 
 	hbus->hdev = hdev;
-	atomic_inc(&hbus->remove_lock);
+	atomic_set(&hbus->remove_lock, 1);
 	INIT_LIST_HEAD(&hbus->children);
 	INIT_LIST_HEAD(&hbus->dr_list);
 	INIT_LIST_HEAD(&hbus->resources_for_children);
