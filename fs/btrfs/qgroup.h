@@ -79,7 +79,6 @@ struct btrfs_qgroup {
 	/*
 	 * reservation tracking
 	 */
-	u64 reserved;
 	struct btrfs_qgroup_rsv rsv;
 
 	/*
