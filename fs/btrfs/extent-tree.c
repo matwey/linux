@@ -5897,43 +5897,30 @@ void btrfs_subvolume_release_metadata(struct btrfs_root *root,
 }
 
 /**
- * drop_outstanding_extent - drop an outstanding extent
+ * drop_over_reserved_extents - drop our extra extent reservations
  * @inode: the inode we're dropping the extent for
- * @num_bytes: the number of bytes we're relaseing.
  *
- * This is called when we are freeing up an outstanding extent, either called
- * after an error or after an extent is written.  This will return the number of
- * reserved extents that need to be freed.  This must be called with
- * BTRFS_I(inode)->lock held.
+ * We reserve extents we may use, but they may have been merged with other
+ * extents and we may not need the extra reservation.
+ *
+ * We also call this when we've completed io to an extent or had an error and
+ * cleared the outstanding extent, in either case we no longer need our
+ * reservation and can drop the excess.
  */
-static unsigned drop_outstanding_extent(struct inode *inode, u64 num_bytes)
+static unsigned drop_over_reserved_extents(struct btrfs_inode *inode)
 {
-	unsigned drop_inode_space = 0;
-	unsigned dropped_extents = 0;
-	unsigned num_extents;
+	unsigned num_extents = 0;
 
-	num_extents = count_max_extents(num_bytes);
-	ASSERT(num_extents);
-	ASSERT(BTRFS_I(inode)->outstanding_extents >= num_extents);
-	BTRFS_I(inode)->outstanding_extents -= num_extents;
-
-	if (BTRFS_I(inode)->outstanding_extents == 0 &&
+	if (inode->reserved_extents > inode->outstanding_extents) {
+		num_extents = inode->reserved_extents -
+			inode->outstanding_extents;
+		btrfs_mod_reserved_extents(inode, -num_extents);
+	}
+	if (inode->outstanding_extents == 0 &&
 	    test_and_clear_bit(BTRFS_INODE_DELALLOC_META_RESERVED,
-			       &BTRFS_I(inode)->runtime_flags))
-		drop_inode_space = 1;
-
-	/*
-	 * If we have more or the same amount of outsanding extents than we have
-	 * reserved then we need to leave the reserved extents count alone.
-	 */
-	if (BTRFS_I(inode)->outstanding_extents >=
-	    BTRFS_I(inode)->reserved_extents)
-		return drop_inode_space;
-
-	dropped_extents = BTRFS_I(inode)->reserved_extents -
-		BTRFS_I(inode)->outstanding_extents;
-	BTRFS_I(inode)->reserved_extents -= dropped_extents;
-	return dropped_extents + drop_inode_space;
+			       &inode->runtime_flags))
+		num_extents++;
+	return num_extents;
 }
 
 /**
@@ -5988,13 +5975,15 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	struct btrfs_block_rsv *block_rsv = &root->fs_info->delalloc_block_rsv;
 	u64 to_reserve = 0;
 	u64 csum_bytes;
-	unsigned nr_extents;
+	unsigned nr_extents, reserve_extents;
 	enum btrfs_reserve_flush_enum flush = BTRFS_RESERVE_FLUSH_ALL;
 	int ret = 0;
 	bool delalloc_lock = true;
 	u64 to_free = 0;
 	unsigned dropped;
 	bool release_extra = false;
+	bool underflow = false;
+	bool did_retry = false;
 
 	/* If we are a free space inode we need to not flush since we will be in
 	 * the middle of a transaction commit.  We also don't need the delalloc
@@ -6019,19 +6008,31 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 		mutex_lock(&BTRFS_I(inode)->delalloc_mutex);
 
 	num_bytes = ALIGN(num_bytes, root->sectorsize);
-
+retry:
 	spin_lock(&BTRFS_I(inode)->lock);
-	nr_extents = count_max_extents(num_bytes);
-	BTRFS_I(inode)->outstanding_extents += nr_extents;
+	reserve_extents = nr_extents = count_max_extents(num_bytes);
+	btrfs_mod_outstanding_extents(BTRFS_I(inode), nr_extents);
 
-	nr_extents = 0;
+	/*
+	 * Because we add an outstanding extent for ordered before we clear
+	 * delalloc we will double count our outstanding extents slightly.  This
+	 * could mean that we transiently over-reserve, which could result in an
+	 * early ENOSPC if our timing is unlucky.  Keep track of the case that
+	 * we had a reservation underflow so we can retry if we fail.
+	 *
+	 * Keep in mind we can legitimately have more outstanding extents than
+	 * reserved because of fragmentation, so only allow a retry once.
+	 */
 	if (BTRFS_I(inode)->outstanding_extents >
-	    BTRFS_I(inode)->reserved_extents)
-		nr_extents += BTRFS_I(inode)->outstanding_extents -
-			BTRFS_I(inode)->reserved_extents;
+	    BTRFS_I(inode)->reserved_extents + nr_extents) {
+		reserve_extents = BTRFS_I(inode)->outstanding_extents -
+ 			BTRFS_I(inode)->reserved_extents;
+		underflow = true;
+	}
 
 	/* We always want to reserve a slot for updating the inode. */
-	to_reserve = btrfs_calc_trans_metadata_size(root, nr_extents + 1);
+	to_reserve = btrfs_calc_trans_metadata_size(root,
+						    reserve_extents + 1);
 	to_reserve += calc_csum_metadata_size(inode, num_bytes, 1);
 	csum_bytes = BTRFS_I(inode)->csum_bytes;
 	spin_unlock(&BTRFS_I(inode)->lock);
@@ -6056,7 +6057,7 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 		to_reserve -= btrfs_calc_trans_metadata_size(root, 1);
 		release_extra = true;
 	}
-	BTRFS_I(inode)->reserved_extents += nr_extents;
+	btrfs_mod_reserved_extents(BTRFS_I(inode), reserve_extents);
 	spin_unlock(&BTRFS_I(inode)->lock);
 
 	if (delalloc_lock)
@@ -6073,7 +6074,10 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 
 out_fail:
 	spin_lock(&BTRFS_I(inode)->lock);
-	dropped = drop_outstanding_extent(inode, num_bytes);
+	nr_extents = count_max_extents(num_bytes);
+	btrfs_mod_outstanding_extents(BTRFS_I(inode), -nr_extents);
+
+	dropped = drop_over_reserved_extents(BTRFS_I(inode));
 	/*
 	 * If the inodes csum_bytes is the same as the original
 	 * csum_bytes then we know we haven't raced with any free()ers
@@ -6130,6 +6134,11 @@ out_fail:
 		trace_btrfs_space_reservation(root->fs_info, "delalloc",
 					      btrfs_ino(inode), to_free, 0);
 	}
+	if (underflow && !did_retry) {
+		did_retry = true;
+		underflow = false;
+		goto retry;
+	}
 	if (delalloc_lock)
 		mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
 	return ret;
@@ -6137,12 +6146,12 @@ out_fail:
 
 /**
  * btrfs_delalloc_release_metadata - release a metadata reservation for an inode
- * @inode: the inode to release the reservation for
- * @num_bytes: the number of bytes we're releasing
+ * @inode: the inode to release the reservation for.
+ * @num_bytes: the number of bytes we are releasing.
  *
  * This will release the metadata reservation for an inode.  This can be called
  * once we complete IO for a given set of bytes to release their metadata
- * reservations.
+ * reservations, or on error for the same reason.
  */
 void btrfs_delalloc_release_metadata(struct inode *inode, u64 num_bytes)
 {
@@ -6152,8 +6161,7 @@ void btrfs_delalloc_release_metadata(struct inode *inode, u64 num_bytes)
 
 	num_bytes = ALIGN(num_bytes, root->sectorsize);
 	spin_lock(&BTRFS_I(inode)->lock);
-	dropped = drop_outstanding_extent(inode, num_bytes);
-
+	dropped = drop_over_reserved_extents(BTRFS_I(inode));
 	if (num_bytes)
 		to_free = calc_csum_metadata_size(inode, num_bytes, 0);
 	spin_unlock(&BTRFS_I(inode)->lock);
@@ -6168,6 +6176,43 @@ void btrfs_delalloc_release_metadata(struct inode *inode, u64 num_bytes)
 
 	btrfs_block_rsv_release(root, &root->fs_info->delalloc_block_rsv,
 				to_free);
+}
+
+/**
+ * btrfs_delalloc_release_extents - release our outstanding_extents
+ * @inode: the inode to balance the reservation for.
+ * @num_bytes: the number of bytes we originally reserved with
+ *
+ * When we reserve space we increase outstanding_extents for the extents we may
+ * add.  Once we've set the range as delalloc or created our ordered extents we
+ * have outstanding_extents to track the real usage, so we use this to free our
+ * temporarily tracked outstanding_extents.  This _must_ be used in conjunction
+ * with btrfs_delalloc_reserve_metadata.
+ */
+void btrfs_delalloc_release_extents(struct btrfs_inode *inode, u64 num_bytes)
+{
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
+	unsigned num_extents;
+	u64 to_free;
+	unsigned dropped;
+
+	spin_lock(&inode->lock);
+	num_extents = count_max_extents(num_bytes);
+	btrfs_mod_outstanding_extents(inode, -num_extents);
+	dropped = drop_over_reserved_extents(inode);
+	spin_unlock(&inode->lock);
+
+	if (!dropped)
+		return;
+
+	if (btrfs_is_testing(fs_info))
+		return;
+
+	to_free = btrfs_calc_trans_metadata_size(inode->root, dropped);
+	trace_btrfs_space_reservation(fs_info, "delalloc",
+				      btrfs_ino(&inode->vfs_inode),
+				      to_free, 0);
+	btrfs_block_rsv_release(inode->root, &fs_info->delalloc_block_rsv, to_free);
 }
 
 /**
@@ -6216,10 +6261,7 @@ int btrfs_delalloc_reserve_space(struct inode *inode,
  * @inode: inode we're releasing space for
  * @start: start position of the space already reserved
  * @len: the len of the space already reserved
- *
- * This must be matched with a call to btrfs_delalloc_reserve_space.  This is
- * called in the case that we don't need the metadata AND data reservations
- * anymore.  So if there is an error or we insert an inline extent.
+ * @release_bytes: the len of the space we consumed or didn't use
  *
  * This function will release the metadata space that was not used and will
  * decrement ->delalloc_bytes and remove it from the fs_info delalloc_inodes
@@ -6227,7 +6269,8 @@ int btrfs_delalloc_reserve_space(struct inode *inode,
  * Also it will handle the qgroup reserved space.
  */
 void btrfs_delalloc_release_space(struct inode *inode,
-			struct extent_changeset *reserved, u64 start, u64 len)
+				  struct extent_changeset *reserved,
+				  u64 start, u64 len)
 {
 	btrfs_delalloc_release_metadata(inode, len);
 	btrfs_free_reserved_data_space(inode, reserved, start, len);

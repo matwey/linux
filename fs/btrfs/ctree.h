@@ -2698,6 +2698,8 @@ int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
 void btrfs_subvolume_release_metadata(struct btrfs_root *root,
 				      struct btrfs_block_rsv *rsv,
 				      u64 qgroup_reserved);
+void btrfs_delalloc_release_extents(struct btrfs_inode *inode, u64 num_bytes);
+
 int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes);
 void btrfs_delalloc_release_metadata(struct inode *inode, u64 num_bytes);
 int btrfs_delalloc_reserve_space(struct inode *inode,
@@ -3607,6 +3609,16 @@ static inline int btrfs_test_is_dummy_root(struct btrfs_root *root)
 		return 1;
 #endif
 	return 0;
+}
+
+static inline int btrfs_is_testing(struct btrfs_fs_info *fs_info)
+{
+#ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
+        if (unlikely(test_bit(BTRFS_FS_STATE_DUMMY_FS_INFO,
+                              &fs_info->fs_state)))
+                return 1;
+#endif
+        return 0;
 }
 
 /*
