@@ -1786,6 +1786,8 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
 			destroy_bounce_buffer(cmd_request->bounce_sgl,
 					cmd_request->bounce_sgl_count);
 
+		if (payload_sz > sizeof(cmd_request->mpb))
+			kfree(payload);
 		ret = SCSI_MLQUEUE_DEVICE_BUSY;
 		goto queue_error;
 	}
