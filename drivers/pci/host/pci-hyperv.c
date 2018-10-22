@@ -1568,6 +1568,7 @@ static struct hv_pci_dev *new_pcichild_device(struct hv_pcibus_device *hbus,
 	wait_for_completion(&comp_pkt.host_event);
 
 	hpdev->desc = *desc;
+	atomic_set(&hpdev->refs, 1);
 	get_pcichild(hpdev);
 	spin_lock_irqsave(&hbus->device_list_lock, flags);
 
