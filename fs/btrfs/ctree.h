@@ -100,6 +100,14 @@ static int btrfs_csum_sizes[] = { 4 };
 
 #define BTRFS_MAX_EXTENT_SIZE (128 * 1024 * 1024)
 
+/*
+ * Count how many BTRFS_MAX_EXTENT_SIZE cover the @size
+ */
+static inline u32 count_max_extents(u64 size)
+{
+	return div_u64(size + BTRFS_MAX_EXTENT_SIZE - 1, BTRFS_MAX_EXTENT_SIZE);
+}
+
 struct btrfs_mapping_tree {
 	struct extent_map_tree map_tree;
 };
