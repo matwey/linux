@@ -69,8 +69,10 @@ static const char *qgroup_rsv_type_str(enum btrfs_qgroup_rsv_type type)
 {
 	if (type == BTRFS_QGROUP_RSV_DATA)
 		return "data";
-	if (type == BTRFS_QGROUP_RSV_META)
-		return "meta";
+	if (type == BTRFS_QGROUP_RSV_META_PERTRANS)
+		return "meta_pertrans";
+	if (type == BTRFS_QGROUP_RSV_META_PREALLOC)
+		return "meta_prealloc";
 	return NULL;
 }
 #endif
@@ -3081,8 +3083,8 @@ int btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len)
 	return __btrfs_qgroup_release_data(inode, NULL, start, len, 0);
 }
 
-int btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
-			      bool enforce)
+int __btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
+				enum btrfs_qgroup_rsv_type type, bool enforce)
 {
 	int ret;
 
@@ -3092,14 +3094,14 @@ int btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
 
 	BUG_ON(num_bytes != round_down(num_bytes, root->nodesize));
 	trace_qgroup_meta_reserve(root, (s64)num_bytes);
-	ret = qgroup_reserve(root, num_bytes, enforce, BTRFS_QGROUP_RSV_META);
+	ret = qgroup_reserve(root, num_bytes, enforce, type);
 	if (ret < 0)
 		return ret;
 	atomic64_add(num_bytes, &root->qgroup_meta_rsv);
 	return ret;
 }
 
-void btrfs_qgroup_free_meta_all(struct btrfs_root *root)
+void btrfs_qgroup_free_meta_all_pertrans(struct btrfs_root *root)
 {
 	u64 reserved;
 
@@ -3112,10 +3114,11 @@ void btrfs_qgroup_free_meta_all(struct btrfs_root *root)
 		return;
 	trace_qgroup_meta_reserve(root, -(s64)reserved);
 	btrfs_qgroup_free_refroot(root->fs_info, root->objectid, reserved,
-				  BTRFS_QGROUP_RSV_META);
+				  BTRFS_QGROUP_RSV_META_PERTRANS);
 }
 
-void btrfs_qgroup_free_meta(struct btrfs_root *root, int num_bytes)
+void __btrfs_qgroup_free_meta(struct btrfs_root *root, int num_bytes,
+			      enum btrfs_qgroup_rsv_type type)
 {
 	if (!test_bit(BTRFS_FS_QUOTA_ENABLED, &root->fs_info->flags) ||
 	    !is_fstree(root->objectid))
@@ -3126,7 +3129,7 @@ void btrfs_qgroup_free_meta(struct btrfs_root *root, int num_bytes)
 	atomic64_sub(num_bytes, &root->qgroup_meta_rsv);
 	trace_qgroup_meta_reserve(root, -(s64)num_bytes);
 	btrfs_qgroup_free_refroot(root->fs_info, root->objectid, num_bytes,
-				  BTRFS_QGROUP_RSV_META);
+				  type);
 }
 
 /*
