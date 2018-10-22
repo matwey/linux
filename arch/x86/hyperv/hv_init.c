@@ -89,11 +89,15 @@ EXPORT_SYMBOL_GPL(hyperv_cs);
 u32 *hv_vp_index;
 EXPORT_SYMBOL_GPL(hv_vp_index);
 
+struct hv_vp_assist_page **hv_vp_assist_page;
+EXPORT_SYMBOL_GPL(hv_vp_assist_page);
+
 u32 hv_max_vp_index;
 
 static int hv_cpu_init(unsigned int cpu)
 {
 	u64 msr_vp_index;
+	struct hv_vp_assist_page **hvp = &hv_vp_assist_page[smp_processor_id()];
 
 	hv_get_vp_index(msr_vp_index);
 
@@ -101,6 +105,22 @@ static int hv_cpu_init(unsigned int cpu)
 
 	if (msr_vp_index > hv_max_vp_index)
 		hv_max_vp_index = msr_vp_index;
+
+	if (!hv_vp_assist_page)
+		return 0;
+
+	if (!*hvp)
+		*hvp = __vmalloc(PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL);
+
+	if (*hvp) {
+		u64 val;
+
+		val = vmalloc_to_pfn(*hvp);
+		val = (val << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) |
+			HV_X64_MSR_VP_ASSIST_PAGE_ENABLE;
+
+		wrmsrl(HV_X64_MSR_VP_ASSIST_PAGE, val);
+	}
 
 	return 0;
 }
@@ -197,6 +217,9 @@ static int hv_cpu_die(unsigned int cpu)
 	struct hv_reenlightenment_control re_ctrl;
 	unsigned int new_cpu;
 
+	if (hv_vp_assist_page && hv_vp_assist_page[cpu])
+		wrmsrl(HV_X64_MSR_VP_ASSIST_PAGE, 0);
+
 	if (hv_reenlightenment_cb == NULL)
 		return 0;
 
@@ -234,6 +257,7 @@ void hyperv_init(void)
 {
 	u64 guest_id, required_msrs;
 	union hv_x64_msr_hypercall_contents hypercall_msr;
+	int cpuhp;
 	__u8 d1 = 0x10; /* SuSE */
 	__u16 d2 = 0x0; /* -d of a.b.c-d */
 
@@ -253,7 +277,16 @@ void hyperv_init(void)
 	if (!hv_vp_index)
 		return;
 
-	hv_cpu_init(smp_processor_id());
+	hv_vp_assist_page = kcalloc(num_possible_cpus(),
+				    sizeof(*hv_vp_assist_page), GFP_KERNEL);
+	if (!hv_vp_assist_page) {
+		ms_hyperv.hints &= ~HV_X64_ENLIGHTENED_VMCS_RECOMMENDED;
+		goto free_vp_index;
+	}
+
+	cpuhp = hv_cpu_init(smp_processor_id());
+	if (cpuhp < 0)
+		goto free_vp_assist_page;
 
 	register_cpu_notifier(&_hv_cpu_notifier);
 
@@ -268,7 +301,7 @@ void hyperv_init(void)
 	hv_hypercall_pg  = __vmalloc(PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL_RX);
 	if (hv_hypercall_pg == NULL) {
 		wrmsrl(HV_X64_MSR_GUEST_OS_ID, 0);
-		goto free_vp_index;
+		goto remove_cpuhp_state;
 	}
 
 	rdmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
@@ -313,6 +346,11 @@ register_msr_cs:
 
 	return;
 
+remove_cpuhp_state:
+	unregister_cpu_notifier(&_hv_cpu_notifier);
+free_vp_assist_page:
+	kfree(hv_vp_assist_page);
+	hv_vp_assist_page = NULL;
 free_vp_index:
 	kfree(hv_vp_index);
 	hv_vp_index = NULL;
