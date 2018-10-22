@@ -33,6 +33,26 @@ struct btrfs_qgroup_extent_record {
 	struct ulist *old_roots;
 };
 
+enum btrfs_qgroup_rsv_type {
+	BTRFS_QGROUP_RSV_DATA = 0,
+	BTRFS_QGROUP_RSV_META,
+	BTRFS_QGROUP_RSV_LAST,
+};
+
+/*
+ * Represents how many bytes we have reserved for this qgroup.
+ *
+ * Each type should have different reservation behavior.
+ * E.g, data follows its io_tree flag modification, while
+ * *currently* meta is just reserve-and-clear during transcation.
+ *
+ * TODO: Add new type for reservation which can survive transaction commit.
+ * Currect metadata reservation behavior is not suitable for such case.
+ */
+struct btrfs_qgroup_rsv {
+	u64 values[BTRFS_QGROUP_RSV_LAST];
+};
+
 /*
  * one struct for each qgroup, organized in fs_info->qgroup_tree.
  */
@@ -60,6 +80,7 @@ struct btrfs_qgroup {
 	 * reservation tracking
 	 */
 	u64 reserved;
+	struct btrfs_qgroup_rsv rsv;
 
 	/*
 	 * lists
@@ -173,7 +194,8 @@ int btrfs_qgroup_inherit(struct btrfs_trans_handle *trans,
 			 struct btrfs_fs_info *fs_info, u64 srcid, u64 objectid,
 			 struct btrfs_qgroup_inherit *inherit);
 void btrfs_qgroup_free_refroot(struct btrfs_fs_info *fs_info,
-			       u64 ref_root, u64 num_bytes);
+			       u64 ref_root, u64 num_bytes,
+			       enum btrfs_qgroup_rsv_type type);
 /*
  * TODO: Add proper trace point for it, as btrfs_qgroup_free() is
  * called by everywhere, can't provide good trace for delayed ref case.
@@ -181,7 +203,8 @@ void btrfs_qgroup_free_refroot(struct btrfs_fs_info *fs_info,
 static inline void btrfs_qgroup_free_delayed_ref(struct btrfs_fs_info *fs_info,
 						 u64 ref_root, u64 num_bytes)
 {
-	btrfs_qgroup_free_refroot(fs_info, ref_root, num_bytes);
+	btrfs_qgroup_free_refroot(fs_info, ref_root, num_bytes,
+				  BTRFS_QGROUP_RSV_DATA);
 	trace_btrfs_qgroup_free_delayed_ref(fs_info, ref_root, num_bytes);
 }
 void assert_qgroups_uptodate(struct btrfs_trans_handle *trans);
