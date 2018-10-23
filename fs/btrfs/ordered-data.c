@@ -607,7 +607,7 @@ void btrfs_remove_ordered_extent(struct inode *inode,
 	btrfs_mod_outstanding_extents(btrfs_inode, -1);
 	spin_unlock(&btrfs_inode->lock);
 	if (root != root->fs_info->tree_root)
-		btrfs_delalloc_release_metadata(inode, entry->len);
+		btrfs_delalloc_release_metadata(inode, entry->len, false);
 
 	tree = &btrfs_inode->ordered_tree;
 	spin_lock_irq(&tree->lock);
