@@ -1595,6 +1595,27 @@ TRACE_EVENT(qgroup_meta_reserve,
 		show_root_type(__entry->refroot), __entry->diff)
 );
 
+TRACE_EVENT(btrfs_inode_mod_outstanding_extents,
+	TP_PROTO(struct btrfs_root *root, u64 ino, int mod),
+
+	TP_ARGS(root, ino, mod),
+
+	TP_STRUCT__entry_btrfs(
+		__field(	u64, root_objectid	)
+		__field(	u64, ino		)
+		__field(	int, mod		)
+	),
+
+	TP_fast_assign_btrfs(root->fs_info,
+		__entry->root_objectid	= root->objectid;
+		__entry->ino		= ino;
+		__entry->mod		= mod;
+	),
+
+	TP_printk_btrfs("root=%llu(%s) ino=%llu mod=%d",
+			show_root_type(__entry->root_objectid),
+			(unsigned long long)__entry->ino, __entry->mod)
+);
 #endif /* _TRACE_BTRFS_H */
 
 /* This part must be outside protection */

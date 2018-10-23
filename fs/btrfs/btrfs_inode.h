@@ -270,6 +270,9 @@ static inline void btrfs_mod_reserved_extents(struct btrfs_inode *inode, int mod
 	inode->reserved_extents += mod;
 	if (btrfs_is_free_space_inode(&inode->vfs_inode))
 		return;
+	trace_btrfs_inode_mod_outstanding_extents(inode->root,
+						  btrfs_ino(&inode->vfs_inode),
+						  mod);
 }
 
 static inline int btrfs_inode_in_log(struct inode *inode, u64 generation)
