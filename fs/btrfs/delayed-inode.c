@@ -22,6 +22,7 @@
 #include "disk-io.h"
 #include "transaction.h"
 #include "ctree.h"
+#include "qgroup.h"
 
 #define BTRFS_DELAYED_WRITEBACK		512
 #define BTRFS_DELAYED_BACKGROUND	128
@@ -579,6 +580,7 @@ static void btrfs_delayed_item_release_metadata(struct btrfs_root *root,
 		return;
 
 	rsv = &root->fs_info->delayed_block_rsv;
+	btrfs_qgroup_convert_reserved_meta(root, item->bytes_reserved);
 	trace_btrfs_space_reservation(root->fs_info, "delayed_item",
 				      item->key.objectid, item->bytes_reserved,
 				      0);
@@ -602,6 +604,9 @@ static int btrfs_delayed_inode_reserve_metadata(
 
 	num_bytes = btrfs_calc_trans_metadata_size(root, 1);
 
+	ret = btrfs_qgroup_reserve_meta_prealloc(root, num_bytes, true);
+	if (ret < 0)
+		return ret;
 	/*
 	 * btrfs_dirty_inode will update the inode under btrfs_join_transaction
 	 * which doesn't reserve space for speed.  This is a problem since we
@@ -621,8 +626,10 @@ static int btrfs_delayed_inode_reserve_metadata(
 		 * EAGAIN to make us stop the transaction we have, so return
 		 * ENOSPC instead so that btrfs_dirty_inode knows what to do.
 		 */
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
 			ret = -ENOSPC;
+			btrfs_qgroup_free_meta_prealloc(root, num_bytes);
+		}
 		if (!ret) {
 			node->bytes_reserved = num_bytes;
 			trace_btrfs_space_reservation(root->fs_info,
@@ -643,7 +650,8 @@ static int btrfs_delayed_inode_reserve_metadata(
 }
 
 static void btrfs_delayed_inode_release_metadata(struct btrfs_root *root,
-						struct btrfs_delayed_node *node)
+						struct btrfs_delayed_node *node,
+						bool qgroup_free)
 {
 	struct btrfs_block_rsv *rsv;
 
@@ -654,6 +662,12 @@ static void btrfs_delayed_inode_release_metadata(struct btrfs_root *root,
 	trace_btrfs_space_reservation(root->fs_info, "delayed_inode",
 				      node->inode_id, node->bytes_reserved, 0);
 	btrfs_block_rsv_release(root, rsv,
+				node->bytes_reserved);
+	if (qgroup_free)
+		btrfs_qgroup_free_meta_prealloc(node->root,
+				node->bytes_reserved);
+	else
+		btrfs_qgroup_convert_reserved_meta(node->root,
 				node->bytes_reserved);
 	node->bytes_reserved = 0;
 }
@@ -1037,7 +1051,7 @@ out:
 no_iref:
 	btrfs_release_path(path);
 err_out:
-	btrfs_delayed_inode_release_metadata(root, node);
+	btrfs_delayed_inode_release_metadata(root, node, (ret < 0));
 	btrfs_release_delayed_inode(node);
 
 	return ret;
@@ -1877,7 +1891,7 @@ static void __btrfs_kill_delayed_node(struct btrfs_delayed_node *delayed_node)
 		btrfs_release_delayed_iref(delayed_node);
 
 	if (test_bit(BTRFS_DELAYED_NODE_INODE_DIRTY, &delayed_node->flags)) {
-		btrfs_delayed_inode_release_metadata(root, delayed_node);
+		btrfs_delayed_inode_release_metadata(root, delayed_node, false);
 		btrfs_release_delayed_inode(delayed_node);
 	}
 	mutex_unlock(&delayed_node->mutex);
