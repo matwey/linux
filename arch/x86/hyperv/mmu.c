@@ -141,6 +141,11 @@ static void hyperv_flush_tlb_others(struct cpumask *cpus,
 
 		for_each_cpu(cpu, cpus) {
 			vcpu = hv_cpu_number_to_vp_number(cpu);
+			if (vcpu == VP_INVAL) {
+				local_irq_restore(flags);
+				goto do_native;
+			}
+
 			if (vcpu >= 64)
 				goto do_ex_hypercall;
 
