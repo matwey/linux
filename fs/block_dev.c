@@ -145,6 +145,16 @@ static void submit_failfast_bio(int rw, struct bio *bio, struct inode *inode,
 	submit_bio(rw, bio);
 }
 
+/*
+ * By default, IO to a block device open with O_DIRECT | O_NONBLOCK
+ * will cause a failfast request.  This is only need with
+ * md/raid failfast and some applications can be confused by this
+ * behaviour.  Setting /sys/module/kernel/parameters/block_dev_failfast
+ * to 0 will disable this behaviour.
+ */
+static int block_dev_failfast = 1;
+core_param(block_dev_failfast, block_dev_failfast, int, 0644);
+
 static ssize_t
 blkdev_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 			loff_t offset, unsigned long nr_segs)
@@ -153,7 +163,7 @@ blkdev_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 	struct inode *inode = file->f_mapping->host;
 	dio_submit_t *submit_io = NULL;
 
-	if (file->f_flags & O_NONBLOCK)
+	if (block_dev_failfast && (file->f_flags & O_NONBLOCK))
 		submit_io = submit_failfast_bio;
 	return __blockdev_direct_IO(rw, iocb, inode, I_BDEV(inode), iov, offset,
 				    nr_segs, blkdev_get_block, NULL, submit_io, 0);
@@ -1496,7 +1506,7 @@ static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	 * O_NDELAY can be altered using fcntl(.., F_SETFL, ..), so we have
 	 * to updated it before every ioctl.
 	 */
-	if (file->f_flags & O_NDELAY)
+	if (block_dev_failfast && (file->f_flags & O_NDELAY))
 		mode |= FMODE_NDELAY;
 	else
 		mode &= ~FMODE_NDELAY;
