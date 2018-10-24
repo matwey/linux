@@ -917,6 +917,10 @@ static int cx25821_dev_setup(struct cx25821_dev *dev)
 	strcpy(cx25821_boards[UNKNOWN_BOARD].name, "unknown");
 	strcpy(cx25821_boards[CX25821_BOARD].name, "cx25821");
 
+	if (dev->nr >= ARRAY_SIZE(card)) {
+		CX25821_INFO("dev->nr >= %zd", ARRAY_SIZE(card));
+		return -ENODEV;
+	}
 	if (dev->pci->device != 0x8210) {
 		pr_info("%s(): Exiting. Incorrect Hardware device = 0x%02x\n",
 			__func__, dev->pci->device);
@@ -929,9 +933,6 @@ static int cx25821_dev_setup(struct cx25821_dev *dev)
 	dev->clk_freq = 28000000;
 	for (i = 0; i < MAX_VID_CHANNEL_NUM; i++)
 		dev->channels[i].sram_channels = &cx25821_sram_channels[i];
-
-	if (dev->nr > 1)
-		CX25821_INFO("dev->nr > 1!");
 
 	/* board config */
 	dev->board = 1;		/* card[dev->nr]; */
