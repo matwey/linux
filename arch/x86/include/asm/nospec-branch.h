@@ -171,6 +171,9 @@ enum spectre_v2_mitigation {
 	SPECTRE_V2_IBRS,
 };
 
+extern char __indirect_thunk_start[];
+extern char __indirect_thunk_end[];
+
 /*
  * The Intel specification for the SPEC_CTRL MSR requires that we
  * preserve any already set reserved bits at boot time (e.g. for
