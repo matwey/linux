@@ -634,7 +634,7 @@ static void mce_request_packet(struct mceusb_dev *ir, unsigned char *data,
 	int res, pipe;
 	struct urb *async_urb;
 	struct device *dev = ir->dev;
-	unsigned char *async_buf;
+	unsigned char *async_buf = NULL;
 
 	if (urb_type == MCEUSB_TX) {
 		async_urb = usb_alloc_urb(0, GFP_KERNEL);
@@ -676,8 +676,10 @@ static void mce_request_packet(struct mceusb_dev *ir, unsigned char *data,
 	res = usb_submit_urb(async_urb, GFP_ATOMIC);
 	if (res) {
 		mce_dbg(dev, "receive request FAILED! (res=%d)\n", res);
-		kfree(async_buf);
-		usb_free_urb(async_urb);
+		if (urb_type == MCEUSB_TX) {
+			kfree(async_buf);
+			usb_free_urb(async_urb);
+		}
 		return;
 	}
 	mce_dbg(dev, "receive request complete (res=%d)\n", res);
