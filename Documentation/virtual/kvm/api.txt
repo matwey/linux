@@ -3793,6 +3793,7 @@ capability via KVM_ENABLE_CAP ioctl on the vcpu fd. Note that this
 will disable the use of APIC hardware virtualization even if supported
 by the CPU, as it's incompatible with SynIC auto-EOI behavior.
 
+
 8.5 KVM_CAP_ARM_USER_IRQ
 
 Architectures: arm, arm64
