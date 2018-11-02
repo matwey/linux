@@ -1088,6 +1088,7 @@ int move_huge_pmd(struct vm_area_struct *vma, struct vm_area_struct *new_vma,
 			pmd = pmdp_get_and_clear(mm, old_addr, old_pmd);
 			VM_BUG_ON(!pmd_none(*new_pmd));
 			set_pmd_at(mm, new_addr, new_pmd, pmd);
+			flush_tlb_range(vma, old_addr, old_addr + PMD_SIZE);
 			spin_unlock(&mm->page_table_lock);
 			ret = 1;
 		}
