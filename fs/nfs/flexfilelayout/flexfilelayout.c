@@ -1672,16 +1672,16 @@ ff_layout_write_pagelist(struct nfs_pgio_header *hdr, int sync)
 
 	ds = nfs4_ff_layout_prepare_ds(lseg, idx, true);
 	if (!ds)
-		return PNFS_NOT_ATTEMPTED;
+		goto out_failed;
 
 	ds_clnt = nfs4_ff_find_or_create_ds_client(lseg, idx, ds->ds_clp,
 						   hdr->inode);
 	if (IS_ERR(ds_clnt))
-		return PNFS_NOT_ATTEMPTED;
+		goto out_failed;
 
 	ds_cred = ff_layout_get_ds_cred(lseg, idx, hdr->cred);
 	if (IS_ERR(ds_cred))
-		return PNFS_NOT_ATTEMPTED;
+		goto out_failed;
 
 	vers = nfs4_ff_layout_ds_version(lseg, idx);
 
@@ -1710,6 +1710,11 @@ ff_layout_write_pagelist(struct nfs_pgio_header *hdr, int sync)
 				      &ff_layout_write_call_ops_v4,
 			  sync, RPC_TASK_SOFTCONN);
 	return PNFS_ATTEMPTED;
+
+out_failed:
+	if (ff_layout_avoid_mds_available_ds(lseg))
+		return PNFS_TRY_AGAIN;
+	return PNFS_NOT_ATTEMPTED;
 }
 
 static u32 calc_ds_index_from_commit(struct pnfs_layout_segment *lseg, u32 i)
