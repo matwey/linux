@@ -9218,16 +9218,6 @@ void dump_cpu_task(int cpu)
 }
 
 /*
- * Bootline option to disable sched_rt_runtime.
- */
-static int __init parse_nortsched(char *arg)
-{
-	sysctl_sched_rt_runtime = -1;
-	return 0;
-}
-early_param("nortsched", parse_nortsched);
-
-/*
  * Nice levels are multiplicative, with a gentle 10% change for every
  * nice level changed. I.e. when a CPU-bound task goes from nice 0 to
  * nice 1, it will get ~10% less CPU time than another CPU-bound task
@@ -9268,3 +9258,12 @@ const u32 sched_prio_to_wmult[40] = {
  /*  15 */ 119304647, 148102320, 186737708, 238609294, 286331153,
 };
 
+/*
+ * Bootline option to disable sched_rt_runtime.
+ */
+static int __init parse_nortsched(char *arg)
+{
+	sysctl_sched_rt_runtime = -1;
+	return 0;
+}
+early_param("nortsched", parse_nortsched);
