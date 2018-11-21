@@ -767,7 +767,7 @@ static void fc_rport_flogi_resp(struct fc_seq *sp, struct fc_frame *fp,
 	if (fc_frame_payload_op(fp) != ELS_LS_ACC) {
 		struct fc_els_ls_rjt *rjt;
 
-		rjt = fc_frame_payload_get(fp, sizeof (*rjt));
+		rjt = fc_frame_payload_get(fp, sizeof(*rjt));
 		FC_RPORT_DBG(rdata, "FLOGI ELS rejected, reason %x expl %x\n",
 			     rjt->er_reason, rjt->er_explan);
 		err = -FC_EX_ELS_RJT;
@@ -1030,7 +1030,7 @@ static void fc_rport_plogi_resp(struct fc_seq *sp, struct fc_frame *fp,
 	} else {
 		struct fc_els_ls_rjt *rjt;
 
-		rjt = fc_frame_payload_get(fp, sizeof (*rjt));
+		rjt = fc_frame_payload_get(fp, sizeof(*rjt));
 		FC_RPORT_DBG(rdata, "PLOGI ELS rejected, reason %x expl %x\n",
 			     rjt->er_reason, rjt->er_explan);
 		fc_rport_error_retry(rdata, -FC_EX_ELS_RJT);
@@ -1205,7 +1205,7 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 		fc_rport_enter_rtv(rdata);
 
 	} else {
-		rjt = fc_frame_payload_get(fp, sizeof (*rjt));
+		rjt = fc_frame_payload_get(fp, sizeof(*rjt));
 		FC_RPORT_DBG(rdata, "PRLI ELS rejected, reason %x expl %x\n",
 			     rjt->er_reason, rjt->er_explan);
 		fc_rport_error_retry(rdata, FC_EX_ELS_RJT);

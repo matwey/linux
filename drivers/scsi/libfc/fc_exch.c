@@ -2016,8 +2016,8 @@ static void fc_exch_els_rec(struct fc_frame *rfp)
 			    sid == fc_host_port_id(lport->host) ? oxid : rxid);
 	explan = ELS_EXPL_OXID_RXID;
 	if (!ep) {
-		FC_LPORT_DBG(lport, "REC request from %x: "
-			     "xid %4.4x-%4.4x not found\n",
+		FC_LPORT_DBG(lport,
+			     "REC request from %x: xid %4.4x-%4.4x not found\n",
 			     sid, rxid, oxid);
 		goto reject;
 	}
