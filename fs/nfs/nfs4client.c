@@ -528,7 +528,7 @@ int nfs40_walk_client_list(struct nfs_client *new,
 
 		if (pos->cl_xprt_id != new->cl_xprt_id)
 			continue;
-	found:
+found:
 		atomic_inc(&pos->cl_count);
 		spin_unlock(&nn->nfs_client_lock);
 
