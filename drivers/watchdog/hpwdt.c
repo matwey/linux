@@ -59,6 +59,7 @@ static int hpwdt_start(struct watchdog_device *wdd)
 {
 	int reload = SECS_TO_TICKS(wdd->timeout);
 
+	dev_dbg(wdd->parent, "start watchdog 0x%08x\n", reload);
 	iowrite16(reload, hpwdt_timer_reg);
 	iowrite8(0x85, hpwdt_timer_con);
 
@@ -68,6 +69,8 @@ static int hpwdt_start(struct watchdog_device *wdd)
 static void hpwdt_stop(void)
 {
 	unsigned long data;
+
+	pr_debug("stop  watchdog\n");
 
 	data = ioread8(hpwdt_timer_con);
 	data &= 0xFE;
@@ -85,6 +88,7 @@ static int hpwdt_ping(struct watchdog_device *wdd)
 {
 	int reload = SECS_TO_TICKS(wdd->timeout);
 
+	dev_dbg(wdd->parent, "ping  watchdog 0x%08x\n", reload);
 	iowrite16(reload, hpwdt_timer_reg);
 
 	return 0;
@@ -97,6 +101,8 @@ static unsigned int hpwdt_gettimeleft(struct watchdog_device *wdd)
 
 static int hpwdt_settimeout(struct watchdog_device *wdd, unsigned int val)
 {
+	dev_dbg(wdd->parent, "set_timeout = %d\n", val);
+
 	wdd->timeout = val;
 	hpwdt_ping(wdd);
 
