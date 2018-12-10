@@ -541,7 +541,7 @@ static void mce_report_event(struct pt_regs *regs)
  * be somewhat complicated (e.g. segment offset would require an instruction
  * parser). So only support physical addresses up to page granuality for now.
  */
-static int mce_usable_address(struct mce *m)
+int mce_usable_address(struct mce *m)
 {
 	if (!(m->status & MCI_STATUS_MISCV) || !(m->status & MCI_STATUS_ADDRV))
 		return 0;
@@ -556,6 +556,7 @@ static int mce_usable_address(struct mce *m)
 		return 0;
 	return 1;
 }
+EXPORT_SYMBOL_GPL(mce_usable_address);
 
 static int srao_decode_notifier(struct notifier_block *nb, unsigned long val,
 				void *data)
@@ -573,6 +574,19 @@ static int srao_decode_notifier(struct notifier_block *nb, unsigned long val,
 
 	return NOTIFY_OK;
 }
+
+bool mce_is_correctable(struct mce *m)
+{
+	if (m->cpuvendor == X86_VENDOR_AMD && m->status & MCI_STATUS_DEFERRED)
+		return false;
+
+	if (m->status & MCI_STATUS_UC)
+		return false;
+
+	return true;
+}
+EXPORT_SYMBOL_GPL(mce_is_correctable);
+
 static struct notifier_block mce_srao_nb = {
 	.notifier_call	= srao_decode_notifier,
 	.priority = INT_MAX,
