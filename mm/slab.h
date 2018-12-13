@@ -327,11 +327,13 @@ struct kmem_cache_node {
 	spinlock_t list_lock;
 
 #ifdef CONFIG_SLAB
+#ifndef __GENKSYMS__
+	unsigned long total_slabs;	/* length of all slab lists */
+	unsigned long free_slabs;	/* length of free slab list only */
+#endif
 	struct list_head slabs_partial;	/* partial list first, better asm code */
 	struct list_head slabs_full;
 	struct list_head slabs_free;
-	unsigned long total_slabs;	/* length of all slab lists */
-	unsigned long free_slabs;	/* length of free slab list only */
 	unsigned long free_objects;
 	unsigned int free_limit;
 	unsigned int colour_next;	/* Per-node cache coloring */
