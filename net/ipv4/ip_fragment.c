@@ -438,8 +438,12 @@ found:
 		goto overlap;
 
 	/* Is there an overlap with the next fragment? */
-	if (next && FRAG_CB(next)->offset < end)
+	if (next && FRAG_CB(next)->offset < end) {
+		/* If it's a duplicate, drop only the incoming fragment. */
+		if (FRAG_CB(next)->offset == offset && next->len == skb->len)
+			goto err;
 		goto overlap;
+	}
 
 	FRAG_CB(skb)->offset = offset;
 
