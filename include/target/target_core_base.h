@@ -683,7 +683,11 @@ struct se_dev_attrib {
 	int		emulate_tpws;
 	int		emulate_caw;
 	int		emulate_3pc;
+#ifdef __GENKSYMS__
+	int		pi_prot_format;
+#else
 	int		emulate_pr;
+#endif
 	enum target_prot_type pi_prot_type;
 	enum target_prot_type hw_pi_prot_type;
 	int		enforce_pr_isids;
