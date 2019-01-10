@@ -162,6 +162,12 @@ enum flag_bits {
 				 * Usually, this device should be faster
 				 * than other devices in the array
 				 */
+	ClusterRemove,
+	RemoveSynchronised,	/* synchronize_rcu was called after
+				 * This device was known to be faulty,
+				 * so it is save to remove without
+				 * another call.
+				 */
 	FailFast,		/* Minimal retries should be attempted on
 				 * this device, so use REQ_FAILFAST_DEV.
 				 * Also don't try to repair failed reads.
@@ -175,12 +181,6 @@ enum flag_bits {
 	Timeout,		/* Device fault due to timeout.
 				 * 'Faulty' is required to be set.
 				 */
-	RemoveSynchronised,	/* synchronize_rcu was called after
-				 * This device was known to be faulty,
-				 * so it is save to remove without
-				 * another call.
-				 */
-	ClusterRemove,
 };
 
 static inline int is_badblock(struct md_rdev *rdev, sector_t s, int sectors,
