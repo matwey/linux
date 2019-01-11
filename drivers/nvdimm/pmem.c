@@ -295,7 +295,6 @@ static int pmem_attach_disk(struct device *dev,
 	if (devm_init_badblocks(dev, &pmem->bb))
 		return -ENOMEM;
 	nvdimm_badblocks_populate(to_nd_region(dev->parent), &pmem->bb, res);
-
 	disk->bb = &pmem->bb;
 	add_disk(disk);
 	revalidate_disk(disk);

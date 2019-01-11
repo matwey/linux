@@ -277,7 +277,7 @@ struct nicvf {
 	struct nicvf_cq_poll	*napi[8];
 	u8			vf_id;
 	u8			sqs_id;
-	bool                    sqs_mode;
+	bool			sqs_mode;
 	bool			hw_tso;
 
 	/* Receive buffer alloc */

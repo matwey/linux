@@ -783,7 +783,7 @@ xfs_file_dio_aio_write(
 	 * inode size as appropriate.
 	 */
 	if ((pos & mp->m_blockmask) ||
-		((pos + count) & mp->m_blockmask)) {
+	    ((pos + count) & mp->m_blockmask)) {
 		unaligned_io = 1;
 		iolock = XFS_IOLOCK_EXCL;
 	} else {
