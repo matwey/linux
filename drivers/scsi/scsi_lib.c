@@ -2823,9 +2823,9 @@ scsi_device_quiesce(struct scsi_device *sdev)
 {
 	int err;
 
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	err = scsi_device_set_state(sdev, SDEV_QUIESCE);
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 
 	if (err)
 		return err;
@@ -2854,11 +2854,11 @@ void scsi_device_resume(struct scsi_device *sdev)
 	 * so assume the state is being managed elsewhere (for example
 	 * device deleted during suspend)
 	 */
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	if (sdev->sdev_state == SDEV_QUIESCE &&
 	    scsi_device_set_state(sdev, SDEV_RUNNING) == 0)
 		scsi_run_queue(sdev->request_queue);
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 }
 EXPORT_SYMBOL(scsi_device_resume);
 
@@ -2957,7 +2957,7 @@ static int scsi_internal_device_block(struct scsi_device *sdev)
 	struct request_queue *q = sdev->request_queue;
 	int err;
 
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	err = scsi_internal_device_block_nowait(sdev);
 	if (err == 0) {
 		if (q->mq_ops)
@@ -2965,7 +2965,7 @@ static int scsi_internal_device_block(struct scsi_device *sdev)
 		else
 			scsi_wait_for_queuecommand(sdev);
 	}
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 
 	return err;
 }
@@ -3044,9 +3044,9 @@ static int scsi_internal_device_unblock(struct scsi_device *sdev,
 {
 	int ret;
 
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	ret = scsi_internal_device_unblock_nowait(sdev, new_state);
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 
 	return ret;
 }

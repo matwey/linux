@@ -238,7 +238,6 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	sdev->id = starget->id;
 	sdev->lun = lun;
 	sdev->channel = starget->channel;
-	mutex_init(&sdev->state_mutex);
 	sdev->sdev_state = SDEV_CREATED;
 	INIT_LIST_HEAD(&sdev->siblings);
 	INIT_LIST_HEAD(&sdev->same_target_siblings);
@@ -1006,11 +1005,11 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 
 	/* set the device running here so that slave configure
 	 * may do I/O */
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	ret = scsi_device_set_state(sdev, SDEV_RUNNING);
 	if (ret)
 		ret = scsi_device_set_state(sdev, SDEV_BLOCK);
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 
 	if (ret) {
 		sdev_printk(KERN_ERR, sdev,

@@ -1737,9 +1737,9 @@ static int sd_eh_action(struct scsi_cmnd *scmd, int eh_disp)
 	if (sdkp->medium_access_timed_out >= sdkp->max_medium_access_timeouts) {
 		scmd_printk(KERN_ERR, scmd,
 			    "Medium access timeout failure. Offlining disk!\n");
-		mutex_lock(&sdev->state_mutex);
+		mutex_lock(&sdev->inquiry_mutex);
 		scsi_device_set_state(sdev, SDEV_OFFLINE);
-		mutex_unlock(&sdev->state_mutex);
+		mutex_unlock(&sdev->inquiry_mutex);
 
 		return FAILED;
 	}

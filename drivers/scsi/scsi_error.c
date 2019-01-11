@@ -1765,9 +1765,9 @@ static void scsi_eh_offline_sdevs(struct list_head *work_q,
 			    "not ready after error recovery\n");
 		sdev = scmd->device;
 
-		mutex_lock(&sdev->state_mutex);
+		mutex_lock(&sdev->inquiry_mutex);
 		scsi_device_set_state(sdev, SDEV_OFFLINE);
-		mutex_unlock(&sdev->state_mutex);
+		mutex_unlock(&sdev->inquiry_mutex);
 
 		if (scmd->eh_eflags & SCSI_EH_CANCEL_CMD) {
 			/*

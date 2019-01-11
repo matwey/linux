@@ -750,9 +750,9 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 	if (!state)
 		return -EINVAL;
 
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	ret = scsi_device_set_state(sdev, state);
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 
 	return ret == 0 ? count : -EINVAL;
 }
@@ -1302,7 +1302,7 @@ void __scsi_remove_device(struct scsi_device *sdev)
 		 * If scsi_internal_target_block() is running concurrently,
 		 * wait until it has finished before changing the device state.
 		 */
-		mutex_lock(&sdev->state_mutex);
+		mutex_lock(&sdev->inquiry_mutex);
 		/*
 		 * If blocked, we go straight to DEL and restart the queue so
 		 * any commands issued during driver shutdown (like sync
@@ -1314,7 +1314,7 @@ void __scsi_remove_device(struct scsi_device *sdev)
 			if (res == 0)
 				scsi_start_queue(sdev);
 		}
-		mutex_unlock(&sdev->state_mutex);
+		mutex_unlock(&sdev->inquiry_mutex);
 
 		if (res != 0)
 			return;
@@ -1332,9 +1332,9 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	 * scsi_run_queue() invocations have finished before tearing down the
 	 * device.
 	 */
-	mutex_lock(&sdev->state_mutex);
+	mutex_lock(&sdev->inquiry_mutex);
 	scsi_device_set_state(sdev, SDEV_DEL);
-	mutex_unlock(&sdev->state_mutex);
+	mutex_unlock(&sdev->inquiry_mutex);
 
 	blk_cleanup_queue(sdev->request_queue);
 	cancel_work_sync(&sdev->requeue_work);
