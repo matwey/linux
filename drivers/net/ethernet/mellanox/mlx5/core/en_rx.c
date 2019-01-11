@@ -33,6 +33,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/tcp.h>
+#include <linux/prefetch.h>
 #include <net/busy_poll.h>
 #include "en.h"
 #include "en_tc.h"
