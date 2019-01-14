@@ -2935,7 +2935,9 @@ EXPORT_SYMBOL_GPL(scsi_internal_device_block_nowait);
 
 /**
  * scsi_internal_device_block - try to transition to the SDEV_BLOCK state
- * @sdev: device to block
+ * @sdev:      device to block
+ * @wait:      Whether or not to wait until ongoing .queuecommand() /
+ *             .queue_rq() calls have finished.
  *
  * Pause SCSI command processing on the specified device and wait until all
  * ongoing scsi_request_fn() / scsi_queue_rq() calls have finished. May sleep.
@@ -2952,11 +2954,13 @@ EXPORT_SYMBOL_GPL(scsi_internal_device_block_nowait);
  * scsi_internal_device_block() has blocked a SCSI device and also
  * remove the rport mutex lock and unlock calls from srp_queuecommand().
  */
-static int scsi_internal_device_block(struct scsi_device *sdev)
+static int scsi_internal_device_block(struct scsi_device *sdev, bool wait)
 {
 	struct request_queue *q = sdev->request_queue;
 	int err;
 
+	if (!wait)
+		return scsi_internal_device_block_nowait(sdev);
 	mutex_lock(&sdev->inquiry_mutex);
 	err = scsi_internal_device_block_nowait(sdev);
 	if (err == 0) {
@@ -2969,6 +2973,7 @@ static int scsi_internal_device_block(struct scsi_device *sdev)
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(scsi_internal_device_block);
  
 void scsi_start_queue(struct scsi_device *sdev)
 {
@@ -3050,11 +3055,12 @@ static int scsi_internal_device_unblock(struct scsi_device *sdev,
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(scsi_internal_device_unblock);
 
 static void
 device_block(struct scsi_device *sdev, void *data)
 {
-	scsi_internal_device_block(sdev);
+	scsi_internal_device_block(sdev, true);
 }
 
 static int
