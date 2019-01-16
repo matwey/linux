@@ -17,7 +17,7 @@
 #	CROSS32_COMPILE is setup as a prefix just like CROSS_COMPILE
 #	in the toplevel makefile.
 
-all: $(obj)/zImage
+all: $(obj)/vmlinux
 
 BOOTCFLAGS    := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		 -fno-strict-aliasing -Os -msoft-float -pipe \
@@ -70,7 +70,8 @@ $(addprefix $(obj)/,$(zlib) cuboot-c2k.o gunzip_util.o main.o): \
 libfdt       := fdt.c fdt_ro.c fdt_wip.c fdt_sw.c fdt_rw.c fdt_strerror.c
 libfdtheader := fdt.h libfdt.h libfdt_internal.h
 
-$(addprefix $(obj)/,$(libfdt) libfdt-wrapper.o simpleboot.o epapr.o): \
+$(addprefix $(obj)/,$(libfdt) libfdt-wrapper.o simpleboot.o epapr.o \
+	treeboot-akebono.o treeboot-currituck.o treeboot-iss4xx.o): \
 	$(addprefix $(obj)/,$(libfdtheader))
 
 src-wlib-y := string.S crt0.S crtsavres.S stdio.c main.c \
@@ -213,18 +214,18 @@ quiet_cmd_wrap	= WRAP    $@
       cmd_wrap	=$(CONFIG_SHELL) $(wrapper) -c -o $@ -p $2 $(CROSSWRAP) \
 		$(if $3, -s $3)$(if $4, -d $4)$(if $5, -i $5) vmlinux
 
-image-$(CONFIG_PPC_PSERIES)		+= zImage.pseries
-image-$(CONFIG_PPC_POWERNV)		+= zImage.pseries
-image-$(CONFIG_PPC_MAPLE)		+= zImage.maple
-image-$(CONFIG_PPC_IBM_CELL_BLADE)	+= zImage.pseries
-image-$(CONFIG_PPC_PS3)			+= dtbImage.ps3
-image-$(CONFIG_PPC_CELL_QPACE)		+= zImage.pseries
-image-$(CONFIG_PPC_CHRP)		+= zImage.chrp
-image-$(CONFIG_PPC_EFIKA)		+= zImage.chrp
-image-$(CONFIG_PPC_PMAC)		+= zImage.pmac
-image-$(CONFIG_PPC_HOLLY)		+= dtbImage.holly
+image-$(CONFIG_PPC_PSERIES)		+= 
+image-$(CONFIG_PPC_POWERNV)		+= 
+image-$(CONFIG_PPC_MAPLE)		+= 
+image-$(CONFIG_PPC_IBM_CELL_BLADE)	+= 
+image-$(CONFIG_PPC_PS3)			+= 
+image-$(CONFIG_PPC_CELL_QPACE)		+= 
+image-$(CONFIG_PPC_CHRP)		+= 
+image-$(CONFIG_PPC_EFIKA)		+= 
+image-$(CONFIG_PPC_PMAC)		+= 
+image-$(CONFIG_PPC_HOLLY)		+= 
 image-$(CONFIG_DEFAULT_UIMAGE)		+= uImage
-image-$(CONFIG_EPAPR_BOOT)		+= zImage.epapr
+image-$(CONFIG_EPAPR_BOOT)		+= 
 
 #
 # Targets which embed a device tree blob
