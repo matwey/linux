@@ -299,17 +299,22 @@ start:
 	}
 }
 
-/* Context: caller owns controller lock, IRQs are blocked */
-static void musb_giveback(struct musb *musb, struct urb *urb, int status)
+static void musb_giveback_unlinked(struct musb *musb, struct urb *urb, int status)
 __releases(musb->lock)
 __acquires(musb->lock)
+{
+	spin_unlock(&musb->lock);
+	usb_hcd_giveback_urb(musb->hcd, urb, status);
+	spin_lock(&musb->lock);
+}
+
+/* Context: caller owns controller lock, IRQs are blocked */
+static void musb_giveback(struct musb *musb, struct urb *urb, int status)
 {
 	trace_musb_urb_gb(musb, urb);
 
 	usb_hcd_unlink_urb_from_ep(musb->hcd, urb);
-	spin_unlock(&musb->lock);
-	usb_hcd_giveback_urb(musb->hcd, urb, status);
-	spin_lock(&musb->lock);
+	musb_giveback_unlinked(musb, urb, status);
 }
 
 /* For bulk/interrupt endpoints only */
@@ -361,8 +366,23 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 		break;
 	}
 
+	usb_hcd_unlink_urb_from_ep(musb->hcd, urb);
+
+	if (ready && !musb_qh_empty(qh)) {
+	// REVISIT: introduce musb_start_urb(musb, is_in, qh, urb) to fire next after this urb.
+	// then we don't need musb_giveback_unlinked
+		musb_dbg(musb, "... next ep%d %cX urb %p", hw_ep->epnum, is_in ? 'R' : 'T', next_urb(qh));
+		musb_start_urb(musb, is_in, qh);
+
+		qh->is_ready = 0;
+		musb_giveback_unlinked(musb, urb, status);
+		qh->is_ready = ready;
+
+		return;
+	}
+
 	qh->is_ready = 0;
-	musb_giveback(musb, urb, status);
+	musb_giveback_unlinked(musb, urb, status);
 	qh->is_ready = ready;
 
 	/* reclaim resources (and bandwidth) ASAP; deschedule it, and
