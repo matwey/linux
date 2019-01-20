@@ -85,6 +85,11 @@ static bool musb_qh_empty(struct musb_qh *qh)
 	return list_empty(&qh->hep->urb_list);
 }
 
+static bool musb_qh_singular(struct musb_qh *qh)
+{
+	return list_is_singular(&qh->hep->urb_list);
+}
+
 static void musb_qh_unlink_hep(struct musb_qh *qh)
 {
 	if (!qh->hep)
@@ -360,6 +365,19 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 		if (status == 0 && urb->error_count)
 			status = -EXDEV;
 		break;
+	}
+
+	if (ready && !musb_qh_singular(qh)) {
+		struct urb *next_urb = list_next_entry(urb, urb_list);
+
+		musb_dbg(musb, "... next ep%d %cX urb %p", hw_ep->epnum, is_in ? 'R' : 'T', next_urb);
+		musb_start_urb(musb, is_in, qh, next_urb);
+
+		qh->is_ready = 0;
+		musb_giveback(musb, urb, status);
+		qh->is_ready = ready;
+
+		return;
 	}
 
 	qh->is_ready = 0;
