@@ -369,7 +369,7 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 	 * invalidate qh as soon as list_empty(&hep->urb_list)
 	 */
 	if (musb_qh_empty(qh)) {
-		struct list_head	*head;
+		struct list_head	*head = NULL;
 		struct dma_controller	*dma = musb->dma_controller;
 
 		if (is_in) {
@@ -388,34 +388,22 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 
 		/* Clobber old pointers to this qh */
 		musb_ep_set_qh(ep, is_in, NULL);
-		qh->hep->hcpriv = NULL;
 
-		switch (qh->type) {
+		/* USB_ENDPOINT_XFER_CONTROL and USB_ENDPOINT_XFER_BULK: fifo
+		 * policy for these lists, except that NAKing should rotate
+		 * a qh to the end (for fairness).
+		 * USB_ENDPOINT_XFER_ISOC and USB_ENDPOINT_XFER_INT: this is
+		 * where periodic bandwidth should be de-allocated if it's
+		 * tracked and allocated; and where we'd update the schedule
+		 * tree...
+		 */
+		if ((qh->type == USB_ENDPOINT_XFER_CONTROL || qh->type == USB_ENDPOINT_XFER_BULK)
+		    && qh->mux == 1)
+			head = qh->ring.prev;
 
-		case USB_ENDPOINT_XFER_CONTROL:
-		case USB_ENDPOINT_XFER_BULK:
-			/* fifo policy for these lists, except that NAKing
-			 * should rotate a qh to the end (for fairness).
-			 */
-			if (qh->mux == 1) {
-				head = qh->ring.prev;
-				list_del(&qh->ring);
-				kfree(qh);
-				qh = first_qh(head);
-				break;
-			}
-			/* else: fall through */
+		musb_qh_free(qh);
 
-		case USB_ENDPOINT_XFER_ISOC:
-		case USB_ENDPOINT_XFER_INT:
-			/* this is where periodic bandwidth should be
-			 * de-allocated if it's tracked and allocated;
-			 * and where we'd update the schedule tree...
-			 */
-			kfree(qh);
-			qh = NULL;
-			break;
-		}
+		qh = head ? first_qh(head) : NULL;
 	}
 
 	if (qh != NULL && qh->is_ready) {
@@ -2456,11 +2444,8 @@ static int musb_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 		/* If nothing else (usually musb_giveback) is using it
 		 * and its URB list has emptied, recycle this qh.
 		 */
-		if (ready && musb_qh_empty(qh)) {
-			qh->hep->hcpriv = NULL;
-			list_del(&qh->ring);
-			kfree(qh);
-		}
+		if (ready && musb_qh_empty(qh))
+			musb_qh_free(qh);
 	} else
 		ret = musb_cleanup_urb(urb, qh);
 done:
@@ -2514,9 +2499,7 @@ musb_h_disable(struct usb_hcd *hcd, struct usb_host_endpoint *hep)
 		while (!musb_qh_empty(qh))
 			musb_giveback(musb, next_urb(qh), -ESHUTDOWN);
 
-		hep->hcpriv = NULL;
-		list_del(&qh->ring);
-		kfree(qh);
+		musb_qh_free(qh);
 	}
 exit:
 	spin_unlock_irqrestore(&musb->lock, flags);
