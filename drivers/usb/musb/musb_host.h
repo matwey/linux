@@ -19,6 +19,7 @@ struct musb_qh {
 	struct musb_hw_ep	*hw_ep;		/* current binding */
 
 	struct list_head	ring;		/* of musb_qh */
+	spinlock_t		giveback_lock;	/* to keep URB giveback order */
 	/* struct musb_qh		*next; */	/* for periodic tree */
 	u8			mux;		/* qh multiplexed to hw_ep */
 
