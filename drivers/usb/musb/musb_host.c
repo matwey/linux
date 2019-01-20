@@ -85,6 +85,11 @@ static bool musb_qh_empty(struct musb_qh *qh)
 	return list_empty(&qh->hep->urb_list);
 }
 
+static bool musb_qh_singular(struct musb_qh *qh)
+{
+	return list_is_singular(&qh->hep->urb_list);
+}
+
 static void musb_qh_unlink_hep(struct musb_qh *qh)
 {
 	if (!qh->hep)
@@ -301,15 +306,24 @@ musb_start_next_urb(struct musb *musb, int is_in, struct musb_qh *qh)
 }
 
 /* Context: caller owns controller lock, IRQs are blocked */
-static void musb_giveback(struct musb *musb, struct urb *urb, int status)
+static void musb_giveback(struct musb *musb, struct musb_qh *qh, struct urb *urb, int status)
 __releases(musb->lock)
 __acquires(musb->lock)
 {
 	trace_musb_urb_gb(musb, urb);
 
+	/*
+	 * This line is protected by the controller lock: at most
+	 * one thread waiting on the giveback lock.
+	 */
+	spin_lock(&qh->giveback_lock);
 	usb_hcd_unlink_urb_from_ep(musb->hcd, urb);
+
 	spin_unlock(&musb->lock);
+
 	usb_hcd_giveback_urb(musb->hcd, urb, status);
+	spin_unlock(&qh->giveback_lock);
+
 	spin_lock(&musb->lock);
 }
 
@@ -344,8 +358,21 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 		break;
 	}
 
+	if (ready && !musb_qh_singular(qh) && !status) {
+		struct urb *next_urb = list_next_entry(urb, urb_list);
+
+		musb_dbg(musb, "... next ep%d %cX urb %p", hw_ep->epnum, is_in ? 'R' : 'T', next_urb);
+		musb_start_urb(musb, is_in, qh, next_urb);
+
+		qh->is_ready = 0;
+		musb_giveback(musb, qh, urb, status);
+		qh->is_ready = ready;
+
+		return;
+	}
+
 	qh->is_ready = 0;
-	musb_giveback(musb, urb, status);
+	musb_giveback(musb, qh, urb, status);
 	qh->is_ready = ready;
 
 	/* reclaim resources (and bandwidth) ASAP; deschedule it, and
@@ -2174,6 +2201,7 @@ static int musb_urb_enqueue(
 	qh->hep = hep;
 	qh->dev = urb->dev;
 	INIT_LIST_HEAD(&qh->ring);
+	spin_lock_init(&qh->giveback_lock);
 	qh->is_ready = 1;
 
 	qh->maxpacket = usb_endpoint_maxp(epd);
@@ -2406,7 +2434,7 @@ static int musb_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 		int	ready = qh->is_ready;
 
 		qh->is_ready = 0;
-		musb_giveback(musb, urb, 0);
+		musb_giveback(musb, qh, urb, 0);
 		qh->is_ready = ready;
 
 		/* If nothing else (usually musb_giveback) is using it
@@ -2465,7 +2493,7 @@ musb_h_disable(struct usb_hcd *hcd, struct usb_host_endpoint *hep)
 		 * will activate any of these as it advances.
 		 */
 		while (!musb_qh_empty(qh))
-			musb_giveback(musb, next_urb(qh), -ESHUTDOWN);
+			musb_giveback(musb, qh, next_urb(qh), -ESHUTDOWN);
 
 		musb_qh_free(qh);
 	}
