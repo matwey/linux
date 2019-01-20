@@ -85,6 +85,27 @@ static bool musb_qh_empty(struct musb_qh* qh)
 	return list_empty(&qh->hep->urb_list);
 }
 
+static void musb_qh_link_hep(struct musb_qh* qh, struct usb_host_endpoint *hep)
+{
+	qh->hep = hep;
+	qh->hep->hcpriv = qh;
+}
+
+static void musb_qh_unlink_hep(struct musb_qh* qh)
+{
+	if (!qh->hep)
+		return;
+
+	qh->hep->hcpriv = NULL;
+}
+
+static void musb_qh_free(struct musb_qh* qh)
+{
+	musb_qh_unlink_hep(qh)
+	list_del(&qh->ring);
+	kfree(qh);
+}
+
 /*
  * Clear TX fifo. Needed to avoid BABBLE errors.
  */
