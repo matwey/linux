@@ -101,7 +101,7 @@ static void musb_qh_unlink_hep(struct musb_qh* qh)
 
 static void musb_qh_free(struct musb_qh* qh)
 {
-	musb_qh_unlink_hep(qh)
+	musb_qh_unlink_hep(qh);
 	list_del(&qh->ring);
 	kfree(qh);
 }
