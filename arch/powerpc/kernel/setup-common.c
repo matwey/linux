@@ -419,6 +419,8 @@ static void __init cpu_init_thread_core_maps(int tpc)
 }
 
 
+u32 *cpu_to_phys_id = NULL;
+
 /**
  * setup_cpu_maps - initialize the following cpu maps:
  *                  cpu_possible_mask
@@ -445,6 +447,10 @@ void __init smp_setup_cpu_maps(void)
 
 	DBG("smp_setup_cpu_maps()\n");
 
+	cpu_to_phys_id = __va(memblock_alloc(nr_cpu_ids * sizeof(u32),
+							__alignof__(u32)));
+	memset(cpu_to_phys_id, 0, nr_cpu_ids * sizeof(u32));
+
 	for_each_node_by_type(dn, "cpu") {
 		const __be32 *intserv;
 		__be32 cpu_be;
@@ -462,6 +468,7 @@ void __init smp_setup_cpu_maps(void)
 			intserv = of_get_property(dn, "reg", &len);
 			if (!intserv) {
 				cpu_be = cpu_to_be32(cpu);
+				/* XXX: what is this? uninitialized?? */
 				intserv = &cpu_be;	/* assume logical == phys */
 				len = 4;
 			}
@@ -481,8 +488,8 @@ void __init smp_setup_cpu_maps(void)
 						"enable-method", "spin-table");
 
 			set_cpu_present(cpu, avail);
-			set_hard_smp_processor_id(cpu, be32_to_cpu(intserv[j]));
 			set_cpu_possible(cpu, true);
+			cpu_to_phys_id[cpu] = be32_to_cpu(intserv[j]);
 			cpu++;
 		}
 
@@ -552,6 +559,12 @@ void __init smp_setup_cpu_maps(void)
 	setup_nr_cpu_ids();
 
 	free_unused_pacas();
+
+	for_each_possible_cpu(cpu) {
+		if (cpu == smp_processor_id())
+			continue;
+		set_hard_smp_processor_id(cpu, cpu_to_phys_id[cpu]);
+	}
 }
 #endif /* CONFIG_SMP */
 
