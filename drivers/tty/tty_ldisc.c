@@ -482,6 +482,7 @@ static int tty_ldisc_open(struct tty_struct *tty, struct tty_ldisc *ld)
 
 static void tty_ldisc_close(struct tty_struct *tty, struct tty_ldisc *ld)
 {
+	lockdep_assert_held(&tty->ldisc_sem);
 	WARN_ON(!test_bit(TTY_LDISC_OPEN, &tty->flags));
 	clear_bit(TTY_LDISC_OPEN, &tty->flags);
 	if (ld->ops->close)
@@ -612,6 +613,7 @@ err:
  */
 static void tty_ldisc_kill(struct tty_struct *tty)
 {
+	lockdep_assert_held(&tty->ldisc_sem);
 	if (!tty->ldisc)
 		return;
 	/*
@@ -659,6 +661,7 @@ int tty_ldisc_reinit(struct tty_struct *tty, int disc)
 	struct tty_ldisc *ld;
 	int retval;
 
+	lockdep_assert_held(&tty->ldisc_sem);
 	ld = tty_ldisc_get(tty, disc);
 	if (IS_ERR(ld)) {
 		BUG_ON(disc == N_TTY);
@@ -762,6 +765,10 @@ int tty_ldisc_setup(struct tty_struct *tty, struct tty_struct *o_tty)
 		return retval;
 
 	if (o_tty) {
+		/*
+		 * Called without o_tty->ldisc_sem held, as o_tty has been
+		 * just allocated and no one has a reference to it.
+		 */
 		retval = tty_ldisc_open(o_tty, o_tty->ldisc);
 		if (retval) {
 			tty_ldisc_close(tty, ld);
@@ -827,6 +834,7 @@ int tty_ldisc_init(struct tty_struct *tty)
  */
 void tty_ldisc_deinit(struct tty_struct *tty)
 {
+	/* no ldisc_sem, tty is being destroyed */
 	tty_ldisc_put(tty->ldisc);
 	tty->ldisc = NULL;
 }
