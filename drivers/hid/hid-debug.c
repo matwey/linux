@@ -30,7 +30,9 @@
 
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#ifndef __GENKSYMS__
 #include <linux/kfifo.h>
+#endif
 #include <linux/sched.h>
 #include <linux/export.h>
 #include <linux/slab.h>

@@ -24,7 +24,9 @@
 
 #ifdef CONFIG_DEBUG_FS
 
+#ifndef __GENKSYMS__
 #include <linux/kfifo.h>
+#endif
 
 #define HID_DEBUG_BUFSIZE 512
 #define HID_DEBUG_FIFOSIZE 512
