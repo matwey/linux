@@ -4804,7 +4804,7 @@ static u8 vmx_msr_bitmap_mode(struct kvm_vcpu *vcpu)
 	    (vmcs_read32(SECONDARY_VM_EXEC_CONTROL) &
 	     SECONDARY_EXEC_VIRTUALIZE_X2APIC_MODE)) {
 		mode |= MSR_BITMAP_MODE_X2APIC;
-		if (enable_apicv)
+		if (enable_apicv && kvm_vcpu_apicv_active(vcpu))
 			mode |= MSR_BITMAP_MODE_X2APIC_APICV;
 	}
 
