@@ -213,7 +213,7 @@ static struct musb_qh *musb_ep_get_qh(struct musb_hw_ep *ep, int is_in)
  * Context: controller locked, irqs blocked
  */
 static void
-musb_start_urb(struct musb *musb, int is_in, struct musb_qh *qh)
+musb_start_next_urb(struct musb *musb, int is_in, struct musb_qh *qh)
 {
 	u32			len;
 	void __iomem		*mbase =  musb->mregs;
@@ -385,7 +385,7 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 	if (qh != NULL && qh->is_ready) {
 		musb_dbg(musb, "... next ep%d %cX urb %p",
 		    hw_ep->epnum, is_in ? 'R' : 'T', next_urb(qh));
-		musb_start_urb(musb, is_in, qh);
+		musb_start_next_urb(musb, is_in, qh);
 	}
 }
 
@@ -975,7 +975,7 @@ static void musb_bulk_nak_timeout(struct musb *musb, struct musb_hw_ep *ep,
 		}
 
 		if (next_qh)
-			musb_start_urb(musb, is_in, next_qh);
+			musb_start_next_urb(musb, is_in, next_qh);
 	}
 }
 
@@ -2108,7 +2108,7 @@ success:
 	qh->hw_ep = hw_ep;
 	qh->hep->hcpriv = qh;
 	if (idle)
-		musb_start_urb(musb, is_in, qh);
+		musb_start_next_urb(musb, is_in, qh);
 	return 0;
 }
 
