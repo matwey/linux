@@ -463,6 +463,20 @@
 	pmu1830-supply = <&vcc_3v0>;
 };
 
+&pcie_phy {
+	status = "okay";
+};
+
+&pcie0 {
+	status = "okay";
+
+	ep-gpios = <&gpio4 RK_PD3 GPIO_ACTIVE_HIGH>;
+	num-lanes = <4>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie_clkreqnb_cpm>;
+	max-link-speed = <2>;
+};
+
 &pinctrl {
 	bt {
 		bt_enable_h: bt-enable-h {
