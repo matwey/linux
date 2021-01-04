@@ -155,32 +155,6 @@ static const struct video_device pwc_template = {
 /***************************************************************************/
 /* Private functions */
 
-static void *pwc_alloc_urb_buffer(struct device *dev,
-				  size_t size, dma_addr_t *dma_handle)
-{
-	void *buffer = kmalloc(size, GFP_KERNEL);
-
-	if (!buffer)
-		return NULL;
-
-	*dma_handle = dma_map_single(dev, buffer, size, DMA_FROM_DEVICE);
-	if (dma_mapping_error(dev, *dma_handle)) {
-		kfree(buffer);
-		return NULL;
-	}
-
-	return buffer;
-}
-
-static void pwc_free_urb_buffer(struct device *dev,
-				size_t size,
-				void *buffer,
-				dma_addr_t dma_handle)
-{
-	dma_unmap_single(dev, dma_handle, size, DMA_FROM_DEVICE);
-	kfree(buffer);
-}
-
 static struct pwc_frame_buf *pwc_get_next_fill_buf(struct pwc_device *pdev)
 {
 	unsigned long flags = 0;
@@ -461,9 +435,11 @@ retry:
 		urb->pipe = usb_rcvisocpipe(udev, pdev->vendpoint);
 		urb->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
 		urb->transfer_buffer_length = ISO_BUFFER_SIZE;
-		urb->transfer_buffer = pwc_alloc_urb_buffer(&udev->dev,
+		urb->transfer_buffer = usb_alloc_noncoherent(udev,
 							    urb->transfer_buffer_length,
-							    &urb->transfer_dma);
+							    GFP_KERNEL,
+							    &urb->transfer_dma,
+							    DMA_FROM_DEVICE);
 		if (urb->transfer_buffer == NULL) {
 			PWC_ERROR("Failed to allocate urb buffer %d\n", i);
 			pwc_isoc_cleanup(pdev);
@@ -524,10 +500,11 @@ static void pwc_iso_free(struct pwc_device *pdev)
 		if (urb) {
 			PWC_DEBUG_MEMORY("Freeing URB\n");
 			if (urb->transfer_buffer)
-				pwc_free_urb_buffer(&urb->dev->dev,
-						    urb->transfer_buffer_length,
-						    urb->transfer_buffer,
-						    urb->transfer_dma);
+				usb_free_noncoherent(urb->dev,
+						  urb->transfer_buffer_length,
+						  urb->transfer_buffer,
+						  urb->transfer_dma,
+						  DMA_FROM_DEVICE);
 			usb_free_urb(urb);
 			pdev->urbs[i] = NULL;
 		}
