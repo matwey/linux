@@ -172,3 +172,46 @@ void hcd_buffer_free(
 	}
 	dma_free_coherent(hcd->self.sysdev, size, addr, dma);
 }
+
+void *hcd_buffer_alloc_noncoherent(
+	struct usb_bus		*bus,
+	size_t			size,
+	gfp_t			mem_flags,
+	dma_addr_t		*dma,
+	enum dma_data_direction dir
+)
+{
+	struct usb_hcd		*hcd = bus_to_hcd(bus);
+
+	if (size == 0)
+		return NULL;
+
+	/* some USB hosts just use PIO */
+	if (!hcd_uses_dma(hcd)) {
+		*dma = ~(dma_addr_t) 0;
+		return kmalloc(size, mem_flags);
+	}
+
+	return dma_alloc_noncoherent(hcd->self.sysdev, size, dma, dir, mem_flags);
+}
+
+void hcd_buffer_free_noncoherent(
+	struct usb_bus		*bus,
+	size_t			size,
+	void			*addr,
+	dma_addr_t		dma,
+	enum dma_data_direction dir
+)
+{
+	struct usb_hcd		*hcd = bus_to_hcd(bus);
+
+	if (!addr)
+		return;
+
+	if (!hcd_uses_dma(hcd)) {
+		kfree(addr);
+		return;
+	}
+
+	dma_free_noncoherent(hcd->self.sysdev, size, addr, dma, dir);
+}

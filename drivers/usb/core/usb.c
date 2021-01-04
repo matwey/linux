@@ -920,6 +920,26 @@ void usb_free_coherent(struct usb_device *dev, size_t size, void *addr,
 }
 EXPORT_SYMBOL_GPL(usb_free_coherent);
 
+void *usb_alloc_noncoherent(struct usb_device *dev, size_t size,
+	gfp_t mem_flags, dma_addr_t *dma, enum dma_data_direction dir)
+{
+	if (!dev || !dev->bus)
+		return NULL;
+	return hcd_buffer_alloc_noncoherent(dev->bus, size, mem_flags, dma, dir);
+}
+EXPORT_SYMBOL_GPL(usb_alloc_noncoherent);
+
+void usb_free_noncoherent(struct usb_device *dev, size_t size,
+	void *addr, dma_addr_t dma, enum dma_data_direction dir)
+{
+	if (!dev || !dev->bus)
+		return;
+	if (!addr)
+		return;
+	hcd_buffer_free_noncoherent(dev->bus, size, addr, dma, dir);
+}
+EXPORT_SYMBOL_GPL(usb_free_noncoherent);
+
 /*
  * Notifications of device and interface registration
  */

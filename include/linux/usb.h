@@ -22,6 +22,7 @@
 #include <linux/sched.h>	/* for current && schedule_timeout */
 #include <linux/mutex.h>	/* for struct mutex */
 #include <linux/pm_runtime.h>	/* for runtime PM */
+#include <linux/dma-direction.h> /* for enum dma_data_direction */
 
 struct usb_device;
 struct usb_driver;
@@ -1771,6 +1772,11 @@ void *usb_alloc_coherent(struct usb_device *dev, size_t size,
 	gfp_t mem_flags, dma_addr_t *dma);
 void usb_free_coherent(struct usb_device *dev, size_t size,
 	void *addr, dma_addr_t dma);
+
+void *usb_alloc_noncoherent(struct usb_device *dev, size_t size,
+	gfp_t mem_flags, dma_addr_t *dma, enum dma_data_direction dir);
+void usb_free_noncoherent(struct usb_device *dev, size_t size,
+	void *addr, dma_addr_t dma, enum dma_data_direction dir);
 
 #if 0
 struct urb *usb_buffer_map(struct urb *urb);
