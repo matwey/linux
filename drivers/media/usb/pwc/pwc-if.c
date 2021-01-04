@@ -54,6 +54,7 @@
 #ifdef CONFIG_USB_PWC_INPUT_EVDEV
 #include <linux/usb/input.h>
 #endif
+#include <linux/usb/hcd.h>		/* bus_to_hcd() */
 #include <linux/vmalloc.h>
 #include <asm/io.h>
 #include <linux/kernel.h>		/* simple_strtol() */
@@ -155,30 +156,32 @@ static const struct video_device pwc_template = {
 /***************************************************************************/
 /* Private functions */
 
-static void *pwc_alloc_urb_buffer(struct device *dev,
-				  size_t size, dma_addr_t *dma_handle)
+static void *pwc_alloc_urb_buffer(struct usb_device *dev,
+				  size_t size, dma_addr_t *dma)
 {
-	void *buffer = kmalloc(size, GFP_KERNEL);
+	struct usb_hcd *hcd = bus_to_hcd(dev->bus);
 
-	if (!buffer)
-		return NULL;
-
-	*dma_handle = dma_map_single(dev, buffer, size, DMA_FROM_DEVICE);
-	if (dma_mapping_error(dev, *dma_handle)) {
-		kfree(buffer);
-		return NULL;
+	if (!hcd_uses_dma(hcd)) {
+		*dma = ~(dma_addr_t) 0;
+		return kmalloc(size, GFP_KERNEL);
 	}
 
-	return buffer;
+	return dma_alloc_noncoherent(hcd->self.sysdev, size, dma, DMA_FROM_DEVICE, GFP_KERNEL);
 }
 
-static void pwc_free_urb_buffer(struct device *dev,
+static void pwc_free_urb_buffer(struct usb_device *dev,
 				size_t size,
-				void *buffer,
-				dma_addr_t dma_handle)
+				void *addr,
+				dma_addr_t dma)
 {
-	dma_unmap_single(dev, dma_handle, size, DMA_FROM_DEVICE);
-	kfree(buffer);
+	struct usb_hcd *hcd = bus_to_hcd(dev->bus);
+
+	if (!hcd_uses_dma(hcd)) {
+		kfree(addr);
+		return;
+	}
+
+	dma_free_noncoherent(hcd->self.sysdev, size, addr, dma, DMA_FROM_DEVICE);
 }
 
 static struct pwc_frame_buf *pwc_get_next_fill_buf(struct pwc_device *pdev)
@@ -282,6 +285,7 @@ static void pwc_frame_complete(struct pwc_device *pdev)
 static void pwc_isoc_handler(struct urb *urb)
 {
 	struct pwc_device *pdev = (struct pwc_device *)urb->context;
+	struct device *dmadev = urb->dev->bus->sysdev;
 	int i, fst, flen;
 	unsigned char *iso_buf = NULL;
 
@@ -328,7 +332,7 @@ static void pwc_isoc_handler(struct urb *urb)
 	/* Reset ISOC error counter. We did get here, after all. */
 	pdev->visoc_errors = 0;
 
-	dma_sync_single_for_cpu(&urb->dev->dev,
+	dma_sync_single_for_cpu(dmadev,
 				urb->transfer_dma,
 				urb->transfer_buffer_length,
 				DMA_FROM_DEVICE);
@@ -379,7 +383,7 @@ static void pwc_isoc_handler(struct urb *urb)
 		pdev->vlast_packet_size = flen;
 	}
 
-	dma_sync_single_for_device(&urb->dev->dev,
+	dma_sync_single_for_device(dmadev,
 				   urb->transfer_dma,
 				   urb->transfer_buffer_length,
 				   DMA_FROM_DEVICE);
@@ -461,7 +465,7 @@ retry:
 		urb->pipe = usb_rcvisocpipe(udev, pdev->vendpoint);
 		urb->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
 		urb->transfer_buffer_length = ISO_BUFFER_SIZE;
-		urb->transfer_buffer = pwc_alloc_urb_buffer(&udev->dev,
+		urb->transfer_buffer = pwc_alloc_urb_buffer(udev,
 							    urb->transfer_buffer_length,
 							    &urb->transfer_dma);
 		if (urb->transfer_buffer == NULL) {
@@ -524,7 +528,7 @@ static void pwc_iso_free(struct pwc_device *pdev)
 		if (urb) {
 			PWC_DEBUG_MEMORY("Freeing URB\n");
 			if (urb->transfer_buffer)
-				pwc_free_urb_buffer(&urb->dev->dev,
+				pwc_free_urb_buffer(urb->dev,
 						    urb->transfer_buffer_length,
 						    urb->transfer_buffer,
 						    urb->transfer_dma);
