@@ -21,6 +21,7 @@ properties:
       - national,lm75
       - national,lm75a
       - national,lm75b
+      - nxp,lm75a
       - maxim,max6625
       - maxim,max6626
       - maxim,max31725
