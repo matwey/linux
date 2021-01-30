@@ -25,12 +25,12 @@
  */
 
 enum lm75_type {		/* keep sorted in alphabetical order */
+	lm75 = 0,		/* except of lm75 which is default fallback */
 	adt75,
 	ds1775,
 	ds75,
 	ds7505,
 	g751,
-	lm75,
 	lm75a,
 	lm75b,
 	max6625,
