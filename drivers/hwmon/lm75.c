@@ -700,6 +700,10 @@ static const struct of_device_id __maybe_unused lm75_of_match[] = {
 		.data = (void *)lm75b
 	},
 	{
+		.compatible = "nxp,lm75a",
+		.data = (void *)lm75b
+	},
+	{
 		.compatible = "maxim,max6625",
 		.data = (void *)max6625
 	},
