@@ -33,6 +33,7 @@ enum lm75_type {		/* keep sorted in alphabetical order */
 	lm75,
 	lm75a,
 	lm75b,
+	nxp_lm75,
 	max6625,
 	max6626,
 	max31725,
@@ -181,6 +182,11 @@ static const struct lm75_params device_params[] = {
 	[lm75b] = {
 		.default_resolution = 11,
 		.default_sample_time = MSEC_PER_SEC / 10,
+	},
+	[nxp_lm75] = {
+		.default_resolution = 11,
+		.default_sample_time = MSEC_PER_SEC / 10,
+		.resolution_limits = 9,
 	},
 	[max6625] = {
 		.default_resolution = 9,
@@ -644,6 +650,7 @@ static const struct i2c_device_id lm75_ids[] = {
 	{ "lm75", lm75, },
 	{ "lm75a", lm75a, },
 	{ "lm75b", lm75b, },
+	{ "nxp_lm75a", nxp_lm75, },
 	{ "max6625", max6625, },
 	{ "max6626", max6626, },
 	{ "max31725", max31725, },
@@ -702,6 +709,10 @@ static const struct of_device_id __maybe_unused lm75_of_match[] = {
 	{
 		.compatible = "national,lm75b",
 		.data = (void *)lm75b
+	},
+	{
+		.compatible = "nxp,lm75a",
+		.data = (void *)nxp_lm75
 	},
 	{
 		.compatible = "maxim,max6625",
