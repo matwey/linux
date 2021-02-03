@@ -13,6 +13,7 @@ maintainers:
 properties:
   compatible:
     enum:
+      - lm75
       - adi,adt75
       - dallas,ds1775
       - dallas,ds75

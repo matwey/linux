@@ -668,6 +668,10 @@ MODULE_DEVICE_TABLE(i2c, lm75_ids);
 
 static const struct of_device_id __maybe_unused lm75_of_match[] = {
 	{
+		.compatible = "lm75",
+		.data = (void *)lm75
+	},
+	{
 		.compatible = "adi,adt75",
 		.data = (void *)adt75
 	},
