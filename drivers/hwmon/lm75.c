@@ -751,6 +751,10 @@ static const struct of_device_id __maybe_unused lm75_of_match[] = {
 		.data = (void *)tcn75
 	},
 	{
+		.compatible = "ti,lm75",
+		.data = (void *)lm75a
+	},
+	{
 		.compatible = "ti,tmp100",
 		.data = (void *)tmp100
 	},

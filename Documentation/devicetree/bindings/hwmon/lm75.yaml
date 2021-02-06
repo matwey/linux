@@ -32,6 +32,7 @@ properties:
       - st,stds75
       - st,stlm75
       - microchip,tcn75
+      - ti,lm75
       - ti,tmp100
       - ti,tmp101
       - ti,tmp105
