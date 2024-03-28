@@ -1887,11 +1887,15 @@ int mmc_attach_sd(struct mmc_host *host)
 		goto err;
 
 	mmc_release_host(host);
+	printk(KERN_INFO "mmc_attach_sd: mmc_add_card\n");
 	err = mmc_add_card(host->card);
+	printk(KERN_INFO "mmc_attach_sd: mmc_add_card returned %d\n", err);
 	if (err)
 		goto remove_card;
 
+	printk(KERN_INFO "mmc_attach_sd: mmc_claim_host\n");
 	mmc_claim_host(host);
+	printk(KERN_INFO "mmc_attach_sd: mmc_claim_host finished\n");
 	return 0;
 
 remove_card:

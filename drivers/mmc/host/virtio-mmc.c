@@ -187,7 +187,7 @@ static void virtio_mmc_vq_callback(struct virtqueue *vq)
 		}
 
 		if (data->last_mrq->data && data->req.is_data && !data->req.is_write) {
-			printk("virtio_mmc_vq_callback: data read\n");
+			printk(KERN_INFO "virtio_mmc_vq_callback: data read\n");
 			u32 flags = SG_MITER_ATOMIC | SG_MITER_FROM_SG;
 			size_t len = data->last_mrq->data->blksz * data->last_mrq->data->blocks;
 			size_t offset = 0;
@@ -245,8 +245,6 @@ static int create_host(struct virtio_device *vdev)
 		mmc_free_host(host);
 		return err;
 	}
-
-	virtio_device_ready(vdev);
 
 	return 0;
 }

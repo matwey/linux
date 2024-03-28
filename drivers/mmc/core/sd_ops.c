@@ -227,7 +227,7 @@ int mmc_send_if_cond_pcie(struct mmc_host *host, u32 ocr)
 	}
 	printk(KERN_INFO "mmc_send_if_cond_pcie: pcie_bits = %x\n", pcie_bits);
 
-	printk("mmc_send_if_cond_pcie: __mmc_send_if_cond\n");
+	printk(KERN_INFO "mmc_send_if_cond_pcie: __mmc_send_if_cond\n");
 	ret = __mmc_send_if_cond(host, ocr, pcie_bits, &resp);
 	if (ret){
 		printk(KERN_ERR "mmc_send_if_cond_pcie: __mmc_send_if_cond failed\n");
