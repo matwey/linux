@@ -166,22 +166,22 @@ static const struct mmc_host_ops virtio_mmc_host_ops = {
 
 static void virtio_mmc_vq_callback(struct virtqueue *vq)
 {
-	// printk(KERN_INFO "virtio_mmc_vq_callback\n");
+	printk(KERN_INFO "virtio_mmc_vq_callback\n");
 	struct mmc_host *host = vq->vdev->priv;
-	// printk(KERN_INFO "host pointer: %p\n", host);
+	printk(KERN_INFO "host pointer: %p\n", host);
 	virtio_mmc_data *data = mmc_priv(host);
-	// printk(KERN_INFO "data pointer: %p\n", data);
+	printk(KERN_INFO "data pointer: %p\n", data);
 	unsigned int len;
 
 	virtio_mmc_resp *response = virtqueue_get_buf(vq, &len);
-	// printk(KERN_INFO "response pointer: %p\n", response);
+	printk(KERN_INFO "response pointer: %p\n", response);
 
 	if (data->req.is_request && data->last_mrq) {
-		// printk(KERN_INFO "data->req pointer: %p", &data->req);
-		// printk(KERN_INFO "data->last_mrq pointer: %p\n", data->last_mrq);
-		// printk(KERN_INFO "data->last_mrq->cmd pointer: %p\n", data->last_mrq->cmd);
-		// printk(KERN_INFO "data->last_mrq->cmd->resp pointer: %p\n", &data->last_mrq->cmd->resp);
-		// printk(KERN_INFO "data->last_mrq->data pointer: %p\n", data->last_mrq->data);
+		printk(KERN_INFO "data->req pointer: %p", &data->req);
+		printk(KERN_INFO "data->last_mrq pointer: %p\n", data->last_mrq);
+		printk(KERN_INFO "data->last_mrq->cmd pointer: %p\n", data->last_mrq->cmd);
+		printk(KERN_INFO "data->last_mrq->cmd->resp pointer: %p\n", &data->last_mrq->cmd->resp);
+		printk(KERN_INFO "data->last_mrq->data pointer: %p\n", data->last_mrq->data);
 		for (int i = 0; i < response->resp_len / 4; i++) {
 			data->last_mrq->cmd->resp[i] = response->response[i];
 		}
