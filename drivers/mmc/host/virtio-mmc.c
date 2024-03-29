@@ -68,6 +68,8 @@ static void virtio_mmc_send_request(virtio_mmc_data *data)
 
 static void virtio_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
+	printk(KERN_CRIT "virtio_mmc_request begin %p\n", mrq);
+
 	virtio_mmc_data *data = mmc_priv(mmc);
 	if (!data) {
 		printk(KERN_CRIT "virtio_mmc_request: No data\n");
@@ -109,7 +111,7 @@ static void virtio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 {
 	printk(KERN_INFO "virtio_mmc_set_ios\n");
 	printk(KERN_INFO "VDD: %d\n", ios->vdd);
-
+/*
 	virtio_mmc_data *data = mmc_priv(mmc);
 	if (!data) {
 		printk(KERN_CRIT "virtio_mmc_set_ios: No data\n");
@@ -120,6 +122,7 @@ static void virtio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	req->vdd = ios->vdd;
 
 	virtio_mmc_send_request(data);
+*/
 }
 
 static int virtio_mmc_get_ro(struct mmc_host *mmc)
