@@ -29,7 +29,7 @@ typedef struct virtio_mmc_req {
 typedef struct virtio_mmc_resp {
 	u32 response[4];
 	int resp_len;
-	u8 buf[1024];
+	u8 buf[4096];
 } virtio_mmc_resp;
 
 typedef struct virtio_mmc_data {
@@ -41,7 +41,7 @@ typedef struct virtio_mmc_data {
 	struct scatterlist sg;
 	struct sg_mapping_iter miter;
 	virtio_mmc_req req;
-	u8 response;
+	virtio_mmc_resp response;
 
 	dev_t devt;
 	struct cdev cdev;
